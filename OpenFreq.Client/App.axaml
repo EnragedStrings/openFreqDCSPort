@@ -1,0 +1,26 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:themes="clr-namespace:Material.Styles.Themes;assembly=Material.Styles"
+             x:Class="OpenFreqClient.App"
+             xmlns:avalonia="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:openFreqClient="clr-namespace:OpenFreqClient"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <openFreqClient:ViewLocator/>
+    </Application.DataTemplates>
+  
+    <Application.Styles>
+        <themes:MaterialTheme PrimaryColor="Green" SecondaryColor="Red" />
+        <avalonia:MaterialIconStyles />
+    </Application.Styles>
+             
+     <Application.Resources>
+         <!-- Channel Status colors -->
+         <StaticResource x:Key="ChannelStatusReceivingBrush" ResourceKey="PrimaryHueMidBrush"/>
+         <StaticResource x:Key="ChannelStatusConnectedBrush" ResourceKey="MaterialCardBackgroundBrush"/>
+         <StaticResource x:Key="ChannelStatusDisconnectedBrush" ResourceKey="MaterialTextFieldBoxBackgroundBrush"/>
+         <StaticResource x:Key="ChannelStatusTransmittingBrush" ResourceKey="SecondaryHueLightBrush"/>
+     </Application.Resources>
+</Application>

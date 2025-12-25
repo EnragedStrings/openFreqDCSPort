@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Testclient", "OpenFreq.Testclient\OpenFreq.Testclient.csproj", "{E4805528-5EE4-4B1F-8736-E4BE7EF540E3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Common", "OpenFreq.Common\OpenFreq.Common.csproj", "{FEBEC17C-50FE-42BA-B833-59E49886DA2D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Client", "OpenFreq.Client\OpenFreq.Client.csproj", "{997C0847-E8C2-49A8-ABC9-986018A2BEB6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Server", "OpenFreq.Server\OpenFreq.Server.csproj", "{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreqAudio", "..\BMSAudioSim\OpenFreqAudio\OpenFreqAudio.csproj", "{483FE711-B66A-4C26-A55D-F5891BC9B71E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E4805528-5EE4-4B1F-8736-E4BE7EF540E3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E4805528-5EE4-4B1F-8736-E4BE7EF540E3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E4805528-5EE4-4B1F-8736-E4BE7EF540E3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E4805528-5EE4-4B1F-8736-E4BE7EF540E3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FEBEC17C-50FE-42BA-B833-59E49886DA2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FEBEC17C-50FE-42BA-B833-59E49886DA2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FEBEC17C-50FE-42BA-B833-59E49886DA2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FEBEC17C-50FE-42BA-B833-59E49886DA2D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{997C0847-E8C2-49A8-ABC9-986018A2BEB6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{997C0847-E8C2-49A8-ABC9-986018A2BEB6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{997C0847-E8C2-49A8-ABC9-986018A2BEB6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{997C0847-E8C2-49A8-ABC9-986018A2BEB6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{483FE711-B66A-4C26-A55D-F5891BC9B71E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{483FE711-B66A-4C26-A55D-F5891BC9B71E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{483FE711-B66A-4C26-A55D-F5891BC9B71E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{483FE711-B66A-4C26-A55D-F5891BC9B71E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

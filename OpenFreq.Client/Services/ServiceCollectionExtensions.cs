@@ -1,0 +1,43 @@
+using FalconBmsDataService.Services;
+using FalconRadioService.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using OpenFreq.Client.NativeMethods;
+using OpenFreq.Client.Services;
+using OpenFreq.Services.Acmi;
+using OpenFreqClient.Services.Interfaces;
+using OpenFreqClient.ViewModels;
+
+namespace OpenFreqClient.Services;
+
+/// <summary>
+/// Extension methods for configuring dependency injection
+/// </summary>
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddOpenFreqServices(this IServiceCollection services)
+    {
+        services.AddLogging(builder =>
+        {
+            builder.AddConsole();
+            builder.SetMinimumLevel(LogLevel.Debug);
+        });
+        
+        // Register services as singletons (one instance for the application lifetime)
+        services.AddSingleton<IOpenFreqService, OpenFreqService>();
+        services.AddSingleton<IHotkeyService, HotkeyService>();
+        services.AddSingleton<IAudioService, AudioService>();
+        services.AddSingleton<IConfigurationService, ConfigurationService>();
+        services.AddSingleton<IAcmiClientService, AcmiClientService>();
+        services.AddSingleton<IFalconSharedMemoryService, FalconSharedMemoryService>();
+        services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
+
+        // Register ViewModels
+        services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<ChannelCardListViewModel>();
+        services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<SettingsViewModel>();
+        
+        return services;
+    }
+}

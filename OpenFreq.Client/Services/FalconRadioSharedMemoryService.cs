@@ -1,0 +1,675 @@
+﻿// ReSharper disable RedundantUsingDirective
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using FalconBmsDataService.Models;
+using FalconRadioService.Models;
+using FalconRadioService.Parsers;
+using FalconRadioService.Services;
+using OpenFreq.Client.NativeMethods;
+
+namespace OpenFreq.Client.Services;
+
+#if WINDOWS
+
+public class FalconRadioSharedMemoryService : IFalconRadioSharedMemoryService
+{
+    private ServiceState _state = ServiceState.Stopped;
+    private double _pollingFrequencyHz = 3.0;
+
+    private PeriodicTimer? _rccTimer; // 3 Hz for RCC (radio data)
+    private PeriodicTimer? _rcsTimer; // 1 Hz for RCS status updates
+    private Task? _rccPollingTask;
+    private Task? _rcsPollingTask;
+    private CancellationTokenSource? _cts;
+
+    // RCS (Status) - we CREATE this
+    private IntPtr _hRcsMemory = IntPtr.Zero;
+    private IntPtr _lpRcsBaseAddress = IntPtr.Zero;
+
+    // RCC (Control) - we READ this
+    private IntPtr _hRccMemory = IntPtr.Zero;
+    private IntPtr _lpRccBaseAddress = IntPtr.Zero;
+
+    // Mutex for single instance
+    private IntPtr _hMutex = IntPtr.Zero;
+
+    // Current state data
+    private string? _logbookName;
+    private readonly Dictionary<RadioType, RadioChannel> _radioChannels = new();
+    private readonly Dictionary<RadioDeviceType, RadioDevice> _radioDevices = new();
+    private ConnectionParameters? _connectionParameters;
+
+    // Previous state for change detection
+    private readonly Dictionary<RadioType, RadioChannel> _previousRadioChannels = new();
+    private ConnectionParameters? _previousConnectionParameters;
+    private bool _initialReadDone = false;
+
+    private readonly object _dataLock = new();
+    private bool _disposed;
+
+    // Events
+    public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
+    public event EventHandler<RadioFrequencyChangedEventArgs>? FrequencyChanged;
+    public event EventHandler<RadioVolumeChangedEventArgs>? VolumeChanged;
+    public event EventHandler<RadioPttChangedEventArgs>? PttChanged;
+    public event EventHandler<RadioPowerChangedEventArgs>? PowerChanged;
+    public event EventHandler<ConnectionParametersChangedEventArgs>? ConnectionParametersChanged;
+
+    public ServiceState State
+    {
+        get
+        {
+            lock (_dataLock) return _state;
+        }
+    }
+
+    public double PollingFrequencyHz
+    {
+        get => _pollingFrequencyHz;
+        set
+        {
+            if (value <= 0)
+                throw new ArgumentException("Polling frequency must be positive", nameof(value));
+            _pollingFrequencyHz = value;
+        }
+    }
+
+    public string? LogbookName
+    {
+        get
+        {
+            lock (_dataLock) return _logbookName;
+        }
+    }
+
+    public RadioChannel? GetRadioChannel(RadioType radioType)
+    {
+        lock (_dataLock)
+        {
+            return _radioChannels.TryGetValue(radioType, out var channel)
+                ? channel.Clone()
+                : null;
+        }
+    }
+
+    public RadioDevice? GetRadioDevice(RadioDeviceType deviceType)
+    {
+        lock (_dataLock)
+        {
+            return _radioDevices.TryGetValue(deviceType, out var device)
+                ? device.Clone()
+                : null;
+        }
+    }
+
+    public ConnectionParameters? ConnectionParameters
+    {
+        get
+        {
+            lock (_dataLock) return _connectionParameters?.Clone();
+        }
+    }
+
+    public ClientStatusFlags GetClientStatus()
+    {
+        if (_lpRcsBaseAddress == IntPtr.Zero)
+            return ClientStatusFlags.AllClear;
+
+        try
+        {
+            int flags = Marshal.ReadInt32(_lpRcsBaseAddress);
+            return (ClientStatusFlags)flags;
+        }
+        catch
+        {
+            return ClientStatusFlags.AllClear;
+        }
+    }
+
+    public void SetClientStatus(ClientStatusFlags flags)
+    {
+        if (_lpRcsBaseAddress == IntPtr.Zero)
+            return;
+
+        try
+        {
+            Marshal.WriteInt32(_lpRcsBaseAddress, (int)flags);
+        }
+        catch
+        {
+        }
+    }
+
+    public void AddClientStatus(ClientStatusFlags flags)
+    {
+        var current = GetClientStatus();
+        SetClientStatus(current | flags);
+    }
+
+    public void RemoveClientStatus(ClientStatusFlags flags)
+    {
+        var current = GetClientStatus();
+        SetClientStatus(current & ~flags);
+    }
+
+    public void Start()
+    {
+        lock (_dataLock)
+        {
+            if (_state != ServiceState.Stopped)
+                throw new InvalidOperationException($"Service already running (state: {_state})");
+
+            // Create mutex for single instance
+            _hMutex = Win32RadioMemory.CreateMutex(
+                IntPtr.Zero,
+                true,
+                Win32RadioMemory.RADIO_CLIENT_SEMAPHORE);
+
+            // Create RCS shared memory
+            if (!CreateRcsSharedMemory())
+            {
+                CleanupResources();
+                throw new InvalidOperationException("Failed to create RCS shared memory");
+            }
+
+            ChangeState(ServiceState.RcsCreated);
+        }
+
+        _cts = new CancellationTokenSource();
+
+        var rccInterval = TimeSpan.FromSeconds(1.0 / _pollingFrequencyHz);
+        _rccTimer = new PeriodicTimer(rccInterval);
+        _rccPollingTask = Task.Run(() => RccPollingLoop(_cts.Token));
+
+        var rcsInterval = TimeSpan.FromSeconds(1.0);
+        _rcsTimer = new PeriodicTimer(rcsInterval);
+        _rcsPollingTask = Task.Run(() => RcsUpdateLoop(_cts.Token));
+    }
+
+    public void Stop()
+    {
+        _cts?.Cancel();
+        _rccTimer?.Dispose();
+        _rcsTimer?.Dispose();
+
+        try
+        {
+            _rccPollingTask?.Wait(TimeSpan.FromSeconds(5));
+            _rcsPollingTask?.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch
+        {
+        }
+
+        CleanupResources();
+
+        lock (_dataLock)
+        {
+            ChangeState(ServiceState.Stopped);
+        }
+    }
+
+    private bool CreateRcsSharedMemory()
+    {
+        try
+        {
+            Console.WriteLine("[DEBUG] Creating RCS shared memory...");
+
+            _hRcsMemory = Win32RadioMemory.CreateFileMapping(
+                Win32RadioMemory.INVALID_HANDLE_VALUE,
+                IntPtr.Zero,
+                Win32RadioMemory.PAGE_READWRITE,
+                0,
+                Win32RadioMemory.RCS_SIZE,
+                Win32RadioMemory.FALCON_RCS_SHARED_MEMORY);
+
+            if (_hRcsMemory == IntPtr.Zero)
+            {
+                var error = Marshal.GetLastWin32Error();
+                Console.WriteLine($"[ERROR] CreateFileMapping failed. Error: {error}");
+                return false;
+            }
+
+            Console.WriteLine($"[DEBUG] RCS handle: 0x{_hRcsMemory:X}");
+
+            _lpRcsBaseAddress = Win32RadioMemory.MapViewOfFile(
+                _hRcsMemory,
+                Win32RadioMemory.FILE_MAP_ALL_ACCESS,
+                0, 0,
+                IntPtr.Zero);
+
+            if (_lpRcsBaseAddress == IntPtr.Zero)
+            {
+                var error = Marshal.GetLastWin32Error();
+                Console.WriteLine($"[ERROR] MapViewOfFile failed. Error: {error}");
+                Win32RadioMemory.CloseHandle(_hRcsMemory);
+                _hRcsMemory = IntPtr.Zero;
+                return false;
+            }
+
+            Console.WriteLine($"[DEBUG] RCS base address: 0x{_lpRcsBaseAddress:X}");
+
+            // Initialize RCS: clear all flags
+            SetClientStatus(ClientStatusFlags.AllClear);
+            Console.WriteLine("[DEBUG] RCS cleared");
+
+            // Set clientactive flag
+            AddClientStatus(ClientStatusFlags.ClientActive);
+            Console.WriteLine($"[DEBUG] clientactive set. Status = 0x{(int)GetClientStatus():X}");
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] Exception: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task RccPollingLoop(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested && _rccTimer != null)
+        {
+            try
+            {
+                await _rccTimer.WaitForNextTickAsync(cancellationToken);
+
+                var currentState = State;
+
+                if (currentState == ServiceState.RcsCreated ||
+                    currentState == ServiceState.WaitingForBms)
+                {
+                    // Check if BMS is running
+                    if (IsFalconBmsRunning())
+                    {
+                        if (currentState == ServiceState.RcsCreated)
+                        {
+                            lock (_dataLock)
+                            {
+                                ChangeState(ServiceState.WaitingForBms);
+                            }
+                        }
+
+                        // Try to open RCC
+                        if (TryOpenRccSharedMemory())
+                        {
+                            lock (_dataLock)
+                            {
+                                ChangeState(ServiceState.Connected);
+                                _initialReadDone = false; // Reset for first read
+                            }
+                        }
+                    }
+                }
+                else if (currentState == ServiceState.Connected)
+                {
+                    // Read radio data and detect changes
+                    if (!TryReadRadioData())
+                    {
+                        // Connection lost
+                        CloseRccSharedMemory();
+                        lock (_dataLock)
+                        {
+                            _initialReadDone = false;
+                            ChangeState(ServiceState.WaitingForBms);
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task RcsUpdateLoop(CancellationToken cancellationToken)
+    {
+        // This loop can be used for periodic RCS updates if needed
+        // For now, it's a placeholder for future status management
+        while (!cancellationToken.IsCancellationRequested && _rcsTimer != null)
+        {
+            try
+            {
+                await _rcsTimer.WaitForNextTickAsync(cancellationToken);
+
+                // Could add periodic status checks here
+                // e.g., verify clientactive flag is still set
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private bool IsFalconBmsRunning()
+    {
+        IntPtr hMutex = Win32RadioMemory.OpenMutex(
+            Win32RadioMemory.SYNCHRONIZE,
+            false,
+            Win32RadioMemory.FALCON_SEMAPHORE);
+
+        if (hMutex != IntPtr.Zero)
+        {
+            Win32RadioMemory.CloseHandle(hMutex);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryOpenRccSharedMemory()
+    {
+        if (_lpRccBaseAddress != IntPtr.Zero)
+            return true; // Already open
+
+        try
+        {
+            _hRccMemory = Win32RadioMemory.OpenFileMapping(
+                Win32RadioMemory.FILE_MAP_READ,
+                true,
+                Win32RadioMemory.FALCON_RCC_SHARED_MEMORY);
+
+            if (_hRccMemory == IntPtr.Zero)
+                return false;
+
+            _lpRccBaseAddress = Win32RadioMemory.MapViewOfFile(
+                _hRccMemory,
+                Win32RadioMemory.FILE_MAP_READ,
+                0, 0,
+                IntPtr.Zero);
+
+            return _lpRccBaseAddress != IntPtr.Zero;
+        }
+        catch
+        {
+            CloseRccSharedMemory();
+            return false;
+        }
+    }
+
+    private void CloseRccSharedMemory()
+    {
+        if (_lpRccBaseAddress != IntPtr.Zero)
+        {
+            Win32RadioMemory.UnmapViewOfFile(_lpRccBaseAddress);
+            _lpRccBaseAddress = IntPtr.Zero;
+        }
+
+        if (_hRccMemory != IntPtr.Zero)
+        {
+            Win32RadioMemory.CloseHandle(_hRccMemory);
+            _hRccMemory = IntPtr.Zero;
+        }
+    }
+
+    private bool TryReadRadioData()
+    {
+        if (_lpRccBaseAddress == IntPtr.Zero)
+            return false;
+
+        try
+        {
+            // Read logbook name
+            var logbookName = RadioControlParser.ParseLogbookName(_lpRccBaseAddress);
+
+            // Read connection parameters
+            var connParams = RadioControlParser.ParseConnectionParameters(_lpRccBaseAddress);
+            
+            // Read all radio channels
+            var channels = new Dictionary<RadioType, RadioChannel>();
+            foreach (RadioType radioType in Enum.GetValues<RadioType>())
+            {
+                channels[radioType] = RadioControlParser.ParseRadioChannel(_lpRccBaseAddress, radioType);
+            }
+
+            // Read radio devices
+            var devices = new Dictionary<RadioDeviceType, RadioDevice>();
+            foreach (RadioDeviceType deviceType in Enum.GetValues<RadioDeviceType>())
+            {
+                devices[deviceType] = RadioControlParser.ParseRadioDevice(_lpRccBaseAddress, deviceType);
+            }
+
+            // Update state and detect changes
+            lock (_dataLock)
+            {
+                _logbookName = logbookName;
+
+                // Update channels and detect changes
+                foreach (var kvp in channels)
+                {
+                    var radioType = kvp.Key;
+                    var newChannel = kvp.Value;
+
+                    if (_radioChannels.TryGetValue(radioType, out var oldChannel) && _initialReadDone)
+                    {
+                        DetectRadioChanges(oldChannel, newChannel);
+                    }
+
+                    _radioChannels[radioType] = newChannel;
+                    _previousRadioChannels[radioType] = newChannel.Clone();
+                }
+
+                // Update devices
+                foreach (var kvp in devices)
+                {
+                    _radioDevices[kvp.Key] = kvp.Value;
+                }
+
+                
+
+// Detect connection parameter changes
+                if (_connectionParameters != null && _initialReadDone)
+                {
+                    DetectConnectionParameterChanges(_connectionParameters, connParams);
+                }
+                else if (!_initialReadDone && connParams.AttemptingToConnect &&
+                         !string.IsNullOrEmpty(connParams.Address))
+                {
+                    // Initial read with active connection request - fire event!
+                    Console.WriteLine("[DEBUG] Initial read with active connection request - firing event");
+                    var dummyOldParams = new ConnectionParameters(); // Empty old params
+
+                    // Fire the event outside the lock
+                    Task.Run(() =>
+                    {
+                        ConnectionParametersChanged?.Invoke(this,
+                            new ConnectionParametersChangedEventArgs(dummyOldParams, connParams.Clone()));
+                    });
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"[DEBUG] Skipping change detection: _connectionParameters={(_connectionParameters != null)}, _initialReadDone={_initialReadDone}");
+                }
+
+                _connectionParameters = connParams;
+                _previousConnectionParameters = connParams.Clone();
+
+                if (!_initialReadDone)
+                {
+                    _initialReadDone = true;
+                    Console.WriteLine("[DEBUG] Initial read completed");
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void DetectRadioChanges(RadioChannel oldChannel, RadioChannel newChannel)
+    {
+        var radioType = oldChannel.RadioType;
+
+        if (oldChannel.Frequency != newChannel.Frequency)
+        {
+            FrequencyChanged?.Invoke(this, new RadioFrequencyChangedEventArgs(
+                radioType, oldChannel.Frequency, newChannel.Frequency));
+        }
+
+        if (oldChannel.RxVolume != newChannel.RxVolume)
+        {
+            VolumeChanged?.Invoke(this, new RadioVolumeChangedEventArgs(
+                radioType, oldChannel.RxVolume, newChannel.RxVolume));
+        }
+
+        if (oldChannel.PttDepressed != newChannel.PttDepressed)
+        {
+            PttChanged?.Invoke(this, new RadioPttChangedEventArgs(
+                radioType, oldChannel.PttDepressed, newChannel.PttDepressed));
+        }
+
+        if (oldChannel.IsOn != newChannel.IsOn)
+        {
+            PowerChanged?.Invoke(this, new RadioPowerChangedEventArgs(
+                radioType, oldChannel.IsOn, newChannel.IsOn));
+        }
+    }
+
+    private void DetectConnectionParameterChanges(ConnectionParameters oldParams, ConnectionParameters newParams)
+    {
+        // Check if any significant parameters changed
+        if (oldParams.Address != newParams.Address ||
+            oldParams.Port != newParams.Port ||
+            oldParams.Password != newParams.Password ||
+            oldParams.Nickname != newParams.Nickname ||
+            oldParams.ReadyToTransmit != newParams.ReadyToTransmit ||
+            oldParams.AttemptingToConnect != newParams.AttemptingToConnect ||
+            oldParams.TerminateClient != newParams.TerminateClient)
+        {
+            ConnectionParametersChanged?.Invoke(this, new ConnectionParametersChangedEventArgs(
+                oldParams, newParams));
+        }
+    }
+
+    private void CleanupResources()
+    {
+        // Clear clientactive before closing
+        if (_lpRcsBaseAddress != IntPtr.Zero)
+        {
+            RemoveClientStatus(ClientStatusFlags.ClientActive);
+        }
+
+        CloseRccSharedMemory();
+
+        if (_lpRcsBaseAddress != IntPtr.Zero)
+        {
+            Win32RadioMemory.UnmapViewOfFile(_lpRcsBaseAddress);
+            _lpRcsBaseAddress = IntPtr.Zero;
+        }
+
+        if (_hRcsMemory != IntPtr.Zero)
+        {
+            Win32RadioMemory.CloseHandle(_hRcsMemory);
+            _hRcsMemory = IntPtr.Zero;
+        }
+
+        if (_hMutex != IntPtr.Zero)
+        {
+            Win32RadioMemory.CloseHandle(_hMutex);
+            _hMutex = IntPtr.Zero;
+        }
+    }
+
+    private void ChangeState(ServiceState newState)
+    {
+        var oldState = _state;
+        if (oldState == newState)
+            return;
+
+        _state = newState;
+        StateChanged?.Invoke(this, new ServiceStateChangedEventArgs(oldState, newState));
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        Stop();
+        _cts?.Dispose();
+        _rccTimer?.Dispose();
+        _rcsTimer?.Dispose();
+        _disposed = true;
+        GC.SuppressFinalize(this);
+    }
+}
+
+#else
+
+[SuppressMessage("ReSharper", "UnassignedGetOnlyAutoProperty")]
+[SuppressMessage("ReSharper", "ReturnTypeCanBeNotNullable")]
+
+// Stub implementation for non-Windows platforms
+public class FalconRadioSharedMemoryService : IFalconRadioSharedMemoryService
+{
+    public ServiceState State { get; }
+    public double PollingFrequencyHz { get; set; }
+    public string? LogbookName { get; }
+    public RadioChannel? GetRadioChannel(RadioType radioType)
+    {
+        throw new NotImplementedException();
+    }
+
+    public RadioDevice? GetRadioDevice(RadioDeviceType deviceType)
+    {
+        throw new NotImplementedException();
+    }
+
+    public ConnectionParameters? ConnectionParameters { get; }
+    public ClientStatusFlags GetClientStatus()
+    {
+        throw new NotImplementedException();
+    }
+
+    public void SetClientStatus(ClientStatusFlags flags)
+    {
+        throw new NotImplementedException();
+    }
+
+    public void AddClientStatus(ClientStatusFlags flags)
+    {
+        throw new NotImplementedException();
+    }
+
+    public void RemoveClientStatus(ClientStatusFlags flags)
+    {
+        throw new NotImplementedException();
+    }
+
+    public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
+    public event EventHandler<RadioFrequencyChangedEventArgs>? FrequencyChanged;
+    public event EventHandler<RadioVolumeChangedEventArgs>? VolumeChanged;
+    public event EventHandler<RadioPttChangedEventArgs>? PttChanged;
+    public event EventHandler<RadioPowerChangedEventArgs>? PowerChanged;
+    public event EventHandler<ConnectionParametersChangedEventArgs>? ConnectionParametersChanged;
+
+    public void Start()
+    {
+        throw new PlatformNotSupportedException("Falcon BMS Radio Service is only supported on Windows");
+    }
+
+    public void Stop()
+    {
+    }
+
+    public void Dispose()
+    {
+    }
+}
+#endif

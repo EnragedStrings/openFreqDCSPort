@@ -1,0 +1,110 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace OpenFreq.Common.Signaling;
+
+/// <summary>
+/// Base signaling message wrapper
+/// </summary>
+public class SignalingMessage
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("payload")] public JsonElement? Payload { get; set; }
+}
+
+/// <summary>
+/// Authentication request message
+/// </summary>
+public class AuthenticateMessage
+{
+    [JsonPropertyName("password")] public string? Password { get; set; }
+}
+
+/// <summary>
+/// Join frequency channel request
+/// </summary>
+public class JoinChannelMessage
+{
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+}
+
+/// <summary>
+/// Leave frequency channel request
+/// </summary>
+public class LeaveChannelMessage
+{
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+}
+
+/// <summary>
+/// Audio transmission state change message
+/// </summary>
+public class AudioTransmissionMessage
+{
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+
+    [JsonPropertyName("transmitting")] public bool Transmitting { get; set; }
+}
+
+/// <summary>
+/// Error response message
+/// </summary>
+public class ErrorMessage
+{
+    [JsonPropertyName("error")] public string Error { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Success response message
+/// </summary>
+public class SuccessMessage
+{
+    [JsonPropertyName("message")] public string Message { get; set; } = string.Empty;
+
+    [JsonPropertyName("peerId")] public string? PeerId { get; set; }
+
+    [JsonPropertyName("audioPort")] public int? AudioPort { get; set; }
+}
+
+/// <summary>
+/// Peer joined channel notification
+/// </summary>
+public class PeerJoinedMessage
+{
+    [JsonPropertyName("peerId")] public string PeerId { get; set; } = string.Empty;
+
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+}
+
+/// <summary>
+/// Peer left channel notification
+/// </summary>
+public class PeerLeftMessage
+{
+    [JsonPropertyName("peerId")] public string PeerId { get; set; } = string.Empty;
+
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+}
+
+/// <summary>
+/// Transmission state change notification from peer
+/// </summary>
+public class TransmissionEventMessage
+{
+    [JsonPropertyName("peerId")] public string PeerId { get; set; } = string.Empty;
+
+    [JsonPropertyName("transmitting")] public bool Transmitting { get; set; }
+
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+}
+
+/// <summary>
+/// Channel state with list of peers
+/// </summary>
+public class ChannelStateMessage
+{
+    [JsonPropertyName("frequency")] public double FrequencyMhz { get; set; }
+
+    [JsonPropertyName("peers")] public List<string> Peers { get; set; } = new();
+}

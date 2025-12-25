@@ -1,0 +1,24 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:views="clr-namespace:OpenFreqClient.Views"
+             xmlns:viewModels="clr-namespace:OpenFreqClient.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="OpenFreqClient.Views.ChannelCardListView"
+             x:DataType="viewModels:ChannelCardListViewModel">
+    
+    <ItemsControl ItemsSource="{Binding Channels}">
+        <ItemsControl.ItemTemplate>
+            <DataTemplate>
+                <views:ChannelCardView Margin="5"/>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+                <StackPanel Orientation="Vertical" Margin="10"/>
+            </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+    </ItemsControl>
+    
+</UserControl>

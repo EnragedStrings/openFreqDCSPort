@@ -197,7 +197,7 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.TuneFrequency(frequencyMhz);
         
         // TODO
-        _playbackService.SetSquelchLevel(frequencyMhz, 0.01f);
+        _playbackService.SetSquelchLevel(frequencyMhz, 0.1f);
     }
 
     /// <summary>
@@ -234,7 +234,7 @@ public class OpenFreqService : IOpenFreqService
         // Add to active transmissions
         _activeTransmissions.Add(frequency);
         // Mute the noise
-        _playbackService.SetSquelchLevel(frequency, 1.0f);
+        //_playbackService.SetSquelchLevel(frequency, 1.0f);
         
         // If this is the FIRST transmission, start recording
         if (_recordHandle == 0)
@@ -398,7 +398,7 @@ public class OpenFreqService : IOpenFreqService
         string streamId = $"{peerId}:{frequencyMhz}";
     
         // Start with default params (will update when we get position data)
-        var audioParams = _audioSim.GetDefaultAudioParams(frequencyMhz);
+        var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyMhz);
     
         _playbackService.StartPushStream(
             streamId, 
@@ -469,7 +469,7 @@ public class OpenFreqService : IOpenFreqService
         if (e.SenderPosition == null || _ownPosition == null)
         {
             _logger.LogDebug($"No position data, using defaults for {e.FrequencyMhz}");
-            audioParams = _audioSim.GetDefaultAudioParams(e.FrequencyMhz);
+            audioParams = FastPathAudioSim.GetDefaultAudioParams(e.FrequencyMhz);
         }
         else
         {

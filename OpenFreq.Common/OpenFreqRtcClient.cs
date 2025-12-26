@@ -152,7 +152,7 @@ public class OpenFreqRtcClient : IDisposable
 
             // Setup audio UDP client
             _audioClient = new UdpClient();
-            _serverAudioEndpoint = new IPEndPoint(IPAddress.Parse(_serverIp), _audioPort);
+            _serverAudioEndpoint = new IPEndPoint(IPAddress.Parse(ipPort.ipAddress), _audioPort);
 
             // Send initial packet to establish NAT connection
             await _audioClient.SendAsync(new byte[] { 0 }, 1, _serverAudioEndpoint);

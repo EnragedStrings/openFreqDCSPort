@@ -133,10 +133,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // Connect to server (channels will auto-join when authenticated)
             await _openFreqService.ConnectAsync();
-            _openFreqService.LoadHeightmap(Settings.HeightmapPath);
-
+            
             if (Settings.ConnectionMode == OpenFreqSettings.Mode.GCI)
             {
+                _openFreqService.LoadHeightmap(Settings.HeightmapPath);
                 _acmiClientService.ConnectionStatusChanged += OnTacviewConnectionStatusChanged;
                 await _acmiClientService.ConnectAsync(Settings.TacviewServerAddress, Settings.TacviewServerPassword);
             }

@@ -1,9 +1,14 @@
 using System.Collections.Concurrent;
-using System.Net;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using OpenFreq.Common.Signaling;
 using OpenFreq.Server;
 
@@ -11,12 +16,13 @@ namespace OpenFreq.Server;
 
 public class SignalingServer
 {
-    private readonly HttpListener _httpListener;
+    private WebApplication? _app;
     private readonly ServerConfig _config;
     private readonly ConcurrentDictionary<string, ClientSession> _clients = new();
     private readonly FrequencyChannelManager _channelManager = new();
     private readonly AudioStreamServer _audioServer;
     private readonly ILogger<SignalingServer> _logger;
+    private readonly ILoggerFactory _loggerFactory;
     private CancellationTokenSource _cts = new();
 
     // High-performance logging delegates
@@ -69,49 +75,115 @@ public class SignalingServer
     {
         _config = config;
         _logger = loggerFactory.CreateLogger<SignalingServer>();
-        _httpListener = new HttpListener();
-        _httpListener.Prefixes.Add($"http://+:{config.WebSocketPort}/");
+        _loggerFactory = loggerFactory;
         _audioServer = new AudioStreamServer(_channelManager, _clients, loggerFactory, config.AudioBasePort);
+
+        // Build Kestrel application
+        var builder = WebApplication.CreateBuilder();
+        
+        // Configure Kestrel
+        builder.WebHost.UseKestrel(options =>
+        {
+            // Listen on all interfaces
+            options.ListenAnyIP(config.WebSocketPort, listenOptions =>
+            {
+                // Performance tuning
+                listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1;
+            });
+
+            // Connection limits (adjust based on your expected load)
+            options.Limits.MaxConcurrentConnections = 1000;
+            options.Limits.MaxConcurrentUpgradedConnections = 1000;
+            
+            // WebSocket keep-alive
+            options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
+            options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(30);
+        });
+
+        // Replace default logging with your LoggerFactory
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton(loggerFactory);
+
+        // Disable unnecessary services to keep it lightweight
+        builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+        {
+            options.SerializerOptions.PropertyNameCaseInsensitive = true;
+        });
+
+        _app = builder.Build();
+        
+        // Configure WebSocket options
+        _app.UseWebSockets(new WebSocketOptions
+        {
+            KeepAliveInterval = TimeSpan.FromMinutes(1),
+            // Allow messages up to 64KB (adjust if you need larger messages)
+            ReceiveBufferSize = 64 * 1024
+        });
+        
+
+        // Health check endpoint (useful for monitoring)
+        _app.MapGet("/health", () => new
+        {
+            status = "healthy",
+            connectedClients = _clients.Count,
+            //activeChannels = _channelManager.GetChannelCount()
+        });
+
+        // WebSocket signaling endpoint
+        _app.Map("/", async context =>
+        {
+            if (context.WebSockets.IsWebSocketRequest)
+            {
+                var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+                await HandleWebSocketConnection(webSocket, context);
+            }
+            else
+            {
+                context.Response.StatusCode = 400;
+                await context.Response.WriteAsync("WebSocket connection required");
+            }
+        });
+
+        // Optional: Metrics endpoint
+        _app.MapGet("/metrics", () => new
+        {
+            clients = _clients.Count,
+            //channels = _channelManager.GetActiveChannelCount(),
+            uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime()
+        });
     }
 
     public async Task StartAsync()
     {
-        _httpListener.Start();
         _logServerStarted(_logger, _config.WebSocketPort, null);
-
-        while (!_cts.Token.IsCancellationRequested)
+        
+        try
         {
-            try
-            {
-                var context = await _httpListener.GetContextAsync();
-
-                if (context.Request.IsWebSocketRequest)
-                {
-                    _ = Task.Run(() => HandleWebSocketConnection(context));
-                }
-                else
-                {
-                    context.Response.StatusCode = 400;
-                    context.Response.Close();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error accepting connection");
-            }
+            await _app!.StartAsync(_cts.Token);           
+            await _app.WaitForShutdownAsync(_cts.Token);
+            
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during shutdown
+            _logger.LogInformation("Server shutdown requested");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fatal error in server");
+            throw;
         }
     }
 
-    private async Task HandleWebSocketConnection(HttpListenerContext context)
+    private async Task HandleWebSocketConnection(WebSocket webSocket, HttpContext httpContext)
     {
-        WebSocketContext? wsContext = null;
-        WebSocket? webSocket = null;
         string clientId = Guid.NewGuid().ToString();
 
         try
         {
-            wsContext = await context.AcceptWebSocketAsync(null);
-            webSocket = wsContext.WebSocket;
+            // Optional: Log client IP for diagnostics
+            var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogDebug("Client {ClientId} connecting from {RemoteIp}", clientId, remoteIp);
 
             var session = new ClientSession(clientId, webSocket);
             _clients[clientId] = session;
@@ -136,11 +208,11 @@ public class SignalingServer
 
         try
         {
-            while (session.WebSocket.State == WebSocketState.Open)
+            while (session.WebSocket.State == WebSocketState.Open && !_cts.Token.IsCancellationRequested)
             {
                 var result = await session.WebSocket.ReceiveAsync(
                     new ArraySegment<byte>(buffer),
-                    CancellationToken.None);
+                    _cts.Token);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -160,9 +232,19 @@ public class SignalingServer
                 session.UpdateActivity();
             }
         }
-        catch (WebSocketException)
+        catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
-            // Connection closed
+            // Client disconnected abruptly - normal behavior
+            _logger.LogDebug("Client {ClientId} disconnected abruptly", session.Id);
+        }
+        catch (OperationCanceledException)
+        {
+            // Server shutting down
+            _logger.LogDebug("Client {ClientId} connection cancelled during shutdown", session.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error handling messages for client {ClientId}", session.Id);
         }
     }
 
@@ -197,10 +279,15 @@ public class SignalingServer
                     break;
             }
         }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Invalid JSON from client {ClientId}", session.Id);
+            await SendError(session, "Invalid message format");
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing message");
-            await SendError(session, $"Invalid message format {ex.Message}");
+            _logger.LogError(ex, "Error processing message from client {ClientId}", session.Id);
+            await SendError(session, $"Server error processing message");
         }
     }
 
@@ -219,20 +306,25 @@ public class SignalingServer
         {
             session.IsAuthenticated = true;
 
-            // Create audio session for this client
-            var audioPort = await _audioServer.CreateAudioSession(session.Id);
-            session.AudioPort = audioPort;
+            var audioPort = _audioServer.CreateAudioSession(session.Id).Result;
 
-            await SendSuccess(session, "Authenticated successfully", session.Id, audioPort);
             _logClientAuthenticated(_logger, session.Id, audioPort, null);
+
+            await SendSuccess(session, "Authenticated", session.Id, audioPort);
         }
         else
         {
-            if (_logger.IsEnabled(LogLevel.Information))
-                _logger.LogInformation("Client {ClientId} sent invalid password, closing connection", session.Id);
+            await SendError(session, "Authentication failed");
             
-            await SendError(session, "Invalid password");
-            _ = session.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Invalid password", CancellationToken.None);
+            // Optional: Disconnect on auth failure
+            await Task.Delay(1000); // Brief delay to prevent brute force
+            if (session.WebSocket.State == WebSocketState.Open)
+            {
+                await session.WebSocket.CloseAsync(
+                    WebSocketCloseStatus.PolicyViolation,
+                    "Authentication failed",
+                    CancellationToken.None);
+            }
         }
     }
 
@@ -310,7 +402,6 @@ public class SignalingServer
 
     private async Task LeaveAllChannels(ClientSession session)
     {
-        // ToArray to avoid modification during enumeration
         var frequencies = session.CurrentFrequencies.Keys.ToArray();
         
         foreach (var frequency in frequencies)
@@ -354,7 +445,6 @@ public class SignalingServer
         _logTransmissionState(_logger, session.Id, transmissionMsg.Transmitting, 
             transmissionMsg.FrequencyMhz, peersInChannel.Length, null);
 
-        // Broadcast transmission state to ALL other peers in the channel
         BroadcastToChannel(
             transmissionMsg.FrequencyMhz,
             session.Id,
@@ -364,8 +454,6 @@ public class SignalingServer
                 transmissionMsg.Transmitting));
     }
 
-    /// <summary>
-    /// </summary>
     private void BroadcastToChannel(double frequencyMhz, string excludeClientId, SignalingMessage message)
     {
         var clients = _channelManager.GetClientsInChannel(frequencyMhz);
@@ -376,7 +464,6 @@ public class SignalingServer
 
             if (_clients.TryGetValue(clientId, out var session))
             {
-                // Fire-and-forget: Don't await, don't block on slow clients
                 _ = SendToClient(session, message)
                     .ContinueWith(t =>
                     {
@@ -433,10 +520,17 @@ public class SignalingServer
 
             if (session.WebSocket.State == WebSocketState.Open)
             {
-                await session.WebSocket.CloseAsync(
-                    WebSocketCloseStatus.NormalClosure,
-                    "Cleanup",
-                    CancellationToken.None);
+                try
+                {
+                    await session.WebSocket.CloseAsync(
+                        WebSocketCloseStatus.NormalClosure,
+                        "Cleanup",
+                        CancellationToken.None);
+                }
+                catch (WebSocketException)
+                {
+                    // Already closed, ignore
+                }
             }
 
             session.WebSocket.Dispose();
@@ -445,11 +539,23 @@ public class SignalingServer
         }
     }
 
-    public void Stop()
+    public async Task StopAsync()
     {
+        _logger.LogInformation("Stopping signaling server...");
+        
         _cts.Cancel();
         _audioServer.Stop();
-        _httpListener.Stop();
-        _httpListener.Close();
+        
+        if (_app != null)
+        {
+            using var shutdownCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await _app.StopAsync(shutdownCts.Token);
+            await _app.DisposeAsync();
+        }
+        
+        _logger.LogInformation("Signaling server stopped");
     }
+
+    // Keep for backward compatibility
+    public void Stop() => StopAsync().GetAwaiter().GetResult();
 }

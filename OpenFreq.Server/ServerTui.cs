@@ -76,7 +76,6 @@ public class TerminalGuiServer : IDisposable
     {
         var top = Application.Top;
 
-        // 🎨 Unified color palette
         var schemeDefault = new ColorScheme
         {
             Normal = Terminal.Gui.Attribute.Make(Color.Gray, Color.Black),
@@ -101,7 +100,7 @@ public class TerminalGuiServer : IDisposable
         };
 
         // ──────────────────────────────────────────────
-        // 🟢 STATUS BAR (Top)
+        // STATUS BAR (Top)
         // ──────────────────────────────────────────────
         _statusLabel = new Label("")
         {
@@ -115,7 +114,7 @@ public class TerminalGuiServer : IDisposable
         top.Add(_statusLabel);
 
         // ──────────────────────────────────────────────
-        // 📑 TAB VIEW (Main Content)
+        // TAB VIEW (Main Content)
         // ──────────────────────────────────────────────
         _tabView = new TabView()
         {
@@ -133,7 +132,7 @@ public class TerminalGuiServer : IDisposable
         top.Add(_tabView);
 
         // ──────────────────────────────────────────────
-        // 🧠 Global Key Shortcuts
+        // Global Key Shortcuts
         // ──────────────────────────────────────────────
         Application.RootKeyEvent += args =>
         {
@@ -159,7 +158,7 @@ public class TerminalGuiServer : IDisposable
         };
 
         // ──────────────────────────────────────────────
-        // 🪟 Graceful Resize Handling
+        // Graceful Resize Handling
         // ──────────────────────────────────────────────
         Application.Resized += (_) =>
         {

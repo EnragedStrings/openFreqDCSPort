@@ -333,7 +333,7 @@ public class TestClientWrapper : IDisposable
         long bufferLevel = Bass.ChannelGetData(_playbackStream, IntPtr.Zero, (int)DataFlags.Available);
         double bufferMs = (bufferLevel / 96000.0) * 1000.0;
 
-        const double MAX_BUFFER_MS = 125; // More tolerance
+        const double MAX_BUFFER_MS = 500; // More tolerance
 
         if (bufferMs > MAX_BUFFER_MS)
         {

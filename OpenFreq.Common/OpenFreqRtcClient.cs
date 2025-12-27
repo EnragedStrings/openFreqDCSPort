@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -34,8 +33,9 @@ public class OpenFreqRtcClient : IDisposable
     
     private OpusEncoder _opusEncoder;
     private OpusDecoder _opusDecoder;
-    private byte[] _opusBuffer = new byte[4000];
-    public const int OPUS_FRAME_SIZE = 960;
+    
+    // TODO make this a server config
+    private bool OpusCompressionEnabled = true;
 
     // Connection state
     private readonly string _serverIp;
@@ -119,7 +119,7 @@ public class OpenFreqRtcClient : IDisposable
             IPAddress? ip;
             if (IPAddress.TryParse(ipPort.ipAddress, out ip))
             {
-                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+                if (ip.AddressFamily == AddressFamily.InterNetworkV6)
                 {
                     ipPort.ipAddress = $"[{ipPort.ipAddress}]"; // Wrap IPv6 address in square brackets
                 }
@@ -298,23 +298,42 @@ public class OpenFreqRtcClient : IDisposable
 
         try
         {
-            // Encode PCM data to Opus
-            byte[] opusData = new byte[1920];
-        
-            int opusPacketSize = _opusEncoder.Encode(audioData, OPUS_SAMPLES_PER_FRAME, opusData, opusData.Length);
-
-            Console.Out.WriteLine($"Opus Encoded {audioData.Length} -> {opusPacketSize}");
-            if (opusPacketSize > 0)
+            byte[] packet;
+            if (OpusCompressionEnabled)
             {
-                // Create packet with only the actual encoded bytes
-                var packet = CreateAudioPacket(frequencies, new ArraySegment<byte>(opusData, 0, opusPacketSize).ToArray());
+                // Audio data contains multiple frames (typically 4800 samples = 100ms at 48kHz)
+                // Opus encodes in 20ms frames (960 samples), so we need to encode in chunks
+    
+                int samplesInBuffer = audioData.Length / 2; // 16-bit samples
+                int framesToEncode = samplesInBuffer / OPUS_SAMPLES_PER_FRAME;
+    
+                Console.WriteLine($"[Opus Encode] {samplesInBuffer} samples = {framesToEncode} frames to encode");
+                
+                for (int i = 0; i < framesToEncode; i++)
+                {
+                    int offset = i * OPUS_SAMPLES_PER_FRAME * 2;
+                    byte[] frameData = new byte[OPUS_SAMPLES_PER_FRAME * 2];
+                    Array.Copy(audioData, offset, frameData, 0, frameData.Length);
+    
+                    byte[] opusFrame = new byte[1920];
+                    int frameSize = _opusEncoder.Encode(frameData, OPUS_SAMPLES_PER_FRAME, opusFrame, opusFrame.Length);
 
-                Console.WriteLine($"[SEND] Sending {packet.Length} bytes to {_serverAudioEndpoint}"); // 👈
-            
-                // Send packet
-                int bytesSent = _audioClient.Send(packet, packet.Length, _serverAudioEndpoint);
-                Console.WriteLine($"[SEND] Actually sent {bytesSent} bytes"); // 👈
+                    if (frameSize <= 0) continue;
+                    // Send each frame immediately
+                    packet = CreateAudioPacket(frequencies, opusFrame.Take(frameSize).ToArray());
+                    _logger.LogDebug("Sending {PacketLength} bytes to {ServerAudioEndpoint}", packet.Length, _serverAudioEndpoint);
+                    _audioClient.Send(packet, packet.Length, _serverAudioEndpoint);
+                }
+             
             }
+            else
+            {
+                packet = CreateAudioPacket(frequencies, new ArraySegment<byte>(audioData, 0, audioData.Length).ToArray());
+                _logger.LogDebug("Sending {PacketLength} bytes to {ServerAudioEndpoint}", packet.Length, _serverAudioEndpoint);
+                // Send packet
+                _audioClient.Send(packet, packet.Length, _serverAudioEndpoint);
+            }
+            
         }
         catch (Exception ex)
         {
@@ -402,7 +421,7 @@ public class OpenFreqRtcClient : IDisposable
 
     private async Task ReceiveAudioAsync()
     {
-        _logger.LogDebug("ReceiveAudioAsync() started"); // 👈 Verify task is running
+        _logger.LogDebug("ReceiveAudioAsync() started");
         if (_audioClient == null) return;
 
         while (!_cts.Token.IsCancellationRequested)
@@ -458,14 +477,30 @@ public class OpenFreqRtcClient : IDisposable
 
                 if (audioDataLength > 0)
                 {
-                    byte[] opusAudioData = new byte[audioDataLength];
-                    Array.Copy(result.Buffer, audioDataStart, opusAudioData, 0, audioDataLength);
-
-                    var decoded = new byte[OPUS_SAMPLES_PER_FRAME * 2]; // 👈 Fix: Should be 1920 bytes (960 samples * 2 bytes)
-                    _opusDecoder.Decode(opusAudioData, audioDataLength, decoded, OPUS_SAMPLES_PER_FRAME, false);
+                    byte[] audioData = new byte[audioDataLength];
+                    Array.Copy(result.Buffer, audioDataStart, audioData, 0, audioDataLength);
                     
-                    // Pass audio data WITH position and frequency metadata
-                    OnAudioDataReceived(peerId, decoded, senderPosition, frequency);
+                    if (OpusCompressionEnabled)
+                    {
+                        // Opus can contain up to 120ms per packet (5760 samples)
+                        const int MAX_OPUS_FRAME_SAMPLES = 5760; // 120ms at 48kHz
+                        var decoded = new byte[MAX_OPUS_FRAME_SAMPLES * 2]; // *2 for 16-bit samples
+    
+                        int samplesDecoded = _opusDecoder.Decode(audioData, audioDataLength, decoded, MAX_OPUS_FRAME_SAMPLES, false);
+    
+                        // Only send the actual decoded bytes
+                        if (samplesDecoded > 0)
+                        {
+                            byte[] actualDecoded = new byte[samplesDecoded * 2];
+                            Array.Copy(decoded, actualDecoded, samplesDecoded * 2);
+                            OnAudioDataReceived(peerId, actualDecoded, senderPosition, frequency);
+                        }
+                    }
+                    else
+                    {
+                        OnAudioDataReceived(peerId, audioData, senderPosition, frequency);
+                    }
+
                 }
             }
 

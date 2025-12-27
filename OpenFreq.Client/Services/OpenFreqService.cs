@@ -462,9 +462,7 @@ public class OpenFreqService : IOpenFreqService
             _logger.LogWarning($"Audio data received with 0 size");
             return;
         }
-    
-        _logger.LogDebug($"Audio data received: {e.AudioData.Length}");
-    
+        
         AudioParams audioParams;
         if (e.SenderPosition == null || _ownPosition == null)
         {

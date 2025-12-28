@@ -141,7 +141,8 @@ class Program
                     WebSocketPort = 8080,
                     AudioBasePort = 10000,
                     MaxClientsPerChannel = 50,
-                    MaxChannelsPerClient = 10
+                    MaxChannelsPerClient = 10,
+                    EnableOpusCompression =  true
                 };
 
                 var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions

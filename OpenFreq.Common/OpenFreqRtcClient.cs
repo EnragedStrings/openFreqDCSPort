@@ -31,11 +31,10 @@ public class OpenFreqRtcClient : IDisposable
     public event EventHandler<AudioDataEventArgs>? AudioDataReceived;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
     
-    private OpusEncoder _opusEncoder;
-    private OpusDecoder _opusDecoder;
-    
-    // TODO make this a server config
-    private bool OpusCompressionEnabled = true;
+    private readonly OpusEncoder _opusEncoder;
+    private readonly OpusDecoder _opusDecoder;
+    // set by the server
+    private bool _opusCompressionEnabled = true;
 
     // Connection state
     private readonly string _serverIp;
@@ -299,7 +298,7 @@ public class OpenFreqRtcClient : IDisposable
         try
         {
             byte[] packet;
-            if (OpusCompressionEnabled)
+            if (_opusCompressionEnabled)
             {
                 // Audio data contains multiple frames (typically 4800 samples = 100ms at 48kHz)
                 // Opus encodes in 20ms frames (960 samples), so we need to encode in chunks
@@ -480,7 +479,7 @@ public class OpenFreqRtcClient : IDisposable
                     byte[] audioData = new byte[audioDataLength];
                     Array.Copy(result.Buffer, audioDataStart, audioData, 0, audioDataLength);
                     
-                    if (OpusCompressionEnabled)
+                    if (_opusCompressionEnabled)
                     {
                         // Opus can contain up to 120ms per packet (5760 samples)
                         const int MAX_OPUS_FRAME_SAMPLES = 5760; // 120ms at 48kHz
@@ -573,16 +572,15 @@ public class OpenFreqRtcClient : IDisposable
             {
                 case SignalingMessageTypes.Success:
                     var success = SignalingMessageFactory.DeserializePayload<SuccessMessage>(message.Payload);
-                    if (success != null)
+                    if (success?.PeerId != null)
                     {
-                        if (success.PeerId != null)
-                        {
-                            _myPeerId = success.PeerId;
-                            _audioPort = success.AudioPort ?? 0;
-                            _isAuthenticated = true;
-                            OnConnectionStateChanged(ConnectionState.Authenticated);
-                            OnAuthenticated(_myPeerId, _audioPort);
-                        }
+                        _myPeerId = success.PeerId;
+                        _audioPort = success.AudioPort ?? 0;
+                        _isAuthenticated = true;
+                        _opusCompressionEnabled = success.OpusCompressionEnabled;
+                        _logger.LogDebug("Opus compression enabled: " + _opusCompressionEnabled);
+                        OnConnectionStateChanged(ConnectionState.Authenticated);
+                        OnAuthenticated(_myPeerId, _audioPort);
                     }
 
                     break;

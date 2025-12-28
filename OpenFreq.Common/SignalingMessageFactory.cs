@@ -67,7 +67,7 @@ public static class SignalingMessageFactory
     /// <summary>
     /// Create a success response message
     /// </summary>
-    public static SignalingMessage CreateSuccess(string message, string? peerId = null, int? audioPort = null)
+    public static SignalingMessage CreateSuccess(string message, string? peerId = null, int? audioPort = null, bool opusEnabled = true)
     {
         return new SignalingMessage
         {
@@ -76,7 +76,8 @@ public static class SignalingMessageFactory
             { 
                 Message = message, 
                 PeerId = peerId, 
-                AudioPort = audioPort 
+                AudioPort = audioPort,
+                OpusCompressionEnabled = opusEnabled
             }, SerializerOptions)
         };
     }

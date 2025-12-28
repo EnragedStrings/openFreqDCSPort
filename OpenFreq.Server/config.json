@@ -3,13 +3,5 @@
   "websocketPort": 9987,
   "audioBasePort": 9988,
   "maxClientsPerChannel": 50,
-  "availableFrequencies": [
-    "123.450",
-    "123.475",
-    "123.500",
-    "118.100",
-    "121.500",
-    "122.750",
-    "132.050"
-  ]
+  "opusCompression": true
 }

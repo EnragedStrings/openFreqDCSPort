@@ -116,19 +116,10 @@ public class SignalingServer
         _app.UseWebSockets(new WebSocketOptions
         {
             KeepAliveInterval = TimeSpan.FromMinutes(1),
-            // Allow messages up to 64KB (adjust if you need larger messages)
+            // Allow messages up to 64KB
             ReceiveBufferSize = 64 * 1024
         });
         
-
-        // Health check endpoint (useful for monitoring)
-        _app.MapGet("/health", () => new
-        {
-            status = "healthy",
-            connectedClients = _clients.Count,
-            //activeChannels = _channelManager.GetChannelCount()
-        });
-
         // WebSocket signaling endpoint
         _app.Map("/", async context =>
         {
@@ -143,14 +134,7 @@ public class SignalingServer
                 await context.Response.WriteAsync("WebSocket connection required");
             }
         });
-
-        // Optional: Metrics endpoint
-        _app.MapGet("/metrics", () => new
-        {
-            clients = _clients.Count,
-            //channels = _channelManager.GetActiveChannelCount(),
-            uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime()
-        });
+        
     }
 
     public async Task StartAsync()
@@ -310,7 +294,7 @@ public class SignalingServer
 
             _logClientAuthenticated(_logger, session.Id, audioPort, null);
 
-            await SendSuccess(session, "Authenticated", session.Id, audioPort);
+            await SendSuccess(session, "Authenticated", session.Id, audioPort, _config.EnableOpusCompression);
         }
         else
         {
@@ -499,9 +483,9 @@ public class SignalingServer
         await SendToClient(session, SignalingMessageFactory.CreateError(error));
     }
 
-    private async Task SendSuccess(ClientSession session, string message, string? peerId = null, int? audioPort = null)
+    private async Task SendSuccess(ClientSession session, string message, string? peerId = null, int? audioPort = null, bool opusEnabled = true)
     {
-        await SendToClient(session, SignalingMessageFactory.CreateSuccess(message, peerId, audioPort));
+        await SendToClient(session, SignalingMessageFactory.CreateSuccess(message, peerId, audioPort, opusEnabled));
     }
 
     private async Task SendChannelState(ClientSession session, double frequencyMhz, List<string> peers)

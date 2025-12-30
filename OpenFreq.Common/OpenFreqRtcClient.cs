@@ -3,10 +3,11 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Concentus.Structs;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Common.Rtp;
 using OpenFreq.Common.Signaling;
 using OpenFreqClient;
-using OpusSharp.Core;
 
 namespace OpenFreq.Common;
 
@@ -30,9 +31,10 @@ public class OpenFreqRtcClient : IDisposable
     public event EventHandler<PeerTransmissionEventArgs>? PeerTransmissionStateChanged;
     public event EventHandler<AudioDataEventArgs>? AudioDataReceived;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
-    
-    private readonly OpusEncoder _opusEncoder;
-    private readonly OpusDecoder _opusDecoder;
+
+    private RtpAudioReceiver? _rtpReceiver;
+    private RtpAudioSender? _rtpSender;
+
     // set by the server
     private bool _opusCompressionEnabled = true;
 
@@ -70,8 +72,6 @@ public class OpenFreqRtcClient : IDisposable
         _logger = logger;
         _serverIp = serverIp;
         _password = password;
-        _opusEncoder = new OpusEncoder(SAMPLE_RATE, CHANNELS, OpusPredefinedValues.OPUS_APPLICATION_AUDIO);
-        _opusDecoder = new OpusDecoder(SAMPLE_RATE, CHANNELS);
     }
 
     /// <summary>
@@ -149,15 +149,25 @@ public class OpenFreqRtcClient : IDisposable
                 throw new TimeoutException("Authentication timeout");
             }
 
-            // Setup audio UDP client
-            _audioClient = new UdpClient();
-            _serverAudioEndpoint = new IPEndPoint(IPAddress.Parse(ipPort.ipAddress), _audioPort);
+            // Create RTP sender
+            _rtpSender = new RtpAudioSender(
+                serverHost: ipPort.ipAddress,
+                serverPort: _audioPort,
+                opusEnabled: _opusCompressionEnabled
+            );
 
-            // Send initial packet to establish NAT connection
-            await _audioClient.SendAsync(new byte[] { 0 }, 1, _serverAudioEndpoint);
+            var port = 10000;
+            _rtpReceiver = new RtpAudioReceiver(
+                udpClient: _rtpSender.UdpClient,
+                opusEnabled: _opusCompressionEnabled,
+                initialBufferMs: 150
+            );
 
-            // Start audio receiver
-            _ = Task.Run(ReceiveAudioAsync, _cts.Token);
+            // Subscribe to clean audio events
+            _rtpReceiver.AudioReceived += OnRtpAudioReceived;
+            _rtpReceiver.ErrorOccurred += (sender, error) => { _logger.LogError("RTP Error: {Error}", error); };
+
+          
         }
         catch (Exception ex)
         {
@@ -166,6 +176,18 @@ public class OpenFreqRtcClient : IDisposable
             OnError($"Connection failed: {ex.Message}");
             throw;
         }
+    }
+
+    private void CleanupRTP()
+    {
+        _rtpSender?.Dispose();
+        _rtpSender = null;
+
+        _rtpReceiver?.AudioReceived -= OnRtpAudioReceived;
+        _rtpReceiver?.Dispose();
+        _rtpReceiver = null;
+
+        _logger.LogDebug("RTP Closed");
     }
 
     /// <summary>
@@ -219,7 +241,7 @@ public class OpenFreqRtcClient : IDisposable
         {
             throw new InvalidOperationException($"Not joined to frequency {frequencyMhz}");
         }
-
+        
         _frequencyTransmissionState[frequencyMhz] = true;
         await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyMhz, true));
         OnTransmissionStateChanged(frequencyMhz, true);
@@ -248,149 +270,25 @@ public class OpenFreqRtcClient : IDisposable
         OnTransmissionStateChanged(frequencyMhz, false);
     }
 
-    /// <summary>
-    /// Send audio data to the server with packet metadata
-    /// </summary>
-    public async Task SendAudioDataAsync(byte[] audioData)
+
+    public void SendAudio(byte[] pcmData, AircraftPosition position, List<double> frequencies, bool isFirstPacket)
     {
-        if (_audioClient == null || _serverAudioEndpoint == null)
-        {
-            return;
-        }
-
-        try
-        {
-            // Get list of frequencies currently transmitting
-            var transmittingFrequencies = _frequencyTransmissionState
-                .Where(kvp => kvp.Value)
-                .Select(kvp => kvp.Key)
-                .ToList();
-
-            // Only send if transmitting on at least one frequency
-            if (transmittingFrequencies.Count == 0)
-            {
-                return;
-            }
-
-            // Create packet with metadata (includes position)
-            var packet = CreateAudioPacket(transmittingFrequencies, audioData);
-
-            // Send packet
-            await _audioClient.SendAsync(packet, packet.Length, _serverAudioEndpoint);
-        }
-        catch (Exception ex)
-        {
-            OnError($"Error sending audio data: {ex.Message}");
-        }
+        _rtpSender?.SendAudio(
+            audioData: pcmData,
+            clientId: clientId,
+            position: position,
+            frequencies: frequencies,
+            marker: isFirstPacket  // Set marker bit on PTT press
+        );
     }
-
-    /// <summary>
-    /// Send audio data synchronously (for callbacks) with packet metadata
-    /// </summary>
-    public void SendAudioDataSync(List<double> frequencies, byte[] audioData)
-    {
-        if (_audioClient == null || _serverAudioEndpoint == null || frequencies.Count == 0)
-        {
-            Console.WriteLine($"[SEND] Skipped - client:{_audioClient != null}, endpoint:{_serverAudioEndpoint != null}, freq:{frequencies.Count}"); // 👈
-            return;
-        }
-
-        try
-        {
-            byte[] packet;
-            if (_opusCompressionEnabled)
-            {
-                // Audio data contains multiple frames (typically 4800 samples = 100ms at 48kHz)
-                // Opus encodes in 20ms frames (960 samples), so we need to encode in chunks
     
-                int samplesInBuffer = audioData.Length / 2; // 16-bit samples
-                int framesToEncode = samplesInBuffer / OPUS_SAMPLES_PER_FRAME;
-    
-                Console.WriteLine($"[Opus Encode] {samplesInBuffer} samples = {framesToEncode} frames to encode");
-                
-                for (int i = 0; i < framesToEncode; i++)
-                {
-                    int offset = i * OPUS_SAMPLES_PER_FRAME * 2;
-                    byte[] frameData = new byte[OPUS_SAMPLES_PER_FRAME * 2];
-                    Array.Copy(audioData, offset, frameData, 0, frameData.Length);
-    
-                    byte[] opusFrame = new byte[1920];
-                    int frameSize = _opusEncoder.Encode(frameData, OPUS_SAMPLES_PER_FRAME, opusFrame, opusFrame.Length);
-
-                    if (frameSize <= 0) continue;
-                    // Send each frame immediately
-                    packet = CreateAudioPacket(frequencies, opusFrame.Take(frameSize).ToArray());
-                    _logger.LogDebug("Sending {PacketLength} bytes to {ServerAudioEndpoint}", packet.Length, _serverAudioEndpoint);
-                    _audioClient.Send(packet, packet.Length, _serverAudioEndpoint);
-                }
-             
-            }
-            else
-            {
-                packet = CreateAudioPacket(frequencies, new ArraySegment<byte>(audioData, 0, audioData.Length).ToArray());
-                _logger.LogDebug("Sending {PacketLength} bytes to {ServerAudioEndpoint}", packet.Length, _serverAudioEndpoint);
-                // Send packet
-                _audioClient.Send(packet, packet.Length, _serverAudioEndpoint);
-            }
-            
-        }
-        catch (Exception ex)
-        {
-            OnError($"Error sending audio data: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Creates a UDP audio packet with metadata header including position
-    /// Packet format: [2 bytes: header length][N bytes: JSON metadata][remaining: audio data]
-    /// </summary>
-    private byte[] CreateAudioPacket(List<double> frequencies, byte[] audioData)
-    {
-        // Get current position (thread-safe)
-        AircraftPosition position;
-        lock (_positionLock)
-        {
-            position = new AircraftPosition
-            {
-                X = _currentPosition.X,
-                Y = _currentPosition.Y,
-                Z = _currentPosition.Z
-            };
-        }
-
-        var metadata = new AudioPacketMetadata
-        {
-            clientId = _myPeerId,
-            Frequencies = frequencies,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Position = position
-        };
-
-        var metadataJson = JsonSerializer.Serialize(metadata);
-        var metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
-        var headerLength = (ushort)metadataBytes.Length;
-
-        // Build packet: [2 bytes header length][metadata][audio data]
-        var packet = new byte[2 + metadataBytes.Length + audioData.Length];
-
-        // Write header length (BIG-ENDIAN)
-        packet[0] = (byte)(headerLength >> 8);
-        packet[1] = (byte)(headerLength & 0xFF);
-
-        // Write metadata
-        Array.Copy(metadataBytes, 0, packet, 2, metadataBytes.Length);
-
-        // Write audio data
-        Array.Copy(audioData, 0, packet, 2 + metadataBytes.Length, audioData.Length);
-
-        return packet;
-    }
 
     /// <summary>
     /// Disconnect from the server
     /// </summary>
     public async Task DisconnectAsync()
     {
+        CleanupRTP();
         _cts.Cancel();
 
         if (_webSocket?.State == WebSocketState.Open)
@@ -418,8 +316,15 @@ public class OpenFreqRtcClient : IDisposable
         }
     }
 
+    private void OnRtpAudioReceived(object? sender, RtpAudioReceiver.AudioReceivedEventArgs e)
+    {
+        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata.Position,
+            e.Metadata.Frequencies.Count > 0 ? e.Metadata.Frequencies[0] : 0.0);
+    }
+
     private async Task ReceiveAudioAsync()
     {
+        /*
         _logger.LogDebug("ReceiveAudioAsync() started");
         if (_audioClient == null) return;
 
@@ -428,7 +333,7 @@ public class OpenFreqRtcClient : IDisposable
             try
             {
                 var result = await _audioClient.ReceiveAsync(_cts.Token);
-            
+
                 if (result.Buffer.Length < 2)
                 {
                     continue; // Packet too small
@@ -478,15 +383,15 @@ public class OpenFreqRtcClient : IDisposable
                 {
                     byte[] audioData = new byte[audioDataLength];
                     Array.Copy(result.Buffer, audioDataStart, audioData, 0, audioDataLength);
-                    
+
                     if (_opusCompressionEnabled)
                     {
                         // Opus can contain up to 120ms per packet (5760 samples)
                         const int MAX_OPUS_FRAME_SAMPLES = 5760; // 120ms at 48kHz
                         var decoded = new byte[MAX_OPUS_FRAME_SAMPLES * 2]; // *2 for 16-bit samples
-    
+
                         int samplesDecoded = _opusDecoder.Decode(audioData, audioDataLength, decoded, MAX_OPUS_FRAME_SAMPLES, false);
-    
+
                         // Only send the actual decoded bytes
                         if (samplesDecoded > 0)
                         {
@@ -512,6 +417,7 @@ public class OpenFreqRtcClient : IDisposable
                 OnError($"Error receiving audio: {ex.Message}");
             }
         }
+        */
     }
 
     private async Task ReceiveMessagesAsync()
@@ -745,7 +651,7 @@ public class AuthenticationEventArgs : EventArgs
 
 public class FrequencyJoinedEventArgs(double frequencyMhz, List<string> peers) : EventArgs
 {
-    public List<string> Peers { get;  } = peers;
+    public List<string> Peers { get; } = peers;
     public double FrequencyMhz { get; } = frequencyMhz;
 }
 

@@ -91,7 +91,7 @@ public class SignalingServer
                 listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1;
             });
 
-            // Connection limits (adjust based on your expected load)
+            // Connection limits
             options.Limits.MaxConcurrentConnections = 1000;
             options.Limits.MaxConcurrentUpgradedConnections = 1000;
             
@@ -100,7 +100,7 @@ public class SignalingServer
             options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(30);
         });
 
-        // Replace default logging with your LoggerFactory
+        // Replace default logging with LoggerFactory
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(loggerFactory);
 
@@ -140,21 +140,14 @@ public class SignalingServer
     public async Task StartAsync()
     {
         _logServerStarted(_logger, _config.WebSocketPort, null);
-        
+    
         try
         {
-            await _app!.StartAsync(_cts.Token);           
-            await _app.WaitForShutdownAsync(_cts.Token);
-            
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown
-            _logger.LogInformation("Server shutdown requested");
+            await _app!.StartAsync(_cts.Token);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Fatal error in server");
+            _logger.LogError(ex, "Failed to start server");
             throw;
         }
     }
@@ -526,20 +519,30 @@ public class SignalingServer
     public async Task StopAsync()
     {
         _logger.LogInformation("Stopping signaling server...");
-        
-        _cts.Cancel();
+    
+        // Stop audio server first
         _audioServer.Stop();
-        
+    
+        // Cancel the CTS
+        _cts.Cancel();
+    
+        // Stop the web app
         if (_app != null)
         {
             using var shutdownCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await _app.StopAsync(shutdownCts.Token);
+        
+            try
+            {
+                await _app.StopAsync(shutdownCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("App shutdown timed out");
+            }
+        
             await _app.DisposeAsync();
         }
-        
+    
         _logger.LogInformation("Signaling server stopped");
     }
-
-    // Keep for backward compatibility
-    public void Stop() => StopAsync().GetAwaiter().GetResult();
 }

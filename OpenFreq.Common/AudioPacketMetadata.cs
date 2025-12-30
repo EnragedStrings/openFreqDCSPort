@@ -18,8 +18,16 @@ public class AudioPacketMetadata
     /// <summary>
     /// Optional timestamp for debugging/monitoring
     /// </summary>
-    [JsonPropertyName("timestamp")]
-    public long? Timestamp { get; set; }
+    [JsonPropertyName("capture_timestamp")]
+    public long CaptureTimestamp { get; set; }
+    
+    [JsonPropertyName("send_timestamp")]
+    public long SendTimestamp { get; set; }
+    
+    [JsonPropertyName("server_send_timestamp")]
+
+    public long ServerSendTimestamp { get; set; }
+
     
     [JsonPropertyName("position")]
     public AircraftPosition? Position { get; set; }
@@ -27,7 +35,6 @@ public class AudioPacketMetadata
     public bool In3D { get; set; }
     
     public int PcmDataLength { get; set; }
-
 }
 
 // Position data structure

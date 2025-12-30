@@ -6,19 +6,29 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
+using OpenFreq.Common.Rtp;  // Import RTP classes
 
 namespace OpenFreq.Server;
 
+/// <summary>
+/// Audio stream server with RTP translation.
+/// Acts as RTP translator: parses incoming RTP from clients, rewrites RTP headers
+/// with per-receiver sequence numbers, and forwards to recipients.
+/// </summary>
 public class AudioStreamServer
 {
     private readonly ConcurrentDictionary<string, AudioStreamSession> _sessions = new();
+    private readonly ConcurrentDictionary<string, ReceiverRtpState> _receiverRtpStates = new();
     private readonly FrequencyChannelManager _channelManager;
     private readonly ConcurrentDictionary<string, ClientSession> _clients;
     private readonly ILogger<AudioStreamServer> _logger;
     private readonly UdpStreamManager _udpManager;
     private readonly int _basePort;
-    private int _nextPortOffset = 0; // Thread-safe atomic counter
+    private int _nextPortOffset = 0;
     private CancellationTokenSource _cts = new();
+    
+    // Server's SSRC (synchronization source identifier)
+    private readonly uint _serverSsrc = (uint)Random.Shared.Next();
 
     // High-performance logging delegates
     private static readonly Action<ILogger, string, int, Exception?> _logAudioSessionCreated =
@@ -50,6 +60,8 @@ public class AudioStreamServer
         _logger = loggerFactory.CreateLogger<AudioStreamServer>();
         _basePort = basePort;
         _udpManager = new UdpStreamManager(loggerFactory.CreateLogger<UdpStreamManager>());
+        
+        _logger.LogInformation("AudioStreamServer initialized as RTP translator (SSRC: 0x{Ssrc:X8})", _serverSsrc);
     }
 
     public async Task<int> CreateAudioSession(string clientId)
@@ -62,12 +74,9 @@ public class AudioStreamServer
         {
             try
             {
-                // Atomically get next port offset (thread-safe)
                 var portOffset = Interlocked.Increment(ref _nextPortOffset) - 1;
                 port = _basePort + portOffset;
                 udpClient = _udpManager.CreateUdpClient(clientId, port);
-                
-                // Successfully created - break out of retry loop
                 break;
             }
             catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
@@ -121,13 +130,13 @@ public class AudioStreamServer
                 session.LastReceived = DateTime.UtcNow;
                 session.RemoteEndPoint = result.RemoteEndPoint;
 
-                // Parse packet with metadata
-                var (metadata, audioData) = ParseAudioPacket(result.Buffer);
+                // Parse RTP packet and extract payload
+                var (rtpPacket, metadata, audioData) = ParseRtpAudioPacket(result.Buffer, clientId);
                 
-                if (metadata == null || audioData == null)
+                if (rtpPacket == null || metadata == null || audioData == null)
                 {
                     if (_logger.IsEnabled(LogLevel.Warning))
-                        _logger.LogWarning("Client {ClientId} sent malformed audio packet, skipping", clientId);
+                        _logger.LogWarning("Client {ClientId} sent malformed RTP audio packet, skipping", clientId);
                     continue;
                 }
 
@@ -156,13 +165,11 @@ public class AudioStreamServer
                 if (_logger.IsEnabled(LogLevel.Debug))
                     _logTransmittingOnFrequencies(_logger, clientId, validFrequencies.Count, null);
                 
-                // Build packet once, reuse for all recipients
-                var forwardPacket = CreateAudioPacket(metadata, audioData);
-                
                 // Forward audio to all specified frequencies
+                // Each recipient gets their own RTP packet with unique sequence number
                 foreach (var frequency in validFrequencies)
                 {
-                    ForwardAudioToChannel(frequency, clientId, forwardPacket);
+                    ForwardAudioToChannel(frequency, clientId, rtpPacket, metadata, audioData);
                 }
             }
         }
@@ -177,36 +184,57 @@ public class AudioStreamServer
     }
 
     /// <summary>
-    /// Parses a UDP audio packet with metadata header
-    /// Packet format: [2 bytes: header length][N bytes: JSON metadata][remaining: audio data]
+    /// Parses a UDP RTP audio packet with metadata
+    /// Packet format: [12 bytes RTP header][2 bytes: header length][N bytes: JSON metadata][remaining: audio data]
     /// </summary>
-    private (AudioPacketMetadata? metadata, byte[]? audioData) ParseAudioPacket(byte[] packet)
+    private (RtpPacket? rtpPacket, AudioPacketMetadata? metadata, byte[]? audioData) ParseRtpAudioPacket(
+        byte[] packet, 
+        string clientId)
     {
         try
         {
-            // Minimum packet size: 2 bytes header length + at least some metadata
-            if (packet.Length < 4)
+            // Minimum packet size: 12 bytes RTP + 2 bytes header length + metadata
+            if (packet.Length < RtpPacket.HEADER_SIZE + 4)
             {
                 if (_logger.IsEnabled(LogLevel.Warning))
                     _logger.LogWarning("Packet too small: {Length} bytes", packet.Length);
-                return (null, null);
+                return (null, null, null);
             }
 
-            // Read header length (first 2 bytes, big-endian)
-            var headerLength = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(0, 2));            
-            
-            // Validate header length
-            if (headerLength > packet.Length - 2)
+            // Parse RTP header
+            var rtpPacket = RtpPacket.Parse(packet);
+            if (rtpPacket == null)
             {
                 if (_logger.IsEnabled(LogLevel.Warning))
-                    _logger.LogWarning("Invalid header length: {HeaderLength}, packet size: {PacketLength}", 
-                        headerLength, packet.Length);
-                return (null, null);
+                    _logger.LogWarning("Failed to parse RTP header from client {ClientId}", clientId);
+                return (null, null, null);
+            }
+
+            // RTP payload contains: [2 bytes header len][JSON metadata][audio data]
+            var payload = rtpPacket.Payload;
+            
+            if (payload.Length < 4)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                    _logger.LogWarning("RTP payload too small: {Length} bytes", payload.Length);
+                return (null, null, null);
+            }
+
+            // Read metadata header length (first 2 bytes of payload, big-endian)
+            var headerLength = BinaryPrimitives.ReadUInt16BigEndian(payload.AsSpan(0, 2));
+            
+            // Validate header length
+            if (headerLength > payload.Length - 2)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                    _logger.LogWarning("Invalid metadata header length: {HeaderLength}, payload size: {PayloadLength}", 
+                        headerLength, payload.Length);
+                return (null, null, null);
             }
 
             // Extract metadata JSON
             var metadataBytes = new byte[headerLength];
-            Array.Copy(packet, 2, metadataBytes, 0, headerLength);
+            Array.Copy(payload, 2, metadataBytes, 0, headerLength);
             var metadataJson = Encoding.UTF8.GetString(metadataBytes);
             
             // Parse metadata
@@ -215,57 +243,87 @@ public class AudioStreamServer
             {
                 if (_logger.IsEnabled(LogLevel.Warning))
                     _logger.LogWarning("Failed to deserialize metadata");
-                return (null, null);
+                return (null, null, null);
             }
 
-            // Extract audio data (everything after header)
-            var audioDataLength = packet.Length - 2 - headerLength;
+            // Extract audio data (everything after metadata in payload)
+            var audioDataLength = payload.Length - 2 - headerLength;
             var audioData = new byte[audioDataLength];
-            Array.Copy(packet, 2 + headerLength, audioData, 0, audioDataLength);
+            Array.Copy(payload, 2 + headerLength, audioData, 0, audioDataLength);
 
-            return (metadata, audioData);
+            return (rtpPacket, metadata, audioData);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error parsing audio packet");
-            return (null, null);
+            _logger.LogError(ex, "Error parsing RTP audio packet from client {ClientId}", clientId);
+            return (null, null, null);
         }
     }
 
     /// <summary>
-    /// Creates a UDP audio packet with metadata header
-    /// Packet format: [2 bytes: header length][N bytes: JSON metadata][remaining: audio data]
+    /// Creates an RTP audio packet for a specific receiver
+    /// Each receiver gets their own sequence number from the server
     /// </summary>
-    private static byte[] CreateAudioPacket(AudioPacketMetadata metadata, byte[] audioData)
+    private byte[] CreateRtpAudioPacket(
+        string receiverClientId,
+        RtpPacket originalRtpPacket,
+        AudioPacketMetadata metadata,
+        byte[] audioData)
     {
+        // Get or create RTP state for this receiver
+        var rtpState = _receiverRtpStates.GetOrAdd(receiverClientId, _ => new ReceiverRtpState
+        {
+            NextSequence = 0,
+            PacketsSent = 0
+        });
+
+        // Build metadata payload: [2 bytes header len][JSON metadata][audio data]
+        metadata.ServerSendTimestamp =  DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var metadataJson = JsonSerializer.Serialize(metadata);
         var metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
         var headerLength = (ushort)metadataBytes.Length;
 
-        // Build packet: [2 bytes header length][metadata][audio data]
-        var packet = new byte[2 + metadataBytes.Length + audioData.Length];
+        var payload = new byte[2 + metadataBytes.Length + audioData.Length];
         
         // Write header length (big-endian)
-        packet[0] = (byte)(headerLength >> 8);
-        packet[1] = (byte)(headerLength & 0xFF);
+        payload[0] = (byte)(headerLength >> 8);
+        payload[1] = (byte)(headerLength & 0xFF);
         
         // Write metadata
-        Array.Copy(metadataBytes, 0, packet, 2, metadataBytes.Length);
+        Array.Copy(metadataBytes, 0, payload, 2, metadataBytes.Length);
         
         // Write audio data
-        Array.Copy(audioData, 0, packet, 2 + metadataBytes.Length, audioData.Length);
+        Array.Copy(audioData, 0, payload, 2 + metadataBytes.Length, audioData.Length);
 
-        return packet;
+        // Create new RTP packet with server's sequence number and SSRC
+        var rtpPacket = new RtpPacket
+        {
+            Version = 2,
+            PayloadType = originalRtpPacket.PayloadType,  // Preserve payload type (Opus/PCM)
+            SequenceNumber = rtpState.NextSequence,       // SERVER's sequence for this receiver
+            Timestamp = originalRtpPacket.Timestamp,      // Preserve original timestamp for jitter calc
+            Ssrc = _serverSsrc,                           // Server is the source
+            Marker = originalRtpPacket.Marker,            // Preserve marker bit (PTT press indicator)
+            Payload = payload
+        };
+
+        // Update receiver state
+        rtpState.NextSequence++;
+        rtpState.PacketsSent++;
+
+        return rtpPacket.ToBytes();
     }
 
     /// <summary>
-    /// Forward pre-built audio packet to all clients in a channel
-    /// Packets are dropped if a client can't keep up, preventing compounding delay
+    /// Forward audio to all clients in a channel
+    /// Each recipient gets a unique RTP packet with their own sequence number
     /// </summary>
     private void ForwardAudioToChannel(
         double frequencyMhz, 
-        string sourceClientId, 
-        byte[] preBuiltPacket)
+        string sourceClientId,
+        RtpPacket originalRtpPacket,
+        AudioPacketMetadata metadata,
+        byte[] audioData)
     {
         var clients = _channelManager.GetClientsInChannel(frequencyMhz);
 
@@ -277,17 +335,19 @@ public class AudioStreamServer
             if (_sessions.TryGetValue(clientId, out var targetSession) && 
                 targetSession.RemoteEndPoint != null)
             {
+                // Create RTP packet with receiver-specific sequence number
+                var rtpPacket = CreateRtpAudioPacket(clientId, originalRtpPacket, metadata, audioData);
+
                 // Returns false if packet was dropped due to congestion
-                // This prevents buffer buildup and compounding delays
                 var sent = _udpManager.SendPacketAsync(
                     clientId, 
                     targetSession.UdpClient, 
-                    preBuiltPacket, 
+                    rtpPacket, 
                     targetSession.RemoteEndPoint);
 
                 if (!sent && _logger.IsEnabled(LogLevel.Debug))
                 {
-                    _logger.LogDebug("Packet dropped for client {ClientId} due to congestion", clientId);
+                    _logger.LogDebug("RTP packet dropped for client {ClientId} due to congestion", clientId);
                 }
             }
         }
@@ -300,6 +360,10 @@ public class AudioStreamServer
             _udpManager.RemoveClient(clientId);
             session.UdpClient.Close();
             session.UdpClient.Dispose();
+            
+            // Clean up RTP state
+            _receiverRtpStates.TryRemove(clientId, out _);
+            
             _logSessionRemoved(_logger, clientId, null);
         }
     }
@@ -307,6 +371,23 @@ public class AudioStreamServer
     public ClientStreamStats? GetClientStats(string clientId)
     {
         return _udpManager.GetStats(clientId);
+    }
+
+    /// <summary>
+    /// Get RTP statistics for a receiver
+    /// </summary>
+    public ReceiverRtpStats? GetReceiverRtpStats(string clientId)
+    {
+        if (_receiverRtpStates.TryGetValue(clientId, out var state))
+        {
+            return new ReceiverRtpStats
+            {
+                ClientId = clientId,
+                PacketsSent = state.PacketsSent,
+                CurrentSequence = state.NextSequence
+            };
+        }
+        return null;
     }
 
     public void Stop()
@@ -321,7 +402,28 @@ public class AudioStreamServer
         }
         
         _sessions.Clear();
+        _receiverRtpStates.Clear();
     }
+}
+
+/// <summary>
+/// Per-receiver RTP state tracked by the server
+/// Each receiver gets their own continuous sequence of packets from the server
+/// </summary>
+public class ReceiverRtpState
+{
+    public ushort NextSequence { get; set; }
+    public long PacketsSent { get; set; }
+}
+
+/// <summary>
+/// RTP statistics for a receiver
+/// </summary>
+public class ReceiverRtpStats
+{
+    public string ClientId { get; set; } = "";
+    public long PacketsSent { get; set; }
+    public ushort CurrentSequence { get; set; }
 }
 
 public class AudioStreamSession

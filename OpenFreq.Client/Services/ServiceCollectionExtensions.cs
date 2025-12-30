@@ -20,7 +20,7 @@ public static class ServiceCollectionExtensions
         services.AddLogging(builder =>
         {
             builder.AddConsole();
-            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.SetMinimumLevel(LogLevel.Warning);
         });
         
         // Register services as singletons (one instance for the application lifetime)

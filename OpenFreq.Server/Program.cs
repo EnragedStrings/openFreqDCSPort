@@ -81,17 +81,14 @@ class Program
             using var tui = new TerminalGuiServer(config, stats, logMessages, server);
 
             // Setup graceful shutdown
-            var shutdownRequested = false;
+            var shutdownCts = new CancellationTokenSource();
             Console.CancelKeyPress += (sender, e) =>
             {
-                if (!shutdownRequested)
+                if (!shutdownCts.IsCancellationRequested)
                 {
                     e.Cancel = true;
-                    shutdownRequested = true;
                     Log.Information("Shutdown requested by user");
-                    
-                    tui.Stop();
-                    server.Stop();
+                    shutdownCts.Cancel();  // Signal shutdown, don't block
                 }
             };
 
@@ -108,11 +105,19 @@ class Program
                 }
             });
 
-            // Start TUI (blocks until quit)
-            tui.Start();
+            // Start TUI (blocks until quit or shutdown requested)
+                        var tuiTask = Task.Run(() => tui.Start());
+
+            // Wait for either TUI to quit or Ctrl+C
+                        await Task.WhenAny(tuiTask, Task.Delay(-1, shutdownCts.Token).ContinueWith(_ => { }));
+
+            // Now properly shut down
+                        Log.Information("Shutting down server...");
+                        await server.StopAsync();  // Async all the way
+                        tui.Stop();
 
             // Wait for server to finish
-            await serverTask;
+                        await serverTask;
         }
         catch (Exception ex)
         {

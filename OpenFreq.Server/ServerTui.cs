@@ -56,9 +56,7 @@ public class TerminalGuiServer : IDisposable
     public void Stop()
     {
         if (_cts.IsCancellationRequested) return; // Prevent double-stop
-
         _cts.Cancel();
-        _server?.Stop();
 
         // Wait for update task to finish
         try
@@ -138,9 +136,8 @@ public class TerminalGuiServer : IDisposable
         {
             switch (args.Key)
             {
-                case Key.q:
-                case Key.Q:
-                case Key.Esc:
+                case Key.Q | Key.CtrlMask:
+                case Key.q | Key.CtrlMask:
                     Stop();
                     return true;
                 case Key.F1:
@@ -319,7 +316,8 @@ public class TerminalGuiServer : IDisposable
             $"WS:{_config.WebSocketPort} | Clients: {_stats.AuthenticatedClients}/{_stats.TotalClients} | " +
             $"TX: {_stats.ActiveTransmissions} | " +
             $"Auth:{(!string.IsNullOrEmpty(_config.ServerPassword) ? " Yes" : " No")} | " +
-            $"F1=Freq  F2=Clients  F3=Logs  Q=Quit";
+            $"Opus:{(_config.EnableOpusCompression ? " Yes" : " No")} | " +
+            $"F1=Freq  F2=Clients  F3=Logs  CTRL+q=Quit";
     }
 
     private void UpdateFrequencies()

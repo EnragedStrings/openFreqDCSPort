@@ -55,6 +55,7 @@ public class OpenFreqService : IOpenFreqService
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<OpenFreqService> _logger;
     private int _playbackStream;
+    private bool _isFirstPacket = true;
 
     // Events for UI updates
     public event EventHandler<ConnectionState>? ConnectionStateChanged;
@@ -93,7 +94,7 @@ public class OpenFreqService : IOpenFreqService
         _client.PeerLeft += OnClientPeerLeft;
         _client.TransmissionStateChanged += OnClientTransmissionStateChanged;
         _client.PeerTransmissionStateChanged += OnClientPeerTransmissionStateChanged;
-        _client.AudioDataReceived += OnClientAudioDataReceived; // NEW: Route to playback service
+        _client.AudioDataReceived += OnClientAudioDataReceived;
         _client.ErrorOccurred += OnClientErrorOccurred;
 
         RecordingDeviceIndex = recordingDeviceIndex;
@@ -229,7 +230,7 @@ public class OpenFreqService : IOpenFreqService
         {
             throw new InvalidOperationException("Service not initialized");
         }
-
+        _isFirstPacket = true;  
 
         // Add to active transmissions
         _activeTransmissions.Add(frequency);
@@ -249,6 +250,7 @@ public class OpenFreqService : IOpenFreqService
                 OpenFreqRtcClient.SAMPLE_RATE,
                 OpenFreqRtcClient.CHANNELS,
                 BassFlags.RecordPause,
+                Period: 20,
                 RecordProcedure);
 
             if (_recordHandle == 0)
@@ -335,12 +337,40 @@ public class OpenFreqService : IOpenFreqService
 
         try
         {
+            // Handle first packet - BASS accumulates audio during initialization
+            if (_isFirstPacket)
+            {
+                // Calculate expected size for 20ms at 48kHz, mono, 16-bit
+                // 48000 samples/sec ÷ 50 = 960 samples per 20ms
+                // 960 samples × 2 bytes/sample × 1 channel = 1920 bytes
+                int expectedBytes = (48000 / 50) * 2 * 1; // Adjust channels if needed
+            
+                if (length > expectedBytes)
+                {
+                    Console.WriteLine($"[Recording] First packet oversized: {length} bytes, truncating to {expectedBytes}");
+                
+                    // Option 1: Only use the LAST 20ms (most recent audio)
+                    buffer = IntPtr.Add(buffer, length - expectedBytes);
+                    length = expectedBytes;
+                
+                    // Option 2: Skip first packet entirely (uncomment to use instead)
+                    // _isFirstPacket = false;
+                    // return true;
+                }
+            
+                _isFirstPacket = false;
+            }
+        
             // Copy audio data once
             byte[] audioData = new byte[length];
             Marshal.Copy(buffer, audioData, 0, length);
 
-            // Send to ALL active frequencies (client handles packet creation with position)
-            _client?.SendAudioDataSync(_activeTransmissions.ToList(), audioData);
+            // Send to ALL active frequencies
+            var position = GetAircraftPosition();
+            if (position == null)
+                position = new AircraftPosition { X = 0, Y = 0, Z = 0 };
+        
+            _client?.SendAudio(audioData, position, _activeTransmissions.ToList(), isFirstPacket: false);
         }
         catch (Exception ex)
         {
@@ -489,7 +519,7 @@ public class OpenFreqService : IOpenFreqService
             _logger.LogDebug($"Creating new stream: {streamId}, SR={OpenFreqRtcClient.SAMPLE_RATE}, CH={OpenFreqRtcClient.CHANNELS}");
             _playbackService.StartPushStream(
                 streamId, 
-                OpenFreqRtcClient.SAMPLE_RATE,  // ← Make sure this is 16000!
+                OpenFreqRtcClient.SAMPLE_RATE,
                 OpenFreqRtcClient.CHANNELS,
                 audioParams);
         }

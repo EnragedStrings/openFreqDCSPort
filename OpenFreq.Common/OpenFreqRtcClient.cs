@@ -53,6 +53,7 @@ public class OpenFreqRtcClient : IDisposable
 
     // Transmission state
     private readonly Dictionary<double, bool> _frequencyTransmissionState = new();
+    private readonly Dictionary<double, bool> _frequencyFirstPacketSent = new();
     private readonly Dictionary<double, HashSet<string>> _frequencyPeers = new();
 
     // Aircraft position state (thread-safe)
@@ -224,6 +225,7 @@ public class OpenFreqRtcClient : IDisposable
 
         _frequencyPeers.Remove(frequency);
         _frequencyTransmissionState.Remove(frequency);
+        _frequencyFirstPacketSent.Remove(frequency); // Clean up tracking state
         OnFrequencyLeft(frequency);
     }
 
@@ -243,6 +245,8 @@ public class OpenFreqRtcClient : IDisposable
         }
         
         _frequencyTransmissionState[frequencyMhz] = true;
+        _frequencyFirstPacketSent[frequencyMhz] = false; // Mark that we need to send startMarker
+        
         await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyMhz, true));
         OnTransmissionStateChanged(frequencyMhz, true);
 
@@ -265,21 +269,59 @@ public class OpenFreqRtcClient : IDisposable
             return;
         }
 
+        // Send final silent packet with endMarker
+        var position = GetPosition();
+        var silence = new byte[OPUS_SAMPLES_PER_FRAME * 2]; // 20ms silence, 16-bit PCM
+        
+        _rtpSender?.SendAudio(
+            audioData: silence,
+            clientId: clientId,
+            position: position,
+            frequencies: new List<double> { frequencyMhz },
+            beginMarker: false,
+            endMarker: true
+        );
+        
+        _logger.LogInformation("Sent end marker for frequency {Frequency}", frequencyMhz);
+
         _frequencyTransmissionState[frequencyMhz] = false;
+        _frequencyFirstPacketSent.Remove(frequencyMhz); // Clean up tracking state
+        
         await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyMhz, false));
         OnTransmissionStateChanged(frequencyMhz, false);
     }
 
 
-    public void SendAudio(byte[] pcmData, AircraftPosition position, List<double> frequencies, bool isFirstPacket)
+    public void SendAudio(byte[] pcmData, AircraftPosition position, List<double> frequencies)
     {
+        // Determine if ANY frequency needs a begin marker (first packet for that frequency)
+        bool needsBeginMarker = frequencies.Any(freq => 
+            _frequencyFirstPacketSent.TryGetValue(freq, out var sent) && !sent);
+        
+        if (needsBeginMarker)
+        {
+            _logger.LogDebug("Sending begin marker for frequencies: {Frequencies}", 
+                string.Join(", ", frequencies.Where(f => 
+                    _frequencyFirstPacketSent.TryGetValue(f, out var sent) && !sent)));
+        }
+        
         _rtpSender?.SendAudio(
             audioData: pcmData,
             clientId: clientId,
             position: position,
             frequencies: frequencies,
-            marker: isFirstPacket  // Set marker bit on PTT press
+            beginMarker: needsBeginMarker,
+            endMarker: false  // Never set endMarker in normal sends (only in StopTransmissionAsync)
         );
+        
+        // Mark all frequencies as having sent first packet
+        if (needsBeginMarker)
+        {
+            foreach (var freq in frequencies)
+            {
+                _frequencyFirstPacketSent[freq] = true;
+            }
+        }
     }
     
 
@@ -318,108 +360,9 @@ public class OpenFreqRtcClient : IDisposable
 
     private void OnRtpAudioReceived(object? sender, RtpAudioReceiver.AudioReceivedEventArgs e)
     {
-        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata.Position,
-            e.Metadata.Frequencies.Count > 0 ? e.Metadata.Frequencies[0] : 0.0);
+        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata, e.TransmissionBeginMarker, e.TransmissionEndMarker);
     }
-
-    private async Task ReceiveAudioAsync()
-    {
-        /*
-        _logger.LogDebug("ReceiveAudioAsync() started");
-        if (_audioClient == null) return;
-
-        while (!_cts.Token.IsCancellationRequested)
-        {
-            try
-            {
-                var result = await _audioClient.ReceiveAsync(_cts.Token);
-
-                if (result.Buffer.Length < 2)
-                {
-                    continue; // Packet too small
-                }
-
-                // Read header length (BIG-ENDIAN)
-                ushort headerLength = (ushort)((result.Buffer[0] << 8) | result.Buffer[1]);
-                if (result.Buffer.Length < 2 + headerLength)
-                {
-                    Console.WriteLine(
-                        $"[CLIENT] Packet incomplete: header={headerLength}, packet={result.Buffer.Length}");
-                    continue; // Packet incomplete
-                }
-
-                // Parse metadata from JSON
-                AircraftPosition? senderPosition = null;
-                double frequency = 0;
-                string peerId = string.Empty;
-                try
-                {
-                    // Extract metadata JSON
-                    string metadataJson = Encoding.UTF8.GetString(result.Buffer, 2, headerLength);
-                    var metadata = JsonSerializer.Deserialize<AudioPacketMetadata>(metadataJson);
-
-                    if (metadata != null)
-                    {
-                        peerId = metadata.clientId;
-                        senderPosition = metadata.Position;
-                        // Use first frequency if available
-                        if (metadata.Frequencies != null && metadata.Frequencies.Count > 0)
-                        {
-                            frequency = metadata.Frequencies[0];
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"Failed to parse metadata: {ex.Message}");
-                    continue; // Skip malformed packets
-                }
-
-                // Extract audio data (skip header length and metadata)
-                int audioDataStart = 2 + headerLength;
-                int audioDataLength = result.Buffer.Length - audioDataStart;
-
-                if (audioDataLength > 0)
-                {
-                    byte[] audioData = new byte[audioDataLength];
-                    Array.Copy(result.Buffer, audioDataStart, audioData, 0, audioDataLength);
-
-                    if (_opusCompressionEnabled)
-                    {
-                        // Opus can contain up to 120ms per packet (5760 samples)
-                        const int MAX_OPUS_FRAME_SAMPLES = 5760; // 120ms at 48kHz
-                        var decoded = new byte[MAX_OPUS_FRAME_SAMPLES * 2]; // *2 for 16-bit samples
-
-                        int samplesDecoded = _opusDecoder.Decode(audioData, audioDataLength, decoded, MAX_OPUS_FRAME_SAMPLES, false);
-
-                        // Only send the actual decoded bytes
-                        if (samplesDecoded > 0)
-                        {
-                            byte[] actualDecoded = new byte[samplesDecoded * 2];
-                            Array.Copy(decoded, actualDecoded, samplesDecoded * 2);
-                            OnAudioDataReceived(peerId, actualDecoded, senderPosition, frequency);
-                        }
-                    }
-                    else
-                    {
-                        OnAudioDataReceived(peerId, audioData, senderPosition, frequency);
-                    }
-
-                }
-            }
-
-            catch (OperationCanceledException)
-            {
-                // Expected during shutdown
-            }
-            catch (Exception ex)
-            {
-                OnError($"Error receiving audio: {ex.Message}");
-            }
-        }
-        */
-    }
-
+    
     private async Task ReceiveMessagesAsync()
     {
         if (_webSocket == null) return;
@@ -597,9 +540,8 @@ public class OpenFreqRtcClient : IDisposable
     private void OnPeerTransmissionStateChanged(string peerId, double frequencyMhz, bool isTransmitting) =>
         PeerTransmissionStateChanged?.Invoke(this, new PeerTransmissionEventArgs(peerId, frequencyMhz, isTransmitting));
 
-    private void OnAudioDataReceived(string peerId, byte[] audioData, AircraftPosition? senderPosition = null,
-        double frequencyMhz = 0) =>
-        AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, senderPosition, frequencyMhz));
+    private void OnAudioDataReceived(string peerId, byte[] audioData, AudioPacketMetadata metadata, bool isFirstPacket, bool isLastPacket) =>
+        AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, metadata, isFirstPacket, isLastPacket));
 
     private void OnError(string errorMessage) =>
         ErrorOccurred?.Invoke(this, new ErrorEventArgs(errorMessage));
@@ -703,16 +645,18 @@ public class AudioDataEventArgs : EventArgs
 {
     public string PeerId { get; }
     public byte[] AudioData { get; }
-    public AircraftPosition? SenderPosition { get; }
-    public double FrequencyMhz { get; }
-
-    public AudioDataEventArgs(string peerId, byte[] audioData, AircraftPosition? senderPosition = null,
-        double frequencyMhz = 0)
+    public AudioPacketMetadata Metadata { get; }
+    
+    public bool IsFirstPacket { get; }
+    public bool IsLastPacket { get; }
+    
+    public AudioDataEventArgs(string peerId, byte[] audioData, AudioPacketMetadata metadata, bool isFirstPacket, bool isLastPacket)
     {
         PeerId = peerId;
         AudioData = audioData;
-        SenderPosition = senderPosition;
-        FrequencyMhz = frequencyMhz;
+        Metadata = metadata;
+        IsFirstPacket = isFirstPacket;
+        IsLastPacket = isLastPacket;
     }
 }
 

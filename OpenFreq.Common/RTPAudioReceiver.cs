@@ -2,6 +2,7 @@
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Concentus;
 using Concentus.Structs;
 using OpenFreq.Common.Rtp;
 
@@ -17,7 +18,9 @@ public class RtpAudioReceiver : IDisposable
     public class AudioReceivedEventArgs : EventArgs
     {
         public byte[] AudioData { get; set; } = Array.Empty<byte>();
-        public AudioPacketMetadata Metadata { get; set; }
+        public required AudioPacketMetadata Metadata { get; set; }
+        public required bool TransmissionBeginMarker { get; set; }
+        public required bool TransmissionEndMarker { get; set; }
     }
 
     public event EventHandler<AudioReceivedEventArgs>? AudioReceived;
@@ -44,7 +47,7 @@ public class RtpAudioReceiver : IDisposable
 
         if (_opusEnabled)
         {
-            _opusDecoder = new OpusDecoder(48000, 1); // 48kHz, mono
+            _opusDecoder = OpusCodecFactory.CreateDecoder(OpenFreqRtcClient.SAMPLE_RATE, OpenFreqRtcClient.CHANNELS) as OpusDecoder;
         }
 
         // Create jitter buffer
@@ -120,7 +123,13 @@ public class RtpAudioReceiver : IDisposable
                 Console.WriteLine("[RtpAudioReceiver] Invalid RTP packet");
                 return;
             }
-            if (rtpPacket.Marker)
+            
+            if (rtpPacket.TransmissionBeginMarker)
+                Console.WriteLine("[RtpAudioReceiver] BEGIN marker");
+            if (rtpPacket.TransmissionEndMarker)
+                Console.WriteLine("[RtpAudioReceiver] END marker");
+            
+            if (rtpPacket.TransmissionBeginMarker)
                 _jitterBuffer.Reset();
 
             // Add to jitter buffer (handles reordering, timing)
@@ -207,15 +216,12 @@ public class RtpAudioReceiver : IDisposable
             }
 
             // Fire event with clean audio
-            string peerId = metadata.clientId;
-            double frequency = metadata.Frequencies?.Count > 0 ? metadata.Frequencies[0] : 0.0;
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            Console.Out.WriteLine($"Received Audio Packet | captureTimestampDelta = {now - metadata.CaptureTimestamp} sendTimestampDelta = {now - metadata.SendTimestamp} serverSendTimestampDelta = {now - metadata.ServerSendTimestamp}");
-
             AudioReceived?.Invoke(this, new AudioReceivedEventArgs
             {
                 AudioData = decodedAudio,
-                Metadata = metadata
+                Metadata = metadata,
+                TransmissionBeginMarker = packet.TransmissionBeginMarker,
+                TransmissionEndMarker = packet.TransmissionEndMarker
             });
         }
         catch (Exception ex)

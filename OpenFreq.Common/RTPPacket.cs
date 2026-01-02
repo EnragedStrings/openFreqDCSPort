@@ -13,7 +13,8 @@ namespace OpenFreq.Common.Rtp
         public bool Padding { get; set; }
         public bool Extension { get; set; }
         public byte CsrcCount { get; set; }
-        public bool Marker { get; set; }
+        public bool TransmissionBeginMarker { get; set; }
+        public bool TransmissionEndMarker { get; set; }
         public byte PayloadType { get; set; }
         public ushort SequenceNumber { get; set; }
         public uint Timestamp { get; set; }
@@ -31,18 +32,19 @@ namespace OpenFreq.Common.Rtp
         {
             if (data.Length < HEADER_SIZE)
                 return null;
-            
+    
             var packet = new RtpPacket();
-            
+    
             // Byte 0: V(2), P(1), X(1), CC(4)
             packet.Version = (byte)((data[0] >> 6) & 0x03);
             packet.Padding = (data[0] & 0x20) != 0;
             packet.Extension = (data[0] & 0x10) != 0;
             packet.CsrcCount = (byte)(data[0] & 0x0F);
-            
-            // Byte 1: M(1), PT(7)
-            packet.Marker = (data[1] & 0x80) != 0;
-            packet.PayloadType = (byte)(data[1] & 0x7F);
+    
+            // Byte 1: BeginMarker(1), EndMarker(1), PT(6)
+            packet.TransmissionBeginMarker = (data[1] & 0x80) != 0;
+            packet.TransmissionEndMarker = (data[1] & 0x40) != 0;
+            packet.PayloadType = (byte)(data[1] & 0x3F);
             
             // Bytes 2-3: Sequence number (big-endian)
             packet.SequenceNumber = (ushort)((data[2] << 8) | data[3]);
@@ -78,12 +80,16 @@ namespace OpenFreq.Common.Rtp
         {
             int totalLength = HEADER_SIZE + Payload.Length;
             byte[] data = new byte[totalLength];
-            
+    
             // Byte 0: V(2), P(1), X(1), CC(4)
             data[0] = (byte)((Version << 6) | (Padding ? 0x20 : 0) | (Extension ? 0x10 : 0) | CsrcCount);
-            
-            // Byte 1: M(1), PT(7)
-            data[1] = (byte)((Marker ? 0x80 : 0) | PayloadType);
+    
+            // Byte 1: BeginMarker(1), EndMarker(1), PT(6)
+            data[1] = (byte)(
+                (TransmissionBeginMarker ? 0x80 : 0) | 
+                (TransmissionEndMarker ? 0x40 : 0) | 
+                (PayloadType & 0x3F)
+            );
             
             // Bytes 2-3: Sequence number (big-endian)
             data[2] = (byte)(SequenceNumber >> 8);

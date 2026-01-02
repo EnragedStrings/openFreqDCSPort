@@ -42,10 +42,10 @@ public class RtpAudioSender : IDisposable
         public string ClientId;
         public AircraftPosition? Position;
         public List<double> Frequencies;
-        public bool Marker;
+        public bool BeginMarker;
+        public bool EndMarker;
         public uint Timestamp;
         public ushort SequenceNumber;
-        public long CaptureTimestamp;
     }
 
     // Sending Queue - now holds raw PCM data, encoding happens in pacing timer
@@ -53,7 +53,7 @@ public class RtpAudioSender : IDisposable
 
     private System.Timers.Timer? _pacingTimer;
     private readonly object _queueLock = new object();
-    
+
     // Reusable buffers to avoid allocations in pacing timer
     private readonly byte[] _opusBuffer = new byte[4000];
     private readonly short[] _pcmSamples = new short[OPUS_FRAME_SIZE * OpenFreqRtcClient.CHANNELS];
@@ -89,7 +89,8 @@ public class RtpAudioSender : IDisposable
         if (_opusEnabled)
         {
             _opusEncoder =
-                OpusCodecFactory.CreateEncoder(sampleRate: OpenFreqRtcClient.SAMPLE_RATE, OpenFreqRtcClient.CHANNELS) as
+                OpusCodecFactory.CreateEncoder(sampleRate: OpenFreqRtcClient.SAMPLE_RATE, OpenFreqRtcClient.CHANNELS,
+                        OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY) as
                     OpusEncoder;
 
             // Configure for low latency VoIP
@@ -99,7 +100,7 @@ public class RtpAudioSender : IDisposable
             _opusEncoder.UseInbandFEC = true; // Forward error correction
             _opusEncoder.PacketLossPercent = 5; // Assume 5% loss for FEC tuning
         }
-        
+
         // Start pacing timer - sends one packet every 10ms
         _pacingTimer = new System.Timers.Timer(10); // 10ms interval
         _pacingTimer.Elapsed += OnPacingTimerElapsed;
@@ -120,15 +121,15 @@ public class RtpAudioSender : IDisposable
     /// <param name="clientId">Sender client ID</param>
     /// <param name="position">Aircraft position</param>
     /// <param name="frequencies">Radio frequencies</param>
-    /// <param name="marker">Marker bit (true for first packet of transmission, e.g., PTT press)</param>
+    /// <param name="beginMarker">Marker bit (true for first packet of transmission, e.g., PTT press)</param>
+    /// <param name="endMarker">Marker bit (true for last packet of transmission, e.g., PTT release)</param>
     /// 
-    public void SendAudio(
-        byte[] audioData,
-        string clientId,
-        AircraftPosition? position,
-        List<double> frequencies,
-        bool marker = false)
+    public void SendAudio(byte[] audioData, string clientId, AircraftPosition? position, List<double> frequencies,
+        bool beginMarker = false, bool endMarker=false)
     {
+        if (endMarker)
+            Console.WriteLine($"[RtpAudioSender] SENDING End Marker");
+        
         try
         {
             int offset = 0;
@@ -148,8 +149,8 @@ public class RtpAudioSender : IDisposable
                 // If we have a complete frame, queue it (encoding happens in pacing timer)
                 if (_bufferPosition >= _audioBuffer.Length)
                 {
-                    QueueRawFrame(clientId, position, frequencies, marker);
-                    marker = false; // Only first frame gets marker
+                    QueueRawFrame(clientId, position, frequencies, beginMarker, endMarker);
+                    beginMarker = false; // Only first frame gets marker
                     _bufferPosition = 0;
                 }
             }
@@ -160,13 +161,10 @@ public class RtpAudioSender : IDisposable
         }
     }
 
-    private void QueueRawFrame(
-        string clientId,
-        AircraftPosition? position,
-        List<double> frequencies,
-        bool marker)
+    private void QueueRawFrame(string clientId, AircraftPosition? position, List<double> frequencies,
+        bool beginMarker, bool endMarker)
     {
-        // Copy the buffer data (must copy since _audioBuffer will be reused)
+       // Copy the buffer data (must copy since _audioBuffer will be reused)
         byte[] pcmCopy = new byte[_audioBuffer.Length];
         Buffer.BlockCopy(_audioBuffer, 0, pcmCopy, 0, _audioBuffer.Length);
 
@@ -176,10 +174,10 @@ public class RtpAudioSender : IDisposable
             ClientId = clientId,
             Position = position,
             Frequencies = frequencies,
-            Marker = marker,
+            BeginMarker = beginMarker,
+            EndMarker = endMarker,
             Timestamp = _timestamp,
             SequenceNumber = _sequenceNumber,
-            CaptureTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
         lock (_queueLock)
@@ -196,7 +194,7 @@ public class RtpAudioSender : IDisposable
     private void OnPacingTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
     {
         QueuedAudio? queued = null;
-        
+
         lock (_queueLock)
         {
             if (_sendQueue.Count == 0)
@@ -211,11 +209,9 @@ public class RtpAudioSender : IDisposable
         try
         {
             var queuedValue = queued.Value;
-            
+
             // Encode audio (happens here, not in audio callback)
             byte[] encodedAudio;
-            int samplesInPacket;
-
             if (_opusEnabled && _opusEncoder != null)
             {
                 // Convert byte[] to short[] using reusable buffer
@@ -239,13 +235,11 @@ public class RtpAudioSender : IDisposable
 
                 encodedAudio = new byte[opusBytes];
                 Array.Copy(_opusBuffer, encodedAudio, opusBytes);
-                samplesInPacket = OPUS_FRAME_SIZE;
             }
             else
             {
                 // Raw PCM
                 encodedAudio = queuedValue.PcmData;
-                samplesInPacket = OPUS_FRAME_SIZE * OpenFreqRtcClient.CHANNELS;
             }
 
             // Build metadata
@@ -254,8 +248,6 @@ public class RtpAudioSender : IDisposable
                 clientId = queuedValue.ClientId,
                 Position = queuedValue.Position,
                 Frequencies = queuedValue.Frequencies,
-                CaptureTimestamp =  queuedValue.CaptureTimestamp,
-                SendTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
 
             string metadataJson = JsonSerializer.Serialize(metadata);
@@ -277,10 +269,11 @@ public class RtpAudioSender : IDisposable
                 SequenceNumber = queuedValue.SequenceNumber,
                 Timestamp = queuedValue.Timestamp,
                 Ssrc = _ssrc,
-                Marker = queuedValue.Marker,
+                TransmissionBeginMarker = queuedValue.BeginMarker,
+                TransmissionEndMarker =  queuedValue.EndMarker,
                 Payload = payload
             };
-
+            
             // Send the packet
             byte[] rtpBytes = rtpPacket.ToBytes();
             _udpClient.Send(rtpBytes, rtpBytes.Length, _serverEndpoint);

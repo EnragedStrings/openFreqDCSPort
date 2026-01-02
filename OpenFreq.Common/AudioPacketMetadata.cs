@@ -27,7 +27,6 @@ public class AudioPacketMetadata
     [JsonPropertyName("server_send_timestamp")]
 
     public long ServerSendTimestamp { get; set; }
-
     
     [JsonPropertyName("position")]
     public AircraftPosition? Position { get; set; }

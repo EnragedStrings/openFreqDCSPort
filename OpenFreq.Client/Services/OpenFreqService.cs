@@ -29,15 +29,16 @@ public class OpenFreqService : IOpenFreqService
 
     public int RecordingDeviceIndex { get; set; }
     private int _playbackDeviceIndex;
-    
-    private Dictionary<string, Dictionary<int, string>> _peerStreams = new (); // Holds all peer streams, ordered by peer ID and frequency
-    
-    public OpenFreqService(ILogger <OpenFreqService> logger, ILoggerFactory loggerFactory)
+
+    private Dictionary<string, Dictionary<double, string>>
+        _peerStreams = new(); // Holds all peer streams, ordered by peer ID and frequency
+
+    public OpenFreqService(ILogger<OpenFreqService> logger, ILoggerFactory loggerFactory)
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
     }
-    
+
     public int PlaybackDeviceIndex
     {
         get => _playbackDeviceIndex;
@@ -54,8 +55,6 @@ public class OpenFreqService : IOpenFreqService
     private AircraftPosition? _ownPosition;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<OpenFreqService> _logger;
-    private int _playbackStream;
-    private bool _isFirstPacket = true;
 
     // Events for UI updates
     public event EventHandler<ConnectionState>? ConnectionStateChanged;
@@ -66,7 +65,7 @@ public class OpenFreqService : IOpenFreqService
     public bool IsConnected => _client?.IsConnected ?? false;
     public bool IsAuthenticated => _client?.IsAuthenticated ?? false;
     public string? PeerId => _client?.MyPeerId;
-    
+
 
     /// <summary>
     /// Initialize the service with server settings and audio devices
@@ -82,7 +81,8 @@ public class OpenFreqService : IOpenFreqService
 
         // Create client with server settings
         Console.WriteLine($"[SERVICE] Creating new client");
-        _client = new OpenFreqRtcClient(_loggerFactory.CreateLogger<OpenFreqRtcClient>(), settings.OpenFreqServerAddress, settings.OpenFreqPassword);
+        _client = new OpenFreqRtcClient(_loggerFactory.CreateLogger<OpenFreqRtcClient>(),
+            settings.OpenFreqServerAddress, settings.OpenFreqPassword);
         Console.WriteLine($"[SERVICE] Client created: {_client.GetHashCode()}");
 
         // Subscribe to client events
@@ -99,7 +99,7 @@ public class OpenFreqService : IOpenFreqService
 
         RecordingDeviceIndex = recordingDeviceIndex;
         _playbackDeviceIndex = playbackDeviceIndex;
-        
+
         _playbackService = new RadioPlayback(true);
         _playbackService.Initialize(playbackDeviceIndex);
 
@@ -196,7 +196,7 @@ public class OpenFreqService : IOpenFreqService
         await _client.JoinFrequencyAsync(frequencyMhz);
         OnStatusMessage($"Joined frequency {frequencyMhz}");
         _playbackService.TuneFrequency(frequencyMhz);
-        
+
         // TODO
         _playbackService.SetSquelchLevel(frequencyMhz, 0.1f);
     }
@@ -230,13 +230,12 @@ public class OpenFreqService : IOpenFreqService
         {
             throw new InvalidOperationException("Service not initialized");
         }
-        _isFirstPacket = true;  
 
         // Add to active transmissions
         _activeTransmissions.Add(frequency);
         // Mute the noise
         //_playbackService.SetSquelchLevel(frequency, 1.0f);
-        
+
         // If this is the FIRST transmission, start recording
         if (_recordHandle == 0)
         {
@@ -273,7 +272,7 @@ public class OpenFreqService : IOpenFreqService
     public async Task StopTransmissionAsync(double frequencyMhz)
     {
         if (_client == null) return;
-
+        
         // Remove from active transmissions
         _activeTransmissions.Remove(frequencyMhz);
 
@@ -325,7 +324,7 @@ public class OpenFreqService : IOpenFreqService
     {
         _demReader?.Dispose();
         _demReader = new DEMReader(path, width, height, bytesPerSample);
-        _audioSim = new FastPathAudioSim(_demReader, 0,0, 20, _loggerFactory.CreateLogger<FastPathAudioSim>());
+        _audioSim = new FastPathAudioSim(_demReader, 0, 0, 20, _loggerFactory.CreateLogger<FastPathAudioSim>());
         OnStatusMessage($"Heightmap loaded: {path}");
     }
 
@@ -338,29 +337,26 @@ public class OpenFreqService : IOpenFreqService
         try
         {
             // Handle first packet - BASS accumulates audio during initialization
-            if (_isFirstPacket)
+            // Calculate expected size for 20ms at 48kHz, mono, 16-bit
+            // 48000 samples/sec ÷ 50 = 960 samples per 20ms
+            // 960 samples × 2 bytes/sample × 1 channel = 1920 bytes
+            int expectedBytes = (OpenFreqRtcClient.SAMPLE_RATE / 50) * 2 * OpenFreqRtcClient.CHANNELS;
+            
+            // TODO: I dont think we need this anymore with the shorter dsp updates. Deactivated for now
+            expectedBytes = 10000;
+
+            if (length > expectedBytes)
             {
-                // Calculate expected size for 20ms at 48kHz, mono, 16-bit
-                // 48000 samples/sec ÷ 50 = 960 samples per 20ms
-                // 960 samples × 2 bytes/sample × 1 channel = 1920 bytes
-                int expectedBytes = (48000 / 50) * 2 * 1; // Adjust channels if needed
-            
-                if (length > expectedBytes)
-                {
-                    Console.WriteLine($"[Recording] First packet oversized: {length} bytes, truncating to {expectedBytes}");
-                
-                    // Option 1: Only use the LAST 20ms (most recent audio)
-                    buffer = IntPtr.Add(buffer, length - expectedBytes);
-                    length = expectedBytes;
-                
-                    // Option 2: Skip first packet entirely (uncomment to use instead)
-                    // _isFirstPacket = false;
-                    // return true;
-                }
-            
-                _isFirstPacket = false;
+                Console.WriteLine(
+                    $"[Recording] Packet oversized: {length} bytes, truncating to {expectedBytes}");
+                // Option 1: Only use the LAST 20ms (most recent audio)
+                buffer = IntPtr.Add(buffer, length - expectedBytes);
+                length = expectedBytes;
+
+                // Option 2: Skip first packet entirely (uncomment to use instead)
+                //_isFirstPacket = false;
+                //return true;
             }
-        
             // Copy audio data once
             byte[] audioData = new byte[length];
             Marshal.Copy(buffer, audioData, 0, length);
@@ -369,8 +365,8 @@ public class OpenFreqService : IOpenFreqService
             var position = GetAircraftPosition();
             if (position == null)
                 position = new AircraftPosition { X = 0, Y = 0, Z = 0 };
-        
-            _client?.SendAudio(audioData, position, _activeTransmissions.ToList(), isFirstPacket: false);
+
+            _client?.SendAudio(audioData, position, _activeTransmissions.ToList());
         }
         catch (Exception ex)
         {
@@ -407,6 +403,7 @@ public class OpenFreqService : IOpenFreqService
         {
             CreateAudioStreamForPeer(e.FrequencyMhz, peer);
         }
+
         OnFrequencyStatusChanged(e.FrequencyMhz, Channel.ChannelStatus.Connected);
     }
 
@@ -425,22 +422,27 @@ public class OpenFreqService : IOpenFreqService
     private void CreateAudioStreamForPeer(double frequencyMhz, string peerId)
     {
         // Create stream for this peer-frequency combination
-        string streamId = $"{peerId}:{frequencyMhz}";
-    
+        string streamId = GetStreamId(peerId, frequencyMhz);
+
         // Start with default params (will update when we get position data)
         var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyMhz);
-    
+
         _playbackService.StartPushStream(
-            streamId, 
-            OpenFreqRtcClient.SAMPLE_RATE, 
+            streamId,
+            OpenFreqRtcClient.SAMPLE_RATE,
             OpenFreqRtcClient.CHANNELS,
             audioParams
         );
-    
+
         // Track it
         if (!_peerStreams.ContainsKey(peerId))
-            _peerStreams[peerId] = new Dictionary<int, string>();
-        _peerStreams[peerId][(int)frequencyMhz] = streamId;
+            _peerStreams[peerId] = new Dictionary<double, string>();
+        _peerStreams[peerId][frequencyMhz] = streamId;
+    }
+
+    private static string GetStreamId(string peerId, double frequencyMhz)
+    {
+        return peerId + ":" + frequencyMhz;
     }
 
     private void OnClientPeerLeft(object? sender, PeerEventArgs e)
@@ -448,12 +450,13 @@ public class OpenFreqService : IOpenFreqService
         // Remove stream when peer leaves
         if (_peerStreams.TryGetValue(e.PeerId, out var freqs))
         {
-            if (freqs.TryGetValue((int)e.FrequencyMhz, out var streamId))
+            if (freqs.TryGetValue(e.FrequencyMhz, out var streamId))
             {
-                _playbackService.StopStream(streamId); // Handles squelch burst
-                freqs.Remove((int)e.FrequencyMhz);
+                _playbackService.StopStream(streamId);
+                freqs.Remove(e.FrequencyMhz);
             }
         }
+
         OnPeerActivity($"Peer {e.PeerId[..Math.Min(8, e.PeerId.Length)]} left {e.FrequencyMhz}");
     }
 
@@ -465,19 +468,18 @@ public class OpenFreqService : IOpenFreqService
 
     private void OnClientPeerTransmissionStateChanged(object? sender, PeerTransmissionEventArgs e)
     {
-        var peerId = e.PeerId[..Math.Min(8, e.PeerId.Length)];
         var state = e.IsTransmitting ? "transmitting" : "stopped";
-        OnPeerActivity($"Peer {peerId} {state} on {e.FrequencyMhz}");
-        
+        OnPeerActivity($"Peer {e.PeerId} {state} on {e.FrequencyMhz}");
+
+        var streamId = GetStreamId(e.PeerId, e.FrequencyMhz);
         if (e.IsTransmitting)
         {
+            _playbackService?.OnWebSocketPTTPress(streamId);
             OnFrequencyStatusChanged(e.FrequencyMhz, Channel.ChannelStatus.Receiving);
         }
         else
         {
-            string streamId = $"{e.PeerId}:{e.FrequencyMhz}";
-            // PTT released - mark stream as silent
-            _playbackService?.MarkStreamSilent(streamId);
+            _playbackService?.OnWebSocketPTTRelease(streamId);
             OnFrequencyStatusChanged(e.FrequencyMhz, Channel.ChannelStatus.Connected);
         }
     }
@@ -487,46 +489,59 @@ public class OpenFreqService : IOpenFreqService
     /// </summary>
     private void OnClientAudioDataReceived(object? sender, AudioDataEventArgs e)
     {
-         if (e.AudioData == null || e.AudioData.Length == 0)
+        if (e.AudioData == null || e.AudioData.Length == 0)
         {
             _logger.LogWarning($"Audio data received with 0 size");
             return;
         }
-        
-        AudioParams audioParams;
-        if (e.SenderPosition == null || _ownPosition == null)
-        {
-            _logger.LogDebug($"No position data, using defaults for {e.FrequencyMhz}");
-            audioParams = FastPathAudioSim.GetDefaultAudioParams(e.FrequencyMhz);
-        }
-        else
-        {
-            audioParams = _audioSim.CalculateAudioParams(
-                e.SenderPosition.X, e.SenderPosition.Y, e.SenderPosition.Z,
-                _ownPosition.X, _ownPosition.Y, _ownPosition.Z, 
-                e.FrequencyMhz);
-        }
-    
-        _logger.LogDebug($"Audio params: Gain={audioParams.Gain}, SNR={audioParams.SNR_dB}");
 
-        string streamId = e.PeerId + ":" + e.FrequencyMhz;
-        // Check if stream exists
-        bool streamExists = _playbackService.IsStreamActive(streamId);
-        _logger.LogDebug($"Stream {streamId} exists: {streamExists}");
-    
-        if (!streamExists)
+        if (e.Metadata.Frequencies.Count == 0)
         {
-            _logger.LogDebug($"Creating new stream: {streamId}, SR={OpenFreqRtcClient.SAMPLE_RATE}, CH={OpenFreqRtcClient.CHANNELS}");
-            _playbackService.StartPushStream(
-                streamId, 
-                OpenFreqRtcClient.SAMPLE_RATE,
-                OpenFreqRtcClient.CHANNELS,
-                audioParams);
+            _logger.LogWarning($"Audio data received without frequencies, dropping");
         }
-    
-        _logger.LogDebug($"Pushing {e.AudioData.Length} bytes to stream {streamId}");
-        _playbackService.PushAudioData(streamId, e.AudioData);
-        //_logger.LogDebug($"Push result: {pushed}");
+
+
+        foreach (var frequencyMhz in e.Metadata.Frequencies)
+        {
+            AudioParams audioParams;
+            if (e.Metadata.Position == null || _ownPosition == null)
+            {
+                _logger.LogDebug($"No position data, using defaults for {frequencyMhz}");
+                audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyMhz);
+            }
+            else
+            {
+                audioParams = _audioSim.CalculateAudioParams(
+                    e.Metadata.Position.X, e.Metadata.Position.Y, e.Metadata.Position.Z,
+                    _ownPosition.X, _ownPosition.Y, _ownPosition.Z,
+                    frequencyMhz);
+            }
+
+            _logger.LogDebug($"Audio params: Gain={audioParams.Gain}, SNR={audioParams.SNR_dB}");
+
+            string streamId = e.PeerId + ":" + frequencyMhz;
+            // Check if stream exists
+            bool streamExists = _playbackService.IsStreamActive(streamId);
+            _logger.LogDebug($"Stream {streamId} exists: {streamExists}");
+
+            if (!streamExists)
+            {
+                _logger.LogDebug(
+                    $"Creating new stream: {streamId}, SR={OpenFreqRtcClient.SAMPLE_RATE}, CH={OpenFreqRtcClient.CHANNELS}");
+                _playbackService.StartPushStream(
+                    streamId,
+                    OpenFreqRtcClient.SAMPLE_RATE,
+                    OpenFreqRtcClient.CHANNELS,
+                    audioParams);
+            }
+
+            if (e.IsFirstPacket)
+                _logger.LogDebug($"Pushing START MARKER to Stream");
+            if (e.IsLastPacket)
+                _logger.LogDebug($"Pushing END MARKER to Stream");
+            
+            _playbackService.PushAudioData(streamId, e.AudioData, e.IsFirstPacket, e.IsLastPacket);
+        }
     }
 
     private void OnClientErrorOccurred(object? sender, ErrorEventArgs e)
@@ -579,7 +594,7 @@ public class OpenFreqService : IOpenFreqService
     }
 }
 
-// Event argument classes (unchanged)
+// Event argument classes
 public class FrequencyStatusEventArgs : EventArgs
 {
     public double FrequencyMhz { get; }

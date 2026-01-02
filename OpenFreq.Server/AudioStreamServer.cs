@@ -303,7 +303,8 @@ public class AudioStreamServer
             SequenceNumber = rtpState.NextSequence,       // SERVER's sequence for this receiver
             Timestamp = originalRtpPacket.Timestamp,      // Preserve original timestamp for jitter calc
             Ssrc = _serverSsrc,                           // Server is the source
-            Marker = originalRtpPacket.Marker,            // Preserve marker bit (PTT press indicator)
+            TransmissionBeginMarker = originalRtpPacket.TransmissionBeginMarker,
+            TransmissionEndMarker = originalRtpPacket.TransmissionEndMarker, // Preserve marker bits (PTT press/release indicator)
             Payload = payload
         };
 

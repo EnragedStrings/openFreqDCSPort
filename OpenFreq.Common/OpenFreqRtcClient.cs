@@ -277,9 +277,7 @@ public class OpenFreqRtcClient : IDisposable
             audioData: silence,
             clientId: clientId,
             position: position,
-            frequencies: new List<double> { frequencyMhz },
-            beginMarker: false,
-            endMarker: true
+            frequencyTransmissions: [new FrequencyTransmission(frequencyMhz, false, true)]
         );
         
         _logger.LogInformation("Sent end marker for frequency {Frequency}", frequencyMhz);
@@ -294,34 +292,23 @@ public class OpenFreqRtcClient : IDisposable
 
     public void SendAudio(byte[] pcmData, AircraftPosition position, List<double> frequencies)
     {
-        // Determine if ANY frequency needs a begin marker (first packet for that frequency)
-        bool needsBeginMarker = frequencies.Any(freq => 
-            _frequencyFirstPacketSent.TryGetValue(freq, out var sent) && !sent);
-        
-        if (needsBeginMarker)
+        var frequencyTransmissions = new List<FrequencyTransmission>();
+    
+        foreach (var freq in frequencies)
         {
-            _logger.LogDebug("Sending begin marker for frequencies: {Frequencies}", 
-                string.Join(", ", frequencies.Where(f => 
-                    _frequencyFirstPacketSent.TryGetValue(f, out var sent) && !sent)));
-        }
+            bool needsBeginMarker = _frequencyFirstPacketSent.TryGetValue(freq, out var sent) && !sent;
         
-        _rtpSender?.SendAudio(
-            audioData: pcmData,
-            clientId: clientId,
-            position: position,
-            frequencies: frequencies,
-            beginMarker: needsBeginMarker,
-            endMarker: false  // Never set endMarker in normal sends (only in StopTransmissionAsync)
-        );
+            frequencyTransmissions.Add(new FrequencyTransmission(
+                mhz: freq,
+                beginMarker: needsBeginMarker,
+                endMarker: false
+            ));
         
-        // Mark all frequencies as having sent first packet
-        if (needsBeginMarker)
-        {
-            foreach (var freq in frequencies)
-            {
+            if (needsBeginMarker)
                 _frequencyFirstPacketSent[freq] = true;
-            }
         }
+    
+        _rtpSender?.SendAudio(pcmData, clientId, position, frequencyTransmissions);
     }
     
 
@@ -360,7 +347,7 @@ public class OpenFreqRtcClient : IDisposable
 
     private void OnRtpAudioReceived(object? sender, RtpAudioReceiver.AudioReceivedEventArgs e)
     {
-        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata, e.TransmissionBeginMarker, e.TransmissionEndMarker);
+        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata);
     }
     
     private async Task ReceiveMessagesAsync()
@@ -540,8 +527,8 @@ public class OpenFreqRtcClient : IDisposable
     private void OnPeerTransmissionStateChanged(string peerId, double frequencyMhz, bool isTransmitting) =>
         PeerTransmissionStateChanged?.Invoke(this, new PeerTransmissionEventArgs(peerId, frequencyMhz, isTransmitting));
 
-    private void OnAudioDataReceived(string peerId, byte[] audioData, AudioPacketMetadata metadata, bool isFirstPacket, bool isLastPacket) =>
-        AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, metadata, isFirstPacket, isLastPacket));
+    private void OnAudioDataReceived(string peerId, byte[] audioData, AudioPacketMetadata metadata) =>
+        AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, metadata));
 
     private void OnError(string errorMessage) =>
         ErrorOccurred?.Invoke(this, new ErrorEventArgs(errorMessage));
@@ -647,16 +634,11 @@ public class AudioDataEventArgs : EventArgs
     public byte[] AudioData { get; }
     public AudioPacketMetadata Metadata { get; }
     
-    public bool IsFirstPacket { get; }
-    public bool IsLastPacket { get; }
-    
-    public AudioDataEventArgs(string peerId, byte[] audioData, AudioPacketMetadata metadata, bool isFirstPacket, bool isLastPacket)
+    public AudioDataEventArgs(string peerId, byte[] audioData, AudioPacketMetadata metadata)
     {
         PeerId = peerId;
         AudioData = audioData;
         Metadata = metadata;
-        IsFirstPacket = isFirstPacket;
-        IsLastPacket = isLastPacket;
     }
 }
 

@@ -19,8 +19,6 @@ public class RtpAudioReceiver : IDisposable
     {
         public byte[] AudioData { get; set; } = Array.Empty<byte>();
         public required AudioPacketMetadata Metadata { get; set; }
-        public required bool TransmissionBeginMarker { get; set; }
-        public required bool TransmissionEndMarker { get; set; }
     }
 
     public event EventHandler<AudioReceivedEventArgs>? AudioReceived;
@@ -123,14 +121,6 @@ public class RtpAudioReceiver : IDisposable
                 Console.WriteLine("[RtpAudioReceiver] Invalid RTP packet");
                 return;
             }
-            
-            if (rtpPacket.TransmissionBeginMarker)
-                Console.WriteLine("[RtpAudioReceiver] BEGIN marker");
-            if (rtpPacket.TransmissionEndMarker)
-                Console.WriteLine("[RtpAudioReceiver] END marker");
-            
-            if (rtpPacket.TransmissionBeginMarker)
-                _jitterBuffer.Reset();
 
             // Add to jitter buffer (handles reordering, timing)
             _jitterBuffer.AddPacket(rtpPacket);
@@ -149,7 +139,7 @@ public class RtpAudioReceiver : IDisposable
         try
         {
             RtpPacket? packet;
-                
+            
             // Pull all ready packets
             while ((packet = _jitterBuffer.GetNextPacket()) != null)
             {
@@ -194,6 +184,11 @@ public class RtpAudioReceiver : IDisposable
                 Console.WriteLine("[RtpAudioReceiver] Failed to parse metadata");
                 return;
             }
+            
+            if (metadata.HasAnyBeginMarker)
+            {
+                //_jitterBuffer.Reset();
+            }
 
             // Extract audio data
             int audioDataStart = 2 + metadataLength;
@@ -219,9 +214,7 @@ public class RtpAudioReceiver : IDisposable
             AudioReceived?.Invoke(this, new AudioReceivedEventArgs
             {
                 AudioData = decodedAudio,
-                Metadata = metadata,
-                TransmissionBeginMarker = packet.TransmissionBeginMarker,
-                TransmissionEndMarker = packet.TransmissionEndMarker
+                Metadata = metadata
             });
         }
         catch (Exception ex)

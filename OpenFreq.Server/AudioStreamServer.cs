@@ -148,7 +148,7 @@ public class AudioStreamServer
                     continue;
 
                 var validFrequencies = metadata.Frequencies
-                    .Where(freq => clientSession.CurrentFrequencies.ContainsKey(freq))
+                    .Where(freq => clientSession.CurrentFrequencies.ContainsKey(freq.Mhz))
                     .ToList();
 
                 if (validFrequencies.Count < metadata.Frequencies.Count)
@@ -169,7 +169,7 @@ public class AudioStreamServer
                 // Each recipient gets their own RTP packet with unique sequence number
                 foreach (var frequency in validFrequencies)
                 {
-                    ForwardAudioToChannel(frequency, clientId, rtpPacket, metadata, audioData);
+                    ForwardAudioToChannel(frequency.Mhz, clientId, rtpPacket, metadata, audioData);
                 }
             }
         }
@@ -303,9 +303,8 @@ public class AudioStreamServer
             SequenceNumber = rtpState.NextSequence,       // SERVER's sequence for this receiver
             Timestamp = originalRtpPacket.Timestamp,      // Preserve original timestamp for jitter calc
             Ssrc = _serverSsrc,                           // Server is the source
-            TransmissionBeginMarker = originalRtpPacket.TransmissionBeginMarker,
-            TransmissionEndMarker = originalRtpPacket.TransmissionEndMarker, // Preserve marker bits (PTT press/release indicator)
-            Payload = payload
+            Payload = payload,
+            Marker =  originalRtpPacket.Marker            // Currently unused but still preserve it
         };
 
         // Update receiver state

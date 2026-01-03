@@ -474,12 +474,12 @@ public class OpenFreqService : IOpenFreqService
         var streamId = GetStreamId(e.PeerId, e.FrequencyMhz);
         if (e.IsTransmitting)
         {
-            _playbackService?.OnWebSocketPTTPress(streamId);
+            //_playbackService?.OnWebSocketPTTPress(streamId);
             OnFrequencyStatusChanged(e.FrequencyMhz, Channel.ChannelStatus.Receiving);
         }
         else
         {
-            _playbackService?.OnWebSocketPTTRelease(streamId);
+            //_playbackService?.OnWebSocketPTTRelease(streamId);
             OnFrequencyStatusChanged(e.FrequencyMhz, Channel.ChannelStatus.Connected);
         }
     }
@@ -501,25 +501,25 @@ public class OpenFreqService : IOpenFreqService
         }
 
 
-        foreach (var frequencyMhz in e.Metadata.Frequencies)
+        foreach (var frequencyTransmission in e.Metadata.Frequencies)
         {
             AudioParams audioParams;
             if (e.Metadata.Position == null || _ownPosition == null)
             {
-                _logger.LogDebug($"No position data, using defaults for {frequencyMhz}");
-                audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyMhz);
+                _logger.LogDebug($"No position data, using defaults for {frequencyTransmission}");
+                audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Mhz);
             }
             else
             {
                 audioParams = _audioSim.CalculateAudioParams(
                     e.Metadata.Position.X, e.Metadata.Position.Y, e.Metadata.Position.Z,
                     _ownPosition.X, _ownPosition.Y, _ownPosition.Z,
-                    frequencyMhz);
+                    frequencyTransmission.Mhz);
             }
 
             _logger.LogDebug($"Audio params: Gain={audioParams.Gain}, SNR={audioParams.SNR_dB}");
 
-            string streamId = e.PeerId + ":" + frequencyMhz;
+            var streamId = GetStreamId(e.PeerId, frequencyTransmission.Mhz);
             // Check if stream exists
             bool streamExists = _playbackService.IsStreamActive(streamId);
             _logger.LogDebug($"Stream {streamId} exists: {streamExists}");
@@ -535,12 +535,15 @@ public class OpenFreqService : IOpenFreqService
                     audioParams);
             }
 
-            if (e.IsFirstPacket)
+            if (frequencyTransmission.BeginMarker)
                 _logger.LogDebug($"Pushing START MARKER to Stream");
-            if (e.IsLastPacket)
+            else if (frequencyTransmission.EndMarker)
                 _logger.LogDebug($"Pushing END MARKER to Stream");
-            
-            _playbackService.PushAudioData(streamId, e.AudioData, e.IsFirstPacket, e.IsLastPacket);
+            else
+            {
+                _logger.LogDebug($"Pushing NO MARKER to Stream");
+            }
+            _playbackService.PushAudioData(streamId, e.AudioData, frequencyTransmission.BeginMarker, frequencyTransmission.EndMarker);
         }
     }
 

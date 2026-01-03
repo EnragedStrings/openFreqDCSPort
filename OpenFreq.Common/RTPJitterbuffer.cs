@@ -65,39 +65,44 @@ public class RtpJitterBuffer
     
             Console.WriteLine($"[JitterBuffer] Initialized: buffer={_targetBufferMs}ms, will start playout at {_playoutStartTime:HH:mm:ss.fff}");
         }
-    
-        // Check for duplicate
-        if (_buffer.ContainsKey(packet.SequenceNumber))
+
+        lock (_buffer)
         {
-            _packetsDuplicate++;
-            return;
-        }
-    
-        // Calculate playout time
-        long timestampDiff = RtpPacket.TimestampDifference(packet.Timestamp, _baseTimestamp);
-        double timestampMs = (timestampDiff * 1000.0) / _sampleRate;
-    
-        var bufferedPacket = new BufferedPacket
-        {
-            Packet = packet,
-            ReceivedTime = DateTime.UtcNow,
-            PlayoutTimestamp = packet.Timestamp
-        };
-    
-        // Add to buffer
-        _buffer[packet.SequenceNumber] = bufferedPacket;
-    
-        MeasureJitter(bufferedPacket, timestampMs);
-    
-        // Adapt buffer size
-        AdaptBufferSize();
-    
-        // Limit buffer size
-        while (_buffer.Count > _maxBufferPackets)
-        {
-            var oldest = _buffer.Keys.First();
-            _buffer.Remove(oldest);
-            Console.WriteLine($"[JitterBuffer] Buffer overflow, dropped seq {oldest}");
+
+
+            // Check for duplicate
+            if (_buffer.ContainsKey(packet.SequenceNumber))
+            {
+                _packetsDuplicate++;
+                return;
+            }
+
+            // Calculate playout time
+            long timestampDiff = RtpPacket.TimestampDifference(packet.Timestamp, _baseTimestamp);
+            double timestampMs = (timestampDiff * 1000.0) / _sampleRate;
+
+            var bufferedPacket = new BufferedPacket
+            {
+                Packet = packet,
+                ReceivedTime = DateTime.UtcNow,
+                PlayoutTimestamp = packet.Timestamp
+            };
+
+            // Add to buffer
+            _buffer[packet.SequenceNumber] = bufferedPacket;
+
+            MeasureJitter(bufferedPacket, timestampMs);
+
+            // Adapt buffer size
+            AdaptBufferSize();
+
+            // Limit buffer size
+            while (_buffer.Count > _maxBufferPackets)
+            {
+                var oldest = _buffer.Keys.First();
+                _buffer.Remove(oldest);
+                Console.WriteLine($"[JitterBuffer] Buffer overflow, dropped seq {oldest}");
+            }
         }
     }
         
@@ -121,49 +126,57 @@ public class RtpJitterBuffer
     
         // Calculate which timestamp we should be playing now
         uint playoutTimestamp = _baseTimestamp + (uint)((elapsedMs / 1000.0) * _sampleRate);
-    
-        foreach (var kvp in _buffer.OrderBy(k => k.Key).Take(3))
+
+        KeyValuePair<ushort, BufferedPacket> nextPacket;
+        lock (_buffer)
         {
-            var packetTS = kvp.Value.PlayoutTimestamp;
-            var diff = RtpPacket.TimestampDifference(playoutTimestamp, packetTS);
-        }
-    
-        // Find packets ready for playout
-        var readyPackets = _buffer
-            .Where(kvp => RtpPacket.TimestampDifference(playoutTimestamp, kvp.Value.PlayoutTimestamp) >= 0)
-            .OrderBy(kvp => kvp.Key)
-            .ToList();
-    
-        if (readyPackets.Count == 0)
-        {
-            return null;
-        }
-    
-        // Get the packet with the lowest sequence number
-        var nextPacket = readyPackets.First();
-        _buffer.Remove(nextPacket.Key);
-        
-        // Check if this is the expected sequence (loss detection)
-        if (nextPacket.Key != _nextExpectedSequence)
-        {
-            int gap = RtpPacket.SequenceDifference(nextPacket.Key, _nextExpectedSequence);
-            if (gap > 0)
+
+
+            foreach (var kvp in _buffer.OrderBy(k => k.Key).Take(3))
             {
-                // Skipped packets (loss)
-                _packetsLost += gap;
-                Console.WriteLine($"[JitterBuffer] Packet loss: {gap} packets (seq {_nextExpectedSequence} to {nextPacket.Key - 1})");
+                var packetTS = kvp.Value.PlayoutTimestamp;
+                var diff = RtpPacket.TimestampDifference(playoutTimestamp, packetTS);
             }
-            else
+
+            // Find packets ready for playout
+            var readyPackets = _buffer
+                .Where(kvp => RtpPacket.TimestampDifference(playoutTimestamp, kvp.Value.PlayoutTimestamp) >= 0)
+                .OrderBy(kvp => kvp.Key)
+                .ToList();
+
+            if (readyPackets.Count == 0)
             {
-                // Late packet
-                _packetsLate++;
-                Console.WriteLine($"[JitterBuffer] Late packet seq {nextPacket.Key} (expected {_nextExpectedSequence})");
+                return null;
             }
+
+            // Get the packet with the lowest sequence number
+            nextPacket = readyPackets.First();
+            _buffer.Remove(nextPacket.Key);
+
+            // Check if this is the expected sequence (loss detection)
+            if (nextPacket.Key != _nextExpectedSequence)
+            {
+                int gap = RtpPacket.SequenceDifference(nextPacket.Key, _nextExpectedSequence);
+                if (gap > 0)
+                {
+                    // Skipped packets (loss)
+                    _packetsLost += gap;
+                    Console.WriteLine(
+                        $"[JitterBuffer] Packet loss: {gap} packets (seq {_nextExpectedSequence} to {nextPacket.Key - 1})");
+                }
+                else
+                {
+                    // Late packet
+                    _packetsLate++;
+                    Console.WriteLine(
+                        $"[JitterBuffer] Late packet seq {nextPacket.Key} (expected {_nextExpectedSequence})");
+                }
+            }
+
+            _nextExpectedSequence = (ushort)(nextPacket.Key + 1);
+            _packetsPlayed++;
         }
-    
-        _nextExpectedSequence = (ushort)(nextPacket.Key + 1);
-        _packetsPlayed++;
-    
+
         return nextPacket.Value.Packet;
     }
         
@@ -275,18 +288,21 @@ public class RtpJitterBuffer
     /// </summary>
     public void Reset()
     {
-        _buffer.Clear();
-        _jitterSamples.Clear();
-        _initialized = false;
-        _baseTime = DateTime.MinValue;
-        _playoutStartTime = DateTime.MinValue;
-        _lastPacketReceived = DateTime.MinValue;
-        _lastPacketTimestamp = 0;
-        _packetsReceived = 0;
-        _packetsLost = 0;
-        _packetsLate = 0;
-        _packetsDuplicate = 0;
-        _packetsPlayed = 0;
+        lock (_buffer)
+        {
+            _buffer.Clear();
+            _jitterSamples.Clear();
+            _initialized = false;
+            _baseTime = DateTime.MinValue;
+            _playoutStartTime = DateTime.MinValue;
+            _lastPacketReceived = DateTime.MinValue;
+            _lastPacketTimestamp = 0;
+            _packetsReceived = 0;
+            _packetsLost = 0;
+            _packetsLate = 0;
+            _packetsDuplicate = 0;
+            _packetsPlayed = 0;
+        }
     }
         
     /// <summary>

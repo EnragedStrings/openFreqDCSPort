@@ -41,7 +41,7 @@ public class RtpAudioSender : IDisposable
         public byte[] PcmData;
         public string ClientId;
         public AircraftPosition? Position;
-        public List<double> Frequencies;
+        public List<FrequencyTransmission> FrequencyTransmissions;
         public bool BeginMarker;
         public bool EndMarker;
         public uint Timestamp;
@@ -120,19 +120,14 @@ public class RtpAudioSender : IDisposable
     /// <param name="audioData">Raw PCM audio data (16-bit, mono, 48kHz)</param>
     /// <param name="clientId">Sender client ID</param>
     /// <param name="position">Aircraft position</param>
-    /// <param name="frequencies">Radio frequencies</param>
-    /// <param name="beginMarker">Marker bit (true for first packet of transmission, e.g., PTT press)</param>
-    /// <param name="endMarker">Marker bit (true for last packet of transmission, e.g., PTT release)</param>
+    /// <param name="frequencyTransmissions">List of FrequencyTransmissions</param>
     /// 
-    public void SendAudio(byte[] audioData, string clientId, AircraftPosition? position, List<double> frequencies,
-        bool beginMarker = false, bool endMarker=false)
+    public void SendAudio(byte[] audioData, string clientId, AircraftPosition? position, List<FrequencyTransmission> frequencyTransmissions)
     {
-        if (endMarker)
-            Console.WriteLine($"[RtpAudioSender] SENDING End Marker");
-        
         try
         {
             int offset = 0;
+            bool isFirstChunk = true;
 
             // Process all incoming data in chunks
             while (offset < audioData.Length)
@@ -146,11 +141,16 @@ public class RtpAudioSender : IDisposable
                 _bufferPosition += bytesToCopy;
                 offset += bytesToCopy;
 
-                // If we have a complete frame, queue it (encoding happens in pacing timer)
+                // If we have a complete frame, queue it
                 if (_bufferPosition >= _audioBuffer.Length)
                 {
-                    QueueRawFrame(clientId, position, frequencies, beginMarker, endMarker);
-                    beginMarker = false; // Only first frame gets marker
+                    // First chunk uses original markers, subsequent chunks clear beginMarkers
+                    var markers = isFirstChunk 
+                        ? frequencyTransmissions 
+                        : frequencyTransmissions.Select(f => new FrequencyTransmission(f.Mhz, false, f.EndMarker)).ToList();
+                
+                    QueueRawFrame(clientId, position, markers);
+                    isFirstChunk = false;
                     _bufferPosition = 0;
                 }
             }
@@ -161,8 +161,7 @@ public class RtpAudioSender : IDisposable
         }
     }
 
-    private void QueueRawFrame(string clientId, AircraftPosition? position, List<double> frequencies,
-        bool beginMarker, bool endMarker)
+    private void QueueRawFrame(string clientId, AircraftPosition? position, List<FrequencyTransmission> frequencyTransmissions)
     {
        // Copy the buffer data (must copy since _audioBuffer will be reused)
         byte[] pcmCopy = new byte[_audioBuffer.Length];
@@ -173,9 +172,7 @@ public class RtpAudioSender : IDisposable
             PcmData = pcmCopy,
             ClientId = clientId,
             Position = position,
-            Frequencies = frequencies,
-            BeginMarker = beginMarker,
-            EndMarker = endMarker,
+            FrequencyTransmissions = frequencyTransmissions,
             Timestamp = _timestamp,
             SequenceNumber = _sequenceNumber,
         };
@@ -247,7 +244,7 @@ public class RtpAudioSender : IDisposable
             {
                 clientId = queuedValue.ClientId,
                 Position = queuedValue.Position,
-                Frequencies = queuedValue.Frequencies,
+                Frequencies = queuedValue.FrequencyTransmissions,
             };
 
             string metadataJson = JsonSerializer.Serialize(metadata);
@@ -269,8 +266,6 @@ public class RtpAudioSender : IDisposable
                 SequenceNumber = queuedValue.SequenceNumber,
                 Timestamp = queuedValue.Timestamp,
                 Ssrc = _ssrc,
-                TransmissionBeginMarker = queuedValue.BeginMarker,
-                TransmissionEndMarker =  queuedValue.EndMarker,
                 Payload = payload
             };
             

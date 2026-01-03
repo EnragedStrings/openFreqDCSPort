@@ -9,11 +9,12 @@ public class AudioPacketMetadata
 {
     [JsonPropertyName("id")]
     public string clientId  { get; set; }
+   
     /// <summary>
-    /// List of frequencies this audio packet should be transmitted on
+    /// Frequencies being transmitted on with per-frequency markers
     /// </summary>
     [JsonPropertyName("frequencies")]
-    public List<double> Frequencies { get; set; } = new();
+    public List<FrequencyTransmission> Frequencies { get; set; } = new();
     
     /// <summary>
     /// Optional timestamp for debugging/monitoring
@@ -25,7 +26,6 @@ public class AudioPacketMetadata
     public long SendTimestamp { get; set; }
     
     [JsonPropertyName("server_send_timestamp")]
-
     public long ServerSendTimestamp { get; set; }
     
     [JsonPropertyName("position")]
@@ -34,6 +34,9 @@ public class AudioPacketMetadata
     public bool In3D { get; set; }
     
     public int PcmDataLength { get; set; }
+    
+    [JsonIgnore]
+    public bool HasAnyBeginMarker => Frequencies.Any(f => f.BeginMarker);
 }
 
 // Position data structure

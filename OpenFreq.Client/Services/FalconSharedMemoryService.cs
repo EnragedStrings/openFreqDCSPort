@@ -16,7 +16,7 @@ namespace OpenFreq.Client.Services;
 /// Service for reading Falcon BMS shared memory data
 /// </summary>
 
-#if Windows
+#if WINDOWS
 public class FalconSharedMemoryService : IFalconSharedMemoryService
 {
     // Shared memory area names
@@ -48,8 +48,10 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
     private string? _theaterTerrainDir;
     private readonly object _dataLock = new();
     private bool _disposed;
+    private bool _wasFlying;
 
     public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
+    public event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;
 
     public ServiceState State
     {
@@ -269,10 +271,16 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
             uint hsiBits = BitConverter.ToUInt32(ReadBytes(_lpPrimaryBaseAddress, OFFSET_HSIBITS, 4), 0);
             bool isFlying = (hsiBits & HSI_FLYING_BIT) != 0;
 
+            if (isFlying != _wasFlying)
+            {
+                FlyingStateChanged?.Invoke(this, new FlyingStateChangedEventArgs(_wasFlying, isFlying));
+            }
+            _wasFlying = isFlying;
+            
             // Update position
             lock (_dataLock)
             {
-                _position = new FlightPosition(x, y, z, isFlying);
+                _position = new FlightPosition((int) x, (int) y, (int) z, isFlying);
             }
 
             return true;
@@ -330,7 +338,7 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
 
     public void Start()
     {
-        throw new PlatformNotSupportedException("Falcon BMS Radio Service is only supported on Windows");
+        throw new PlatformNotSupportedException("Falcon BMS Shared Memory Service is only supported on Windows");
     }
 
     public void Stop()

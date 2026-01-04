@@ -30,6 +30,7 @@ public class ConnectionParameters
 
     public override string ToString()
     {
-        return $"{Address}:{Port} (Nick:{Nickname})";
+        return
+            $"{Address}:{Port} (Nick:{Nickname}) (UseAGC:{UseAGC}) (ReadyToTransmit:{ReadyToTransmit}) (AttemptingToConnect:{AttemptingToConnect})  (TerminateClient:{TerminateClient}) (FlightMode:{FlightMode})";
     }
 }

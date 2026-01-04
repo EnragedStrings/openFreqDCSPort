@@ -33,6 +33,9 @@ public interface IFalconSharedMemoryService : IDisposable
     /// Event fired when service state changes
     /// </summary>
     event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
+    
+    event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;
+
 
     /// <summary>
     /// Start the service (enters Disconnected state and begins polling)
@@ -44,3 +47,4 @@ public interface IFalconSharedMemoryService : IDisposable
     /// </summary>
     void Stop();
 }
+

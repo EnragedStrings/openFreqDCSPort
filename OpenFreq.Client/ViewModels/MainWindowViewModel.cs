@@ -5,6 +5,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FalconBmsDataService.Models;
+using FalconBmsDataService.Services;
+using FalconRadioService.Models;
+using FalconRadioService.Services;
 using Material.Styles.Controls;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
@@ -21,6 +25,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IOpenFreqService _openFreqService;
     private readonly IHotkeyService _hotkeyService;
     private readonly IAudioService _audioService;
+    private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
+    private readonly IFalconSharedMemoryService _falconSharedMemoryService;
     private readonly IAcmiClientService _acmiClientService;
     private readonly IConfigurationService _configurationService;
 
@@ -33,8 +39,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _tacviewConnected;
     [ObservableProperty] private ObservableCollection<TacviewAircraftItem> _tacviewFlightCallsigns = [];
     [ObservableProperty] private TacviewAircraftItem? _selectedTacviewCallsign;
+
     public record TacviewAircraftItem(string CallSign, string ObjectId)
-    { 
+    {
         public override string ToString() => CallSign;
     }
 
@@ -64,7 +71,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IConfigurationService configurationService,
         ILogger<MainWindowViewModel> logger,
         ChannelCardListViewModel channelList,
-        SettingsViewModel settings)
+        SettingsViewModel settings, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
+        IFalconSharedMemoryService falconSharedMemoryService)
     {
         _openFreqService = openFreqService;
         _hotkeyService = hotkeyService;
@@ -74,17 +82,28 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _logger = logger;
         _channelList = channelList;
         _settings = settings;
+        _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
+        _falconSharedMemoryService = falconSharedMemoryService;
 
         // Subscribe to service events
         _openFreqService.ConnectionStateChanged += OnConnectionStateChanged;
         _openFreqService.StatusMessageReceived += OnStatusMessageReceived;
         _openFreqService.PeerActivityReceived += OnPeerActivityReceived;
 
+        // Falcon Radio Shared Memory
+        _falconRadioSharedMemoryService.ConnectionParametersChanged +=
+            FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
+        _falconRadioSharedMemoryService.Start();
+
+        // Falcon Shared Memory
+        _falconSharedMemoryService.Start();
+
         // Wire the ACMI transformation service with the position update
         _acmiClientService.TrackedAircraftTransformUpdated += (s, e) =>
         {
             _openFreqService.UpdateAircraftPosition(e.Transform.U, e.Transform.V, e.Transform.Altitude);
-            Console.WriteLine($"[POS UPDATE] Updating to ({e.Transform.U:F0}, {e.Transform.V:F0}, {e.Transform.Altitude:F0})");
+            Console.WriteLine(
+                $"[POS UPDATE] Updating to ({e.Transform.U:F0}, {e.Transform.V:F0}, {e.Transform.Altitude:F0})");
         };
 
         // Start listening for hotkeys
@@ -95,6 +114,49 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         UpdateConnectionStatusString();
     }
+    
+    private void FalconRadioSharedMemoryServiceOnConnectionParametersChanged(object? sender,
+        ConnectionParametersChangedEventArgs e)
+    {
+        _logger.LogDebug($"FalconRadioSharedMemoryServiceOnConnectionParametersChanged: {e.NewParameters}");
+
+        // BMS wants us to close the client
+        if (e.NewParameters.TerminateClient)
+        {
+            _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.ExitReceived);
+            _falconRadioSharedMemoryService.RemoveClientStatus(ClientStatusFlags.Connected);
+            _ = DisconnectAsync().Wait(TimeSpan.FromMilliseconds(500));
+            return;
+        }
+
+        // BMS wants us to connect
+        if (e.NewParameters.AttemptingToConnect)
+        {
+            _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.TryingToConnect);
+            Settings.OpenFreqServerAddress = e.NewParameters.Address + ":" + e.NewParameters.Port;
+            _ = ConnectAsync().Wait(TimeSpan.FromSeconds(3));
+
+            if (_openFreqService.IsConnected)
+            {
+                _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.Connected);
+                
+            }
+            else
+            {
+                _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.ConnectionFail);
+            }
+
+            _falconRadioSharedMemoryService.RemoveClientStatus(ClientStatusFlags.TryingToConnect);
+        }
+
+        // BMS wants us to disconnect but not exit
+        if (e.OldParameters.ReadyToTransmit && !e.NewParameters.ReadyToTransmit)
+        {
+            _falconRadioSharedMemoryService.RemoveClientStatus(ClientStatusFlags.Connected);
+            _ = DisconnectAsync().Wait(TimeSpan.FromMilliseconds(500));
+        }
+    }
+    
 
     partial void OnOpenFreqConnectedChanged(bool value)
     {
@@ -102,21 +164,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private async Task ConnectDisconnectAsync()
+    private async Task ConnectAsync()
     {
         try
         {
+            // Gracefully handle if already connected
             if (_openFreqService.IsConnected)
             {
-                _ = _openFreqService.DisconnectAsync();
-
-                if (_acmiClientService.Status == AcmiConnectionStatus.Connected ||
-                    _acmiClientService.Status == AcmiConnectionStatus.Connecting)
-                {
-                    _ = _acmiClientService.DisconnectAsync();
-                }
-
-                ClearError();
                 return;
             }
 
@@ -133,14 +187,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // Connect to server (channels will auto-join when authenticated)
             await _openFreqService.ConnectAsync();
-            
+
             if (Settings.ConnectionMode == OpenFreqSettings.Mode.GCI)
             {
                 _openFreqService.LoadHeightmap(Settings.HeightmapPath);
                 _acmiClientService.ConnectionStatusChanged += OnTacviewConnectionStatusChanged;
                 await _acmiClientService.ConnectAsync(Settings.TacviewServerAddress, Settings.TacviewServerPassword);
             }
-
 
             ClearError();
         }
@@ -155,6 +208,33 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             ShowError($"Connection failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task DisconnectAsync()
+    {
+        try
+        {
+            // Gracefully handle if already disconnected
+            if (!_openFreqService.IsConnected)
+            {
+                return;
+            }
+
+            await _openFreqService.DisconnectAsync();
+
+            if (_acmiClientService.Status == AcmiConnectionStatus.Connected ||
+                _acmiClientService.Status == AcmiConnectionStatus.Connecting)
+            {
+                await _acmiClientService.DisconnectAsync();
+            }
+
+            ClearError();
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Disconnect failed: {ex.Message}");
         }
     }
 
@@ -188,7 +268,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (SelectedTacviewCallsign != null)
             {
                 var aircraft = _acmiClientService.GetAircraft(SelectedTacviewCallsign.ObjectId);
-                ShowError($"{aircraft.CallSign}: {aircraft.Transform.U} | {aircraft.Transform.V} | {aircraft.Transform.Altitude}");
+                ShowError(
+                    $"{aircraft.CallSign}: {aircraft.Transform.U} | {aircraft.Transform.V} | {aircraft.Transform.Altitude}");
             }
 
             var currentAircraft = _acmiClientService.GetAllAircraft()
@@ -197,7 +278,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // Incremental update
             var currentIds = currentAircraft.Select(a => a.ObjectId).ToHashSet();
-        
+
             // Remove items no longer present
             for (int i = TacviewFlightCallsigns.Count - 1; i >= 0; i--)
             {
@@ -216,7 +297,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     TacviewFlightCallsigns.Add(aircraft);
                 }
             }
-            
+
             try
             {
                 await Task.Delay(1000, cancellationToken);
@@ -322,7 +403,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _ = SaveConfigurationAsync();
-        
+
         _callsignUpdateCts?.Cancel();
         _callsignUpdateCts?.Dispose();
 
@@ -331,6 +412,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _hotkeyService.Dispose();
         _acmiClientService.Dispose();
         _configurationService.Dispose();
+
+        _falconSharedMemoryService.Dispose();
+        _falconRadioSharedMemoryService.Dispose();
     }
 
 

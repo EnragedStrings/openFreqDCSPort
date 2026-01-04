@@ -17,6 +17,8 @@ public interface IHotkeyService : IDisposable
     // Lifecycle
     void Start();
     void Stop();
+    void Pause();
+    void Resume();
     
     // Binding management
     void RegisterHotkey(KeyCode key, Guid channelId);

@@ -18,7 +18,7 @@ namespace OpenFreq.Client.Services;
 public class FalconRadioSharedMemoryService : IFalconRadioSharedMemoryService
 {
     private ServiceState _state = ServiceState.Stopped;
-    private double _pollingFrequencyHz = 3.0;
+    private double _pollingFrequencyHz = 10.0;
 
     private PeriodicTimer? _rccTimer; // 3 Hz for RCC (radio data)
     private PeriodicTimer? _rcsTimer; // 1 Hz for RCS status updates

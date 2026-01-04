@@ -188,9 +188,10 @@ public class OpenFreqService : IOpenFreqService
     /// </summary>
     public async Task JoinFrequencyAsync(double frequencyMhz)
     {
-        if (_client == null)
+        if (_client == null || !_client.IsAuthenticated)
         {
-            throw new InvalidOperationException("Service not initialized");
+            _logger.LogWarning("Not joining frequency {FrequencyMhz}, client is not authenticated", frequencyMhz);
+            return;
         }
 
         await _client.JoinFrequencyAsync(frequencyMhz);
@@ -206,9 +207,10 @@ public class OpenFreqService : IOpenFreqService
     /// </summary>
     public async Task LeaveFrequencyAsync(double frequencyMhz)
     {
-        if (_client == null)
+        if (_client == null || !_client.IsAuthenticated)
         {
-            throw new InvalidOperationException("Service not initialized");
+            _logger.LogWarning("Not leaving frequency {FrequencyMhz}, client is not authenticated", frequencyMhz);
+            return;
         }
 
         // Stop transmission if active

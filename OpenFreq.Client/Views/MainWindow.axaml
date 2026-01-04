@@ -39,17 +39,20 @@
                 </StackPanel>
                 <Separator Foreground="{DynamicResource MaterialDividerBrush}"></Separator>
                 <!-- Server Settings -->
-                <TextBlock Classes="Subtitle2" Margin="0,8,0,4">OpenFreq Server</TextBlock>
-                <TextBox Watermark="Server Address:Port"
-                         Text="{Binding Settings.OpenFreqServerAddress}"
-                         Margin="0,4"
-                         IsEnabled="{Binding !OpenFreqConnected}" />
+                <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
+                    <TextBlock Classes="Subtitle2" Margin="0,8,0,4">OpenFreq Server</TextBlock>
+                    <TextBox Watermark="Server Address:Port"
+                             Text="{Binding Settings.OpenFreqServerAddress}"
+                             Margin="0,4"
+                             IsEnabled="{Binding !OpenFreqConnected}" />
 
-                <TextBox Watermark="Password" PasswordChar="*"
-                         Text="{Binding Settings.OpenFreqPassword}"
-                         Margin="0,4"
-                         IsEnabled="{Binding !OpenFreqConnected}" />
-
+                    <TextBox Watermark="Password" PasswordChar="*"
+                             Text="{Binding Settings.OpenFreqPassword}"
+                             Margin="0,4"
+                             IsEnabled="{Binding !OpenFreqConnected}" />
+                </StackPanel>
+                <TextBlock IsVisible="{Binding !Settings.ModeIsGci}" Classes="Body2"
+                           Text="Connection Settings controlled by BMS" />
 
                 <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
                     <TextBlock Classes="Subtitle2" Margin="0,4,0,4">Tacview Server</TextBlock>
@@ -64,38 +67,48 @@
                              IsEnabled="{Binding !OpenFreqConnected}" />
 
                     <StackPanel Orientation="Vertical" Spacing="5">
-                        <TextBlock IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" Classes="Subtitle2" Margin="0,8,0,4">BMS Heightmap</TextBlock>
-                        <TextBlock IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}" Foreground="Red" Classes="Subtitle2" Margin="0,8,0,4">BMS Heightmap</TextBlock>
+                        <TextBlock
+                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                            Classes="Subtitle2" Margin="0,8,0,4">
+                            BMS Heightmap
+                        </TextBlock>
+                        <TextBlock
+                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
+                            Foreground="Red" Classes="Subtitle2" Margin="0,8,0,4">
+                            BMS Heightmap
+                        </TextBlock>
                         <HyperlinkButton
-                                         IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
-                                         Content="No Heightmap selected!"
-                                         Click="HeightmapButton_OnClick"/>
+                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
+                            Content="No Heightmap selected!"
+                            Click="HeightmapButton_OnClick" />
                         <HyperlinkButton
                             IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                             Content="{Binding Settings.HeightmapPath}"
-                            Click="HeightmapButton_OnClick"/>
+                            Click="HeightmapButton_OnClick" />
                     </StackPanel>
                 </StackPanel>
 
                 <!-- Connect Button -->
-                <Button
-                    Content="Connect"
-                    HorizontalAlignment="Stretch"
-                    Margin="0,8,0,8"
-                    Command="{Binding ConnectDisconnectCommand}"
-                    IsEnabled="{Binding Settings.IsReadyToConnect}"
-                    IsVisible="{Binding !OpenFreqConnected}" />
-                <Button
-                    Content="Disconnect"
-                    HorizontalAlignment="Stretch"
-                    Margin="0,8,0,8"
-                    Classes="accent"
-                    Command="{Binding ConnectDisconnectCommand}"
-                    IsVisible="{Binding OpenFreqConnected}" />
-                
+                <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
+                    <Button
+                        Content="Connect"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,8,0,8"
+                        Command="{Binding ConnectCommand}"
+                        IsEnabled="{Binding Settings.IsReadyToConnect}"
+                        IsVisible="{Binding !OpenFreqConnected}" />
+                    <Button
+                        Content="Disconnect"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,8,0,8"
+                        Classes="accent"
+                        Command="{Binding DisconnectCommand}"
+                        IsVisible="{Binding OpenFreqConnected}" />
+                </StackPanel>
+
                 <Separator Margin="0,32,0,4" Foreground="{DynamicResource MaterialDividerBrush}"></Separator>
                 <!-- Audio Settings -->
-                <TextBlock Classes="Subtitle2" >Audio Devices</TextBlock>
+                <TextBlock Classes="Subtitle2">Audio Devices</TextBlock>
 
                 <TextBlock Classes="Caption" Margin="0,8,0,4">Input Device</TextBlock>
                 <ComboBox HorizontalAlignment="Stretch"
@@ -151,9 +164,16 @@
                 </DockPanel>
             </controls:ColorZone>
 
-            <!-- Content Area -->
-            <StackPanel Orientation="Vertical">
-            <ComboBox ItemsSource="{Binding TacviewFlightCallsigns}" SelectedItem="{Binding SelectedTacviewCallsign}"/>
+            <!-- ComboBox at top -->
+            <ComboBox DockPanel.Dock="Top"
+                      ItemsSource="{Binding TacviewFlightCallsigns}"
+                      SelectedItem="{Binding SelectedTacviewCallsign}" />
+
+            <!-- Status at bottom -->
+            <TextBlock DockPanel.Dock="Bottom"
+                       Text="{Binding StatusMessage}" />
+
+            <!-- Content Area - fills remaining space -->
             <Grid>
                 <ScrollViewer>
                     <views:ChannelCardListView DataContext="{Binding ChannelList}" />
@@ -169,8 +189,6 @@
                     </controls:FloatingButton.Content>
                 </controls:FloatingButton>
             </Grid>
-            <TextBlock Text="{Binding StatusMessage}" />
-            </StackPanel>
         </DockPanel>
     </controls:NavigationDrawer>
 

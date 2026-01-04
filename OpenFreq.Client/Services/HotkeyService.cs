@@ -13,6 +13,7 @@ public class HotkeyService : IHotkeyService
     private TaskPoolGlobalHook? _hook;
     private CancellationTokenSource? _cts;
     private Task? _hookTask;
+    private bool _paused;
 
     private readonly Dictionary<KeyCode, List<Guid>> _bindings = new();
     private readonly HashSet<KeyCode> _pressedKeys = new();
@@ -63,6 +64,16 @@ public class HotkeyService : IHotkeyService
         _cts = null;
 
         _pressedKeys.Clear();
+    }
+
+    public void Pause()
+    {
+        _paused = true;
+    }
+
+    public void Resume()
+    {
+        _paused = false;
     }
 
     public void RegisterHotkey(KeyCode key, Guid channelId)
@@ -129,6 +140,8 @@ public class HotkeyService : IHotkeyService
 
     private void OnKeyPressed(object? sender, KeyboardHookEventArgs e)
     {
+        if (_paused) return;
+        
         if (_pressedKeys.Contains(e.Data.KeyCode))
             return; // Already pressed
 

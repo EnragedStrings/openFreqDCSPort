@@ -2,7 +2,6 @@ using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using OpenFreq.Client.NativeMethods;
 using OpenFreq.Client.Services;
 using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services.Interfaces;
@@ -20,7 +19,11 @@ public static class ServiceCollectionExtensions
         services.AddLogging(builder =>
         {
             builder.AddConsole();
-            builder.SetMinimumLevel(LogLevel.Warning);
+            #if DEBUG
+            builder.SetMinimumLevel(LogLevel.Debug);
+            #else
+            builder.SetMinimumLevel(LogLevel.Information);
+            #endif
         });
         
         // Register services as singletons (one instance for the application lifetime)

@@ -84,3 +84,15 @@ public class ConnectionParametersChangedEventArgs : EventArgs
         NewParameters = newParams;
     }
 }
+
+public class FlyingStateChangedEventArgs : EventArgs
+{
+    public bool OldFlyingState { get; }
+    public bool NewFlyingState { get; }
+
+    public FlyingStateChangedEventArgs(bool oldFlyingState, bool newFlyingState)
+    {
+        OldFlyingState = oldFlyingState;
+        NewFlyingState = newFlyingState;
+    }
+}

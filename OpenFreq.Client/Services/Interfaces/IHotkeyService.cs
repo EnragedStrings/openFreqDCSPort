@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenFreq.Client.Services.Interfaces;
 using SharpHook.Data;
 
 namespace OpenFreqClient.Services.Interfaces;
@@ -8,15 +9,12 @@ namespace OpenFreqClient.Services.Interfaces;
 /// <summary>
 /// Service for managing global hotkey bindings and events
 /// </summary>
-public interface IHotkeyService : IDisposable
+public interface IHotkeyService : IDisposable, ILifecycleService
 {
     // Events for hotkey press/release
     event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed;
     event EventHandler<HotkeyReleasedEventArgs>? HotkeyReleased;
     
-    // Lifecycle
-    void Start();
-    void Stop();
     void Pause();
     void Resume();
     

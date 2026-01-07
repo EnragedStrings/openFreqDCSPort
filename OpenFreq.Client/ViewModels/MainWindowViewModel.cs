@@ -31,6 +31,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IConfigurationService _configurationService;
 
     private readonly ILogger<MainWindowViewModel> _logger;
+    
+    // TODO remove when done
+    #if DEBUG
+    [ObservableProperty] private bool _debugMode = true;
+    #else
+    [ObservableProperty] private bool _debugMode = false;
+    #endif
+    /*********/
+    
 
     [ObservableProperty] private ChannelCardListViewModel _channelList;
     [ObservableProperty] private SettingsViewModel _settings;
@@ -93,21 +102,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Falcon Radio Shared Memory
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
             FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
-        _falconRadioSharedMemoryService.Start();
-
-        // Falcon Shared Memory
-        _falconSharedMemoryService.Start();
 
         // Wire the ACMI transformation service with the position update
         _acmiClientService.TrackedAircraftTransformUpdated += (s, e) =>
         {
-            _openFreqService.UpdateAircraftPosition(e.Transform.U, e.Transform.V, e.Transform.Altitude);
+            _openFreqService.UpdateAircraftPosition(new AircraftPosition(e.Transform.U, e.Transform.V, e.Transform.Altitude));
             Console.WriteLine(
                 $"[POS UPDATE] Updating to ({e.Transform.U:F0}, {e.Transform.V:F0}, {e.Transform.Altitude:F0})");
         };
-
-        // Start listening for hotkeys
-        _hotkeyService.Start();
+        
 
         // Load config
         _ = LoadConfigurationAsync();
@@ -483,5 +486,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             ShowError($"Failed to save configuration: {ex.Message}");
         }
+    }
+
+    [RelayCommand]
+    private async Task Debug()
+    {
+        await ConnectAsync();
     }
 }

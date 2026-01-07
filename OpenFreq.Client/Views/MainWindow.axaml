@@ -105,6 +105,9 @@
                         Command="{Binding DisconnectCommand}"
                         IsVisible="{Binding OpenFreqConnected}" />
                 </StackPanel>
+                <Button IsVisible="{Binding DebugMode}"
+                        Command="{Binding DebugCommand}"
+                        Content="DEBUG"/>
 
                 <Separator Margin="0,32,0,4" Foreground="{DynamicResource MaterialDividerBrush}"></Separator>
                 <!-- Audio Settings -->

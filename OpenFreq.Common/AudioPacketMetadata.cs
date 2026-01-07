@@ -54,27 +54,32 @@ public class AircraftPosition
         Y = y;
         Z = z;
     }
+
+    public override string ToString()
+    {
+        return $"{X},{Y},{Z}";
+    }
     
+    /// <summary>
+    /// Translates BMS SharedMemory coordinates (feet, origin bottom left) to Heightmap X/Y coordinates (pixels, origin top left)
+    /// </summary>
     public AircraftPosition ToHeightmapPosition()
     {
-        double cellSizeM = 31.25d;
-        const double GameSizeMeters = 1024000d;
+        // Heightmap specifications
+        const int HEIGHTMAP_SIZE_PX = 32768;
+        const float HEIGHTMAP_SIZE_KM = 1024f;
+        
+        // Calculate meters per pixel
+        const float METERS_PER_PIXEL = (HEIGHTMAP_SIZE_KM * 1000f) / HEIGHTMAP_SIZE_PX;
+        // = 31.25 meters/pixel
 
-        return new AircraftPosition
-        {
-            X = this.X / cellSizeM,
-            Y = (GameSizeMeters - this.Y) / cellSizeM,
-            Z = this.Z
-        };
-/*
-        const double HeightmapSize = 32768d;
-        const double GameSizeMeters = 1024000d;
-        double scale = HeightmapSize / GameSizeMeters;
+        // Calculate feet per pixel
+        const float FEET_PER_METER = 3.28084f;
+        const float FEET_PER_PIXEL = METERS_PER_PIXEL * FEET_PER_METER;
+        // = 102.5458 feet/pixel
 
-        double heightX = X * scale;
-        double heightY = (GameSizeMeters - Y) * scale; // flip Y axis
-        return new AircraftPosition(heightX, heightY, Z);
-        */
+        var heightmapX = Y / FEET_PER_PIXEL;
+        var heightmapY = HEIGHTMAP_SIZE_PX - (X / FEET_PER_PIXEL);
+        return new AircraftPosition(heightmapX, heightmapY, Z);
     }
-
 }

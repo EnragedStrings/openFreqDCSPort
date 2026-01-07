@@ -23,11 +23,6 @@ public class FlightPosition
     public int Z { get; set; }
 
     /// <summary>
-    /// Indicates if the player is currently flying (from HSI Flying bit)
-    /// </summary>
-    public bool IsFlying { get; set; }
-
-    /// <summary>
     /// Timestamp when this data was captured
     /// </summary>
     public DateTime Timestamp { get; set; }
@@ -37,17 +32,16 @@ public class FlightPosition
         Timestamp = DateTime.UtcNow;
     }
 
-    public FlightPosition(int x, int y, int z, bool isFlying)
+    public FlightPosition(int x, int y, int z)
     {
         X = x;
         Y = y;
         Z = z;
-        IsFlying = isFlying;
         Timestamp = DateTime.UtcNow;
     }
 
     public override string ToString()
     {
-        return $"Position(X={X:F2}, Y={Y:F2}, Z={Z:F2}, Flying={IsFlying})";
+        return $"Position(X={X:F2}, Y={Y:F2}, Z={Z:F2})";
     }
 }

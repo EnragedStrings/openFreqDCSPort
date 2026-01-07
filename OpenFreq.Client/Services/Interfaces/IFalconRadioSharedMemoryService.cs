@@ -1,10 +1,11 @@
 ﻿using System;
 using FalconBmsDataService.Models;
 using FalconRadioService.Models;
+using OpenFreq.Client.Services.Interfaces;
 
 namespace FalconRadioService.Services;
 
-public interface IFalconRadioSharedMemoryService : IDisposable
+public interface IFalconRadioSharedMemoryService : IDisposable, ILifecycleService
 {
     // Service state
     ServiceState State { get; }
@@ -33,8 +34,4 @@ public interface IFalconRadioSharedMemoryService : IDisposable
 
     // Connection parameter changes
     event EventHandler<ConnectionParametersChangedEventArgs>? ConnectionParametersChanged;
-
-    // Service control
-    void Start();
-    void Stop();
 }

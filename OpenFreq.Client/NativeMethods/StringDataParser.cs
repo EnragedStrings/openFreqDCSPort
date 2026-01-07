@@ -11,7 +11,7 @@ namespace OpenFreq.Client.NativeMethods;
 public static class StringDataParser
 {
     // StringIdentifier enum value for ThrTerraindir
-    private const uint ThrTerraindir = 11;
+    private const uint ThrTerraindir = 15;
 
     /// <summary>
     /// Parses the StringData shared memory and extracts the theater terrain directory

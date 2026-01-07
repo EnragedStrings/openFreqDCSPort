@@ -15,6 +15,7 @@ public interface IOpenFreqService : IDisposable
     string? PeerId { get; }
     int RecordingDeviceIndex { get; set; }
     int PlaybackDeviceIndex { get; set; }
+    int AudioParamsUpdateFrequency { get; set; }
 
     // Events
     event EventHandler<ConnectionState>? ConnectionStateChanged;
@@ -22,7 +23,7 @@ public interface IOpenFreqService : IDisposable
     event EventHandler<FrequencyStatusEventArgs>? FrequencyStatusChanged;
     event EventHandler<PeerActivityEventArgs>? PeerActivityReceived;
 
-    void UpdateAircraftPosition(double x, double y, double z);
+    void UpdateAircraftPosition(AircraftPosition? position);
 
 
     // Methods
@@ -33,7 +34,9 @@ public interface IOpenFreqService : IDisposable
     Task LeaveFrequencyAsync(double frequencyMhz);
     Task StartTransmissionAsync(double frequencyMhz);
     Task StopTransmissionAsync(double frequencyMhz);
-
+    void StartOwnPositionUpdates();
+    void StopOwnPositionUpdates();
+    
     public enum OpenFreqStatus
     {
         Connected,

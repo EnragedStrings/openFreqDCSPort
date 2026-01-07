@@ -49,6 +49,7 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
     private readonly object _dataLock = new();
     private bool _disposed;
     private bool _wasFlying;
+    private bool _isFlying;
 
     public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     public event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;
@@ -68,6 +69,18 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
         {
             lock (_dataLock)
                 return _position;
+        }
+    }
+
+    /// <summary>
+    /// Indicates if the player is currently flying (from HSI Flying bit)
+    /// </summary>
+    public bool IsFlying
+    {
+        get
+        {
+            lock (_dataLock)
+                return _isFlying;
         }
     }
 
@@ -212,6 +225,10 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
                 if (_lpStringBaseAddress != IntPtr.Zero)
                 {
                     var terrainDir = StringDataParser.ParseTheaterTerrainDir(_lpStringBaseAddress);
+                    
+                    // This happens when BMS is not done loading yet
+                    if (String.IsNullOrEmpty(terrainDir)) return false;
+                    
                     lock (_dataLock)
                     {
                         _theaterTerrainDir = terrainDir;
@@ -265,7 +282,9 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
             // Read x, y, z (floats at offsets 0, 4, 8)
             float x = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_X, 4), 0);
             float y = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_Y, 4), 0);
-            float z = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_Z, 4), 0);
+            
+            // For some reason, the BMS altitude is inverted
+            float z = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_Z, 4), 0) * -1;
 
             // Read hsiBits (uint at offset 708)
             uint hsiBits = BitConverter.ToUInt32(ReadBytes(_lpPrimaryBaseAddress, OFFSET_HSIBITS, 4), 0);
@@ -280,7 +299,8 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
             // Update position
             lock (_dataLock)
             {
-                _position = new FlightPosition((int) x, (int) y, (int) z, isFlying);
+                _position = new FlightPosition((int) x, (int) y, (int) z);
+                _isFlying = isFlying;
             }
 
             return true;

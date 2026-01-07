@@ -57,8 +57,8 @@ public class OpenFreqRtcClient : IDisposable
     private readonly Dictionary<double, HashSet<string>> _frequencyPeers = new();
 
     // Aircraft position state (thread-safe)
-    private readonly object _positionLock = new();
-    private AircraftPosition _currentPosition = new();
+    private readonly Lock _positionLock = new();
+    private AircraftPosition? _currentPosition;
     private readonly ILogger<OpenFreqRtcClient> _logger;
 
     // Properties
@@ -79,29 +79,22 @@ public class OpenFreqRtcClient : IDisposable
     /// Set the aircraft position for UDP packet metadata
     /// Thread-safe - can be called from any service (ACMI, BMS, etc.)
     /// </summary>
-    public void SetPosition(double x, double y, double z)
+    public void SetPosition(AircraftPosition? position)
     {
         lock (_positionLock)
         {
-            _currentPosition.X = x;
-            _currentPosition.Y = y;
-            _currentPosition.Z = z;
+            _currentPosition = position;
         }
     }
 
     /// <summary>
     /// Get the current aircraft position
     /// </summary>
-    public AircraftPosition GetPosition()
+    public AircraftPosition? GetPosition()
     {
         lock (_positionLock)
         {
-            return new AircraftPosition
-            {
-                X = _currentPosition.X,
-                Y = _currentPosition.Y,
-                Z = _currentPosition.Z
-            };
+            return _currentPosition;
         }
     }
 

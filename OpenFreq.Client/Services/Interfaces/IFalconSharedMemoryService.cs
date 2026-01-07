@@ -1,13 +1,14 @@
 using System;
 using FalconBmsDataService.Models;
 using FalconRadioService.Models;
+using OpenFreq.Client.Services.Interfaces;
 
 namespace FalconBmsDataService.Services;
 
 /// <summary>
 /// Interface for the Falcon BMS shared memory service
 /// </summary>
-public interface IFalconSharedMemoryService : IDisposable
+public interface IFalconSharedMemoryService : IDisposable, ILifecycleService
 {
     /// <summary>
     /// Current state of the service
@@ -35,16 +36,5 @@ public interface IFalconSharedMemoryService : IDisposable
     event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     
     event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;
-
-
-    /// <summary>
-    /// Start the service (enters Disconnected state and begins polling)
-    /// </summary>
-    void Start();
-
-    /// <summary>
-    /// Stop the service (returns to Stopped state)
-    /// </summary>
-    void Stop();
 }
 

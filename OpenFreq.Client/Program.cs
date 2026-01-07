@@ -20,8 +20,6 @@ sealed class Program
         services.AddOpenFreqServices();
         ServiceProvider = services.BuildServiceProvider();
         
-
-        
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
     }

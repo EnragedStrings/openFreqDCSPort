@@ -27,6 +27,11 @@ public interface IFalconSharedMemoryService : IDisposable, ILifecycleService
     string? TheaterTerrainDir { get; }
 
     /// <summary>
+    /// 3D Status (null if disconnected)
+    /// </summary>
+    bool? IsFlying { get; }
+
+    /// <summary>
     /// Polling frequency in Hz (default: 2.0 = 2 times per second)
     /// </summary>
     double PollingFrequencyHz { get; set; }

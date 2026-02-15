@@ -20,6 +20,8 @@ namespace OpenFreq.Client.Services;
 #if WINDOWS
 public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger) : IFalconSharedMemoryService
 {
+    private System.Diagnostics.Process? _bmsProcess;
+    
     // Shared memory area names
     private const string PRIMARY_SHARED_MEMORY = "FalconSharedMemoryArea";
     private const string STRING_SHARED_MEMORY = "FalconSharedMemoryAreaString";
@@ -28,18 +30,18 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
     private const uint HSI_FLYING_BIT = 0x80000000;
 
     // Offsets in primary shared memory structure (BMS4FlightData)
-    private const int OFFSET_X = 0;      // float at byte 0
-    private const int OFFSET_Y = 4;      // float at byte 4
-    private const int OFFSET_Z = 8;      // float at byte 8
+    private const int OFFSET_X = 0; // float at byte 0
+    private const int OFFSET_Y = 4; // float at byte 4
+    private const int OFFSET_Z = 8; // float at byte 8
     private const int OFFSET_HSIBITS = 232; // hsiBits (uint) at byte 232
 
     private ServiceState _state = ServiceState.Stopped;
     private double _pollingFrequencyHz = 2.0;
-    
+
     private PeriodicTimer? _timer;
     private Task? _pollingTask;
     private CancellationTokenSource? _cts;
-    
+
     private IntPtr _hPrimaryMemory = IntPtr.Zero;
     private IntPtr _lpPrimaryBaseAddress = IntPtr.Zero;
     private IntPtr _hStringMemory = IntPtr.Zero;
@@ -77,10 +79,11 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
     /// <summary>
     /// Indicates if the player is currently flying (from HSI Flying bit)
     /// </summary>
-    public bool IsFlying
+    public bool? IsFlying
     {
         get
         {
+            if (_state != ServiceState.Connected) return null;
             lock (_dataLock)
                 return _isFlying;
         }
@@ -128,13 +131,14 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
         _cts?.Cancel();
         _timer?.Dispose();
         _pollingTask?.Wait(TimeSpan.FromSeconds(5));
-        
+
         DisconnectFromSharedMemory();
-        
+
         lock (_dataLock)
         {
             ChangeState(ServiceState.Stopped);
         }
+
         _logger.LogInformation("Stopped");
     }
 
@@ -161,6 +165,19 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
                 }
                 else if (currentState == ServiceState.Connected)
                 {
+                    // Check if BMS process has exited
+                    if (!IsBmsProcessRunning())
+                    {
+                        _logger.LogInformation("BMS process has exited");
+                        DisconnectFromSharedMemory();
+                        lock (_dataLock)
+                        {
+                            _position = null;
+                            ChangeState(ServiceState.Disconnected);
+                        }
+                        continue;
+                    }
+                    
                     // Read data
                     if (!TryReadFlightData())
                     {
@@ -211,6 +228,15 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
                 return false;
             }
 
+            // Find and attach to BMS process
+            _bmsProcess = FindBmsProcess();
+            if (_bmsProcess == null)
+            {
+                // The SHMEM is still valid but it seems BMS has crashed - just continue polling until the user restarts it
+                return false;
+            }
+
+
             // Open string shared memory
             _hStringMemory = Win32SharedMemory.OpenFileMapping(
                 Win32SharedMemory.SECTION_MAP_READ,
@@ -229,10 +255,10 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
                 if (_lpStringBaseAddress != IntPtr.Zero)
                 {
                     var terrainDir = StringDataParser.ParseTheaterTerrainDir(_lpStringBaseAddress);
-                    
+
                     // This happens when BMS is not done loading yet
                     if (String.IsNullOrEmpty(terrainDir)) return false;
-                    
+
                     lock (_dataLock)
                     {
                         _theaterTerrainDir = terrainDir;
@@ -245,6 +271,46 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
         catch
         {
             DisconnectFromSharedMemory();
+            return false;
+        }
+    }
+    
+    private System.Diagnostics.Process? FindBmsProcess()
+    {
+        try
+        {
+            var processes = System.Diagnostics.Process.GetProcessesByName("Falcon BMS");
+            if (processes.Length > 0)
+            {
+                var process = processes[0];
+                // Dispose the rest
+                for (int i = 1; i < processes.Length; i++)
+                {
+                    processes[i].Dispose();
+                }
+                return process;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to find BMS process");
+        }
+    
+        return null;
+    }
+    
+    private bool IsBmsProcessRunning()
+    {
+        if (_bmsProcess == null)
+            return true; // Don't know, so assume it's running
+    
+        try
+        {
+            // HasExited throws if process handle is invalid
+            return !_bmsProcess.HasExited;
+        }
+        catch
+        {
             return false;
         }
     }
@@ -274,6 +340,12 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
             Win32SharedMemory.CloseHandle(_hStringMemory);
             _hStringMemory = IntPtr.Zero;
         }
+
+        if (_bmsProcess != null)
+        {
+            _bmsProcess.Dispose();
+            _bmsProcess = null;
+        }
     }
 
     private bool TryReadFlightData()
@@ -286,7 +358,7 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
             // Read x, y, z (floats at offsets 0, 4, 8)
             float x = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_X, 4), 0);
             float y = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_Y, 4), 0);
-            
+
             // For some reason, the BMS altitude is inverted
             float z = BitConverter.ToSingle(ReadBytes(_lpPrimaryBaseAddress, OFFSET_Z, 4), 0) * -1;
 
@@ -298,13 +370,14 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
             {
                 FlyingStateChanged?.Invoke(this, new FlyingStateChangedEventArgs(_wasFlying, isFlying));
             }
+
             _wasFlying = isFlying;
-            
+
             // Update position
             lock (_dataLock)
             {
                 // For some reason BMS switches x & y in shmem, correct this
-                _position = new FlightPosition((int) y, (int) x, (int) z);
+                _position = new FlightPosition((int)y, (int)x, (int)z);
                 _isFlying = isFlying;
             }
 
@@ -346,7 +419,6 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
     }
 }
 #else
-
 // Stub for non-Windows platforms
 [SuppressMessage("ReSharper", "UnassignedGetOnlyAutoProperty")]
 public class FalconSharedMemoryService : IFalconSharedMemoryService
@@ -358,6 +430,7 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
     public ServiceState State { get; }
     public FlightPosition? Position { get; }
     public string? TheaterTerrainDir { get; }
+    public bool? IsFlying { get; }
     public double PollingFrequencyHz { get; set; }
     public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     public event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;

@@ -72,6 +72,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconRadioSharedMemoryService.PowerChanged += OnRadioPowerChanged;
         _falconRadioSharedMemoryService.VolumeChanged += OnRadioVolumeChanged;
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
+        _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
         AllChannelGroups?.CollectionChanged += (s, e) => OnPropertyChanged(nameof(ChannelGroups));
@@ -85,6 +86,14 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             async (r, m) => await DeleteChannelGroup(m.ChannelCardGroupId));
         WeakReferenceMessenger.Default.Register<ChannelAudioChannelUpdateMessage>(this,
             (r, m) => _openFreqService.SetAudioChannel(m.FrequencyKhz, m.AudioChannel));
+    }
+
+    private void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
+    {
+        // Clean up in case the SHMEM has disconnected (BMS likely crashed)
+        if (_settings.ConnectionMode != IOpenFreqService.Mode.BMS || e.NewState == ServiceState.Connected || FalconChannelGroup == null) return;
+        DeleteChannelGroup(FalconChannelGroup);
+        FalconChannelGroup = null;
     }
 
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs e)

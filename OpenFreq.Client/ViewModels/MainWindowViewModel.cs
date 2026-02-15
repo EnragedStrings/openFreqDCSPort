@@ -41,49 +41,41 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty] public partial bool DebugMode { get; set; } = false;
 #endif
     /*********/
-    
-    [ObservableProperty]
-    public partial ChannelCardListViewModel ChannelList { get; set; }
 
-    [ObservableProperty]
-    public partial SettingsViewModel Settings { get; set; }
+    [ObservableProperty] public partial ChannelCardListViewModel ChannelList { get; set; }
 
-    [ObservableProperty]
-    public partial bool OpenFreqConnected { get; set; }
+    [ObservableProperty] public partial SettingsViewModel Settings { get; set; }
 
-    [ObservableProperty]
-    public partial bool TacviewConnected { get; set; }
+    [ObservableProperty] public partial bool OpenFreqConnected { get; set; }
 
-    [ObservableProperty]
-    public partial string StatusMessage { get; set; } = "Disconnected";
+    [ObservableProperty] public partial bool TacviewConnected { get; set; }
 
-    [ObservableProperty]
-    public partial string PeerId { get; set; } = String.Empty;
+    [ObservableProperty] public partial string StatusMessage { get; set; } = "Disconnected";
+
+    [ObservableProperty] public partial string PeerId { get; set; } = String.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(OpenFreqStatusColor))]
     public partial ConnectionState OpenFreqConnectionState { get; set; } = ConnectionState.Disconnected;
-    
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TacviewStatusColor))]
     public partial AcmiConnectionStatus AcmiConnectionStatus { get; set; } = AcmiConnectionStatus.Disconnected;
 
     // Error handling properties
-    [ObservableProperty]
-    public partial bool HasError { get; set; }
+    [ObservableProperty] public partial bool HasError { get; set; }
 
-    [ObservableProperty]
-    public partial string ErrorMessage { get; set; } = "";
+    [ObservableProperty] public partial string ErrorMessage { get; set; } = "";
 
     [ObservableProperty] private partial ObservableCollection<string> ErrorLog { get; set; } = [];
     [ObservableProperty] public partial bool Is3dMode { get; set; }
     [ObservableProperty] public partial bool IvcWarning { get; set; }
-    
+
     public Color OpenFreqStatusColor => OpenFreqConnectionState switch
     {
-        ConnectionState.Connected => Color.Parse("#4CAF50"),      // Material Green 500
-        ConnectionState.Connecting => Color.Parse("#FF9800"),     // Material Orange 500
-        ConnectionState.Disconnected => Color.Parse("#9E9E9E"),   // Material Grey 500
+        ConnectionState.Connected => Color.Parse("#4CAF50"), // Material Green 500
+        ConnectionState.Connecting => Color.Parse("#FF9800"), // Material Orange 500
+        ConnectionState.Disconnected => Color.Parse("#9E9E9E"), // Material Grey 500
         _ => Color.Parse("#9E9E9E")
     };
 
@@ -133,16 +125,25 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
             FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
+        _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
 
         // IVC Monitor
         _ivcMonitorService.IvcStatusChanged += OnIvcStatusChanged;
         // manually start it so we can be sure to get a notification if its already running
         _ivcMonitorService.Start();
-        
+
         // Load config
         _ = LoadConfigurationAsync();
-        
+
         _openFreqService.SetOwnPositionMode(Settings.ConnectionMode);
+    }
+
+    private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
+    {
+        if (e.OldState != ServiceState.Connected) return;
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+        Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
+        await DisconnectAsync();
     }
 
     private async void OnIvcStatusChanged(object? sender, IvcStatusChangedEventArgs ivcStatusChangedEventArgs)
@@ -154,7 +155,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                 IvcWarning = ivcStatusChangedEventArgs.IsRunning;
 
                 if (!IvcWarning) return;
-            
+
                 if (!await ConfirmationDialogService.ShowAsync(
                         title: "IVC Client detected",
                         message: "The BMS IVC Client seems to be running.\n" +
@@ -163,7 +164,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                                  "Kill the IVC process?",
                         cancelText: "Cancel",
                         confirmText: "Kill IVC")) return;
-            
+
                 try
                 {
                     _ivcMonitorService.KillIvc();
@@ -210,6 +211,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (_openFreqService.IsConnected)
             {
                 _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.Connected);
+                Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
             }
             else
             {
@@ -304,6 +306,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             {
                 await _acmiClientService.DisconnectAsync();
             }
+
             _acmiClientService.CancelConnectionAttempts();
             ClearError();
         }
@@ -317,7 +320,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     {
         AcmiConnectionStatus = e.Status;
     }
-    
+
 
     [RelayCommand]
     private void ClearError()
@@ -386,10 +389,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnPeerActivityReceived(object? sender, PeerActivityEventArgs e)
     {
-        // Could be used for a log or notifications panel
         StatusMessage = e.Message;
     }
-    
+
 
     private async Task LoadConfigurationAsync()
     {
@@ -500,7 +502,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
         _openFreqService.StatusMessageReceived -= OnStatusMessageReceived;
         _openFreqService.PeerActivityReceived -= OnPeerActivityReceived;
-        
+
         _falconRadioSharedMemoryService.ConnectionParametersChanged -=
             FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;

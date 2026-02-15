@@ -8,7 +8,7 @@ namespace OpenFreq.Common;
 public class AudioPacketMetadata
 {
     [JsonPropertyName("id")]
-    public string clientId  { get; set; }
+    public required string ClientId  { get; set; }
    
     /// <summary>
     /// Frequencies being transmitted on with per-frequency markers
@@ -28,58 +28,38 @@ public class AudioPacketMetadata
     [JsonPropertyName("server_send_timestamp")]
     public long ServerSendTimestamp { get; set; }
     
-    [JsonPropertyName("position")]
-    public AircraftPosition? Position { get; set; }
-    
-    public bool In3D { get; set; }
-    
-    public int PcmDataLength { get; set; }
-    
     [JsonIgnore]
     public bool HasAnyBeginMarker => Frequencies.Any(f => f.BeginMarker);
 }
 
 // Position data structure
-public class AircraftPosition
+public class Position
 {
+    [JsonPropertyName("x")]
     public double X { get; set; }
+    [JsonPropertyName("y")]
     public double Y { get; set; }
+    [JsonPropertyName("z")]
     public double Z { get; set; }
     
-    public AircraftPosition() {}
+    public Position() {}
 
-    public AircraftPosition(double x, double y, double z)
+    public Position(double x, double y, double z)
     {
         X = x;
         Y = y;
         Z = z;
     }
 
+    public Position((double, double, double) data)
+    {
+        X = data.Item1;
+        Y = data.Item2;
+        Z = data.Item3;
+    }
+
     public override string ToString()
     {
         return $"{X},{Y},{Z}";
-    }
-    
-    /// <summary>
-    /// Translates BMS SharedMemory coordinates (feet, origin bottom left) to Heightmap X/Y coordinates (pixels, origin top left)
-    /// </summary>
-    public AircraftPosition ToHeightmapPosition()
-    {
-        // Heightmap specifications
-        const int HEIGHTMAP_SIZE_PX = 32768;
-        const float HEIGHTMAP_SIZE_KM = 1024f;
-        
-        // Calculate meters per pixel
-        const float METERS_PER_PIXEL = (HEIGHTMAP_SIZE_KM * 1000f) / HEIGHTMAP_SIZE_PX;
-        // = 31.25 meters/pixel
-
-        // Calculate feet per pixel
-        const float FEET_PER_METER = 3.28084f;
-        const float FEET_PER_PIXEL = METERS_PER_PIXEL * FEET_PER_METER;
-        // = 102.5458 feet/pixel
-
-        var heightmapX = Y / FEET_PER_PIXEL;
-        var heightmapY = HEIGHTMAP_SIZE_PX - (X / FEET_PER_PIXEL);
-        return new AircraftPosition(heightmapX, heightmapY, Z);
     }
 }

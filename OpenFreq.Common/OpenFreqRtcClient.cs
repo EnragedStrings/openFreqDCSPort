@@ -3,11 +3,8 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Concentus.Structs;
 using Microsoft.Extensions.Logging;
-using OpenFreq.Common.Rtp;
 using OpenFreq.Common.Signaling;
-using OpenFreqClient;
 
 namespace OpenFreq.Common;
 
@@ -39,63 +36,36 @@ public class OpenFreqRtcClient : IDisposable
     private bool _opusCompressionEnabled = true;
 
     // Connection state
-    private readonly string _serverIp;
+    public readonly string ServerIp;
     private readonly string _password;
     private ClientWebSocket? _webSocket;
-    private UdpClient? _audioClient;
-    private IPEndPoint? _serverAudioEndpoint;
     private string? _myPeerId;
     private int _audioPort;
     private bool _isConnected;
     private bool _isAuthenticated;
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
     private string clientId = Guid.NewGuid().ToString();
 
     // Transmission state
-    private readonly Dictionary<double, bool> _frequencyTransmissionState = new();
-    private readonly Dictionary<double, bool> _frequencyFirstPacketSent = new();
-    private readonly Dictionary<double, HashSet<string>> _frequencyPeers = new();
-
-    // Aircraft position state (thread-safe)
-    private readonly Lock _positionLock = new();
-    private AircraftPosition? _currentPosition;
+    private readonly Dictionary<int, bool> _frequencyTransmissionState = new();
+    private readonly Dictionary<int, bool> _frequencyFirstPacketSent = new();
+    private readonly Dictionary<int, HashSet<string>> _frequencyPeers = new();
+    
     private readonly ILogger<OpenFreqRtcClient> _logger;
+    private readonly ILoggerFactory _loggerFactory;
 
     // Properties
     public string? MyPeerId => _myPeerId;
     public int AudioPort => _audioPort;
     public bool IsConnected => _isConnected;
     public bool IsAuthenticated => _isAuthenticated;
-    public IReadOnlyDictionary<double, bool> FrequencyTransmissionState => _frequencyTransmissionState;
 
-    public OpenFreqRtcClient(ILogger<OpenFreqRtcClient> logger, string serverIp, string password)
+    public OpenFreqRtcClient(ILoggerFactory loggerFactory, string serverIp, string password)
     {
-        _logger = logger;
-        _serverIp = serverIp;
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory.CreateLogger<OpenFreqRtcClient>();
+        ServerIp = serverIp;
         _password = password;
-    }
-
-    /// <summary>
-    /// Set the aircraft position for UDP packet metadata
-    /// Thread-safe - can be called from any service (ACMI, BMS, etc.)
-    /// </summary>
-    public void SetPosition(AircraftPosition? position)
-    {
-        lock (_positionLock)
-        {
-            _currentPosition = position;
-        }
-    }
-
-    /// <summary>
-    /// Get the current aircraft position
-    /// </summary>
-    public AircraftPosition? GetPosition()
-    {
-        lock (_positionLock)
-        {
-            return _currentPosition;
-        }
     }
 
     /// <summary>
@@ -105,8 +75,11 @@ public class OpenFreqRtcClient : IDisposable
     {
         try
         {
+            _cts.Dispose();
+            _cts = new CancellationTokenSource();
+            
             // Connect WebSocket
-            var ipPort = Util.ResolveAddress(_serverIp, DEFAULT_PORT);
+            var ipPort = Util.ResolveAddress(ServerIp, DEFAULT_PORT);
 
             // we need to wrap IPv6 into [] for a valid URI
             IPAddress? ip;
@@ -121,9 +94,6 @@ public class OpenFreqRtcClient : IDisposable
             _webSocket = new ClientWebSocket();
             await _webSocket.ConnectAsync(new Uri($"ws://{ipPort.ipAddress}:{ipPort.port}"), _cts.Token);
 
-            _isConnected = true;
-            OnConnectionStateChanged(ConnectionState.Connected);
-
             // Start message receiver
             _ = Task.Run(ReceiveMessagesAsync, _cts.Token);
 
@@ -131,7 +101,6 @@ public class OpenFreqRtcClient : IDisposable
             await SendMessageAsync(SignalingMessageFactory.CreateAuthenticate(_password));
 
             // Wait for authentication response with timeout
-            var authWaitTask = Task.Delay(5000, _cts.Token);
             var startTime = DateTime.UtcNow;
             while (!_isAuthenticated && (DateTime.UtcNow - startTime).TotalSeconds < 5)
             {
@@ -145,13 +114,13 @@ public class OpenFreqRtcClient : IDisposable
 
             // Create RTP sender
             _rtpSender = new RtpAudioSender(
+                logger:  _loggerFactory.CreateLogger<RtpAudioSender>(),
                 serverHost: ipPort.ipAddress,
                 serverPort: _audioPort,
                 opusEnabled: _opusCompressionEnabled
             );
 
-            var port = 10000;
-            _rtpReceiver = new RtpAudioReceiver(
+            _rtpReceiver = new RtpAudioReceiver(_loggerFactory,
                 udpClient: _rtpSender.UdpClient,
                 opusEnabled: _opusCompressionEnabled,
                 initialBufferMs: 150
@@ -159,8 +128,10 @@ public class OpenFreqRtcClient : IDisposable
 
             // Subscribe to clean audio events
             _rtpReceiver.AudioReceived += OnRtpAudioReceived;
-            _rtpReceiver.ErrorOccurred += (sender, error) => { _logger.LogError("RTP Error: {Error}", error); };
+            _rtpReceiver.ErrorOccurred += (_, error) => { _logger.LogError("RTP Error: {Error}", error); };
 
+            _isConnected = true;
+            OnConnectionStateChanged(ConnectionState.Connected);
           
         }
         catch (Exception ex)
@@ -172,7 +143,7 @@ public class OpenFreqRtcClient : IDisposable
         }
     }
 
-    private void CleanupRTP()
+    private void CleanupRtp()
     {
         _rtpSender?.Dispose();
         _rtpSender = null;
@@ -187,121 +158,120 @@ public class OpenFreqRtcClient : IDisposable
     /// <summary>
     /// Join a frequency channel
     /// </summary>
-    public async Task JoinFrequencyAsync(double frequency)
+    public async Task JoinFrequencyAsync(int frequencyKhz)
     {
         if (!_isAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequency));
+        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz));
 
-        if (!_frequencyPeers.ContainsKey(frequency))
+        if (!_frequencyPeers.ContainsKey(frequencyKhz))
         {
-            _frequencyPeers[frequency] = new HashSet<string>();
+            _frequencyPeers[frequencyKhz] = new HashSet<string>();
         }
 
-        _frequencyTransmissionState[frequency] = false;
+        _frequencyTransmissionState[frequencyKhz] = false;
     }
 
     /// <summary>
     /// Leave a frequency channel
     /// </summary>
-    public async Task LeaveFrequencyAsync(double frequency)
+    public async Task LeaveFrequencyAsync(int frequencyKhz)
     {
         if (!_isAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        await SendMessageAsync(SignalingMessageFactory.CreateLeave(frequency));
+        await SendMessageAsync(SignalingMessageFactory.CreateLeave(frequencyKhz));
 
-        _frequencyPeers.Remove(frequency);
-        _frequencyTransmissionState.Remove(frequency);
-        _frequencyFirstPacketSent.Remove(frequency); // Clean up tracking state
-        OnFrequencyLeft(frequency);
+        _frequencyPeers.Remove(frequencyKhz);
+        _frequencyTransmissionState.Remove(frequencyKhz);
+        _frequencyFirstPacketSent.Remove(frequencyKhz); // Clean up tracking state
+        OnFrequencyLeft(frequencyKhz);
     }
 
     /// <summary>
     /// Start transmitting on a frequency
     /// </summary>
-    public async Task StartTransmissionAsync(double frequencyMhz)
+    public async Task StartTransmissionAsync(int frequencyKhz)
     {
         if (!_isAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        if (!_frequencyTransmissionState.ContainsKey(frequencyMhz))
+        if (!_frequencyTransmissionState.ContainsKey(frequencyKhz))
         {
-            throw new InvalidOperationException($"Not joined to frequency {frequencyMhz}");
+            throw new InvalidOperationException($"Not joined to frequency {frequencyKhz}");
         }
         
-        _frequencyTransmissionState[frequencyMhz] = true;
-        _frequencyFirstPacketSent[frequencyMhz] = false; // Mark that we need to send startMarker
+        _frequencyTransmissionState[frequencyKhz] = true;
+        _frequencyFirstPacketSent[frequencyKhz] = false; // Mark that we need to send startMarker
         
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyMhz, true));
-        OnTransmissionStateChanged(frequencyMhz, true);
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true));
+        OnTransmissionStateChanged(frequencyKhz, true);
 
         // Start heartbeat for this frequency
-        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyMhz), _cts.Token);
+        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz), _cts.Token);
     }
 
     /// <summary>
     /// Stop transmitting on a frequency
     /// </summary>
-    public async Task StopTransmissionAsync(double frequencyMhz)
+    public async Task StopTransmissionAsync(int frequencyKhz)
     {
         if (!_isAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        if (!_frequencyTransmissionState.ContainsKey(frequencyMhz))
+        if (!_frequencyTransmissionState.ContainsKey(frequencyKhz))
         {
             return;
         }
 
         // Send final silent packet with endMarker
-        var position = GetPosition();
         var silence = new byte[OPUS_SAMPLES_PER_FRAME * 2]; // 20ms silence, 16-bit PCM
         
         _rtpSender?.SendAudio(
             audioData: silence,
             clientId: clientId,
-            position: position,
-            frequencyTransmissions: [new FrequencyTransmission(frequencyMhz, false, true)]
+            frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, new Position(), false, true)]
         );
         
-        _logger.LogInformation("Sent end marker for frequency {Frequency}", frequencyMhz);
+        _logger.LogInformation("Sent end marker for frequency {Frequency/1000d:F3}", frequencyKhz);
 
-        _frequencyTransmissionState[frequencyMhz] = false;
-        _frequencyFirstPacketSent.Remove(frequencyMhz); // Clean up tracking state
+        _frequencyTransmissionState[frequencyKhz] = false;
+        _frequencyFirstPacketSent.Remove(frequencyKhz); // Clean up tracking state
         
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyMhz, false));
-        OnTransmissionStateChanged(frequencyMhz, false);
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false));
+        OnTransmissionStateChanged(frequencyKhz, false);
     }
 
 
-    public void SendAudio(byte[] pcmData, AircraftPosition position, List<double> frequencies)
+    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, Position? position)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
-    
         foreach (var freq in frequencies)
         {
-            bool needsBeginMarker = _frequencyFirstPacketSent.TryGetValue(freq, out var sent) && !sent;
-        
+            bool needsBeginMarker = _frequencyFirstPacketSent.TryGetValue(freq.frequencyKhz, out var sent) && !sent;
             frequencyTransmissions.Add(new FrequencyTransmission(
-                mhz: freq,
+                khz: freq.frequencyKhz,
+                txPowerWatts: freq.txPowerWatts, 
+                position: freq.position,
+                in3d: in3d,
                 beginMarker: needsBeginMarker,
                 endMarker: false
             ));
         
             if (needsBeginMarker)
-                _frequencyFirstPacketSent[freq] = true;
+                _frequencyFirstPacketSent[freq.frequencyKhz] = true;
         }
-    
-        _rtpSender?.SendAudio(pcmData, clientId, position, frequencyTransmissions);
+        
+        _rtpSender?.SendAudio(pcmData, clientId, frequencyTransmissions);
     }
     
 
@@ -310,9 +280,9 @@ public class OpenFreqRtcClient : IDisposable
     /// </summary>
     public async Task DisconnectAsync()
     {
-        CleanupRTP();
+        CleanupRtp();
         _cts.Cancel();
-
+        
         if (_webSocket?.State == WebSocketState.Open)
         {
             await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client disconnecting",
@@ -324,23 +294,23 @@ public class OpenFreqRtcClient : IDisposable
         OnConnectionStateChanged(ConnectionState.Disconnected);
     }
 
-    private async Task TransmissionHeartbeatAsync(double frequency)
+    private async Task TransmissionHeartbeatAsync(int frequencyKhz)
     {
         while (!_cts.Token.IsCancellationRequested)
         {
-            if (!_frequencyTransmissionState.TryGetValue(frequency, out var isTransmitting) || !isTransmitting)
+            if (!_frequencyTransmissionState.TryGetValue(frequencyKhz, out var isTransmitting) || !isTransmitting)
             {
                 break;
             }
 
-            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequency, true));
+            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true));
             await Task.Delay(333, _cts.Token); // ~3 times per second
         }
     }
 
     private void OnRtpAudioReceived(object? sender, RtpAudioReceiver.AudioReceivedEventArgs e)
     {
-        OnAudioDataReceived(e.Metadata.clientId, e.AudioData, e.Metadata);
+        OnAudioDataReceived(e.Metadata.ClientId, e.AudioData, e.Metadata);
     }
     
     private async Task ReceiveMessagesAsync()
@@ -394,7 +364,7 @@ public class OpenFreqRtcClient : IDisposable
     {
         try
         {
-            var message = JsonSerializer.Deserialize<SignalingMessage>(json);
+            var message = JsonSerializer.Deserialize(json, OpenFreqJsonContext.Default.SignalingMessage);
             if (message == null) return;
 
             switch (message.Type)
@@ -427,12 +397,12 @@ public class OpenFreqRtcClient : IDisposable
                     var joined = SignalingMessageFactory.DeserializePayload<PeerJoinedMessage>(message.Payload);
                     if (joined != null)
                     {
-                        if (_frequencyPeers.TryGetValue(joined.FrequencyMhz, out var peers))
+                        if (_frequencyPeers.TryGetValue(joined.FrequencyKhz, out var peers))
                         {
                             peers.Add(joined.PeerId);
                         }
 
-                        OnPeerJoined(joined.PeerId, joined.FrequencyMhz);
+                        OnPeerJoined(joined.PeerId, joined.FrequencyKhz);
                     }
 
                     break;
@@ -441,12 +411,12 @@ public class OpenFreqRtcClient : IDisposable
                     var left = SignalingMessageFactory.DeserializePayload<PeerLeftMessage>(message.Payload);
                     if (left != null)
                     {
-                        if (_frequencyPeers.TryGetValue(left.FrequencyMhz, out var peers))
+                        if (_frequencyPeers.TryGetValue(left.FrequencyKhz, out var peers))
                         {
                             peers.Remove(left.PeerId);
                         }
 
-                        OnPeerLeft(left.PeerId, left.FrequencyMhz);
+                        OnPeerLeft(left.PeerId, left.FrequencyKhz);
                     }
 
                     break;
@@ -456,7 +426,7 @@ public class OpenFreqRtcClient : IDisposable
                         SignalingMessageFactory.DeserializePayload<TransmissionEventMessage>(message.Payload);
                     if (transmission != null && transmission.PeerId != _myPeerId)
                     {
-                        OnPeerTransmissionStateChanged(transmission.PeerId, transmission.FrequencyMhz,
+                        OnPeerTransmissionStateChanged(transmission.PeerId, transmission.FrequencyKhz,
                             transmission.Transmitting);
                     }
 
@@ -466,8 +436,8 @@ public class OpenFreqRtcClient : IDisposable
                     var channelState = SignalingMessageFactory.DeserializePayload<ChannelStateMessage>(message.Payload);
                     if (channelState != null)
                     {
-                        _frequencyPeers[channelState.FrequencyMhz] = new HashSet<string>(channelState.Peers);
-                        OnFrequencyJoined(channelState.FrequencyMhz, channelState.Peers);
+                        _frequencyPeers[channelState.FrequencyKhz] = new HashSet<string>(channelState.Peers);
+                        OnFrequencyJoined(channelState.FrequencyKhz, channelState.Peers);
                     }
 
                     break;
@@ -485,7 +455,7 @@ public class OpenFreqRtcClient : IDisposable
 
         try
         {
-            var json = JsonSerializer.Serialize(message);
+            var json = JsonSerializer.Serialize(message, OpenFreqJsonContext.Default.SignalingMessage);
             var buffer = Encoding.UTF8.GetBytes(json);
             await _webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, _cts.Token);
         }
@@ -502,23 +472,23 @@ public class OpenFreqRtcClient : IDisposable
     private void OnAuthenticated(string peerId, int audioPort) =>
         Authenticated?.Invoke(this, new AuthenticationEventArgs(peerId, audioPort));
 
-    private void OnFrequencyJoined(double frequencyMhz, List<string> peers) =>
-        FrequencyJoined?.Invoke(this, new FrequencyJoinedEventArgs(frequencyMhz, peers));
+    private void OnFrequencyJoined(int frequencyKhz, List<string> peers) =>
+        FrequencyJoined?.Invoke(this, new FrequencyJoinedEventArgs(frequencyKhz, peers));
 
-    private void OnFrequencyLeft(double frequencyMhz) =>
-        FrequencyLeft?.Invoke(this, new FrequencyLeftEventArgs(frequencyMhz));
+    private void OnFrequencyLeft(int frequencyKhz) =>
+        FrequencyLeft?.Invoke(this, new FrequencyLeftEventArgs(frequencyKhz));
 
-    private void OnPeerJoined(string peerId, double frequencyMhz) =>
-        PeerJoined?.Invoke(this, new PeerEventArgs(peerId, frequencyMhz));
+    private void OnPeerJoined(string peerId, int frequencyKhz) =>
+        PeerJoined?.Invoke(this, new PeerEventArgs(peerId, frequencyKhz));
 
-    private void OnPeerLeft(string peerId, double frequencyMhz) =>
-        PeerLeft?.Invoke(this, new PeerEventArgs(peerId, frequencyMhz));
+    private void OnPeerLeft(string peerId, int frequencyKhz) =>
+        PeerLeft?.Invoke(this, new PeerEventArgs(peerId, frequencyKhz));
 
-    private void OnTransmissionStateChanged(double frequencyMhz, bool isTransmitting) =>
-        TransmissionStateChanged?.Invoke(this, new TransmissionStateEventArgs(frequencyMhz, isTransmitting));
+    private void OnTransmissionStateChanged(int frequencyKhz, bool isTransmitting) =>
+        TransmissionStateChanged?.Invoke(this, new TransmissionStateEventArgs(frequencyKhz, isTransmitting));
 
-    private void OnPeerTransmissionStateChanged(string peerId, double frequencyMhz, bool isTransmitting) =>
-        PeerTransmissionStateChanged?.Invoke(this, new PeerTransmissionEventArgs(peerId, frequencyMhz, isTransmitting));
+    private void OnPeerTransmissionStateChanged(string peerId, int frequencyKhz, bool isTransmitting) =>
+        PeerTransmissionStateChanged?.Invoke(this, new PeerTransmissionEventArgs(peerId, frequencyKhz, isTransmitting));
 
     private void OnAudioDataReceived(string peerId, byte[] audioData, AudioPacketMetadata metadata) =>
         AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, metadata));
@@ -528,11 +498,8 @@ public class OpenFreqRtcClient : IDisposable
 
     public void Dispose()
     {
-        Console.WriteLine($"[CLIENT] Dispose called - Instance: {GetHashCode()}");
         _cts.Cancel();
-
-        _audioClient?.Close();
-        _audioClient?.Dispose();
+        _cts.Dispose();
 
         if (_webSocket?.State == WebSocketState.Open)
         {
@@ -540,7 +507,6 @@ public class OpenFreqRtcClient : IDisposable
         }
 
         _webSocket?.Dispose();
-        _cts.Dispose();
     }
 }
 
@@ -571,38 +537,38 @@ public class AuthenticationEventArgs : EventArgs
     }
 }
 
-public class FrequencyJoinedEventArgs(double frequencyMhz, List<string> peers) : EventArgs
+public class FrequencyJoinedEventArgs(int frequencyKhz, List<string> peers) : EventArgs
 {
     public List<string> Peers { get; } = peers;
-    public double FrequencyMhz { get; } = frequencyMhz;
+    public int FrequencyKhz { get; } = frequencyKhz;
 }
 
 public class FrequencyLeftEventArgs : EventArgs
 {
-    public double FrequencyMhz { get; }
-    public FrequencyLeftEventArgs(double frequencyMhz) => FrequencyMhz = frequencyMhz;
+    public int FrequencyKhz { get; }
+    public FrequencyLeftEventArgs(int frequencyKhz) => FrequencyKhz = frequencyKhz;
 }
 
 public class PeerEventArgs : EventArgs
 {
     public string PeerId { get; }
-    public double FrequencyMhz { get; }
+    public int FrequencyKhz { get; }
 
-    public PeerEventArgs(string peerId, double frequencyMhz)
+    public PeerEventArgs(string peerId, int frequencyKhz)
     {
         PeerId = peerId;
-        FrequencyMhz = frequencyMhz;
+        FrequencyKhz = frequencyKhz;
     }
 }
 
 public class TransmissionStateEventArgs : EventArgs
 {
-    public double FrequencyMhz { get; }
+    public int FrequencyKhz { get; }
     public bool IsTransmitting { get; }
 
-    public TransmissionStateEventArgs(double frequencyMhz, bool isTransmitting)
+    public TransmissionStateEventArgs(int frequencyKhz, bool isTransmitting)
     {
-        FrequencyMhz = frequencyMhz;
+        FrequencyKhz = frequencyKhz;
         IsTransmitting = isTransmitting;
     }
 }
@@ -610,13 +576,13 @@ public class TransmissionStateEventArgs : EventArgs
 public class PeerTransmissionEventArgs : EventArgs
 {
     public string PeerId { get; }
-    public double FrequencyMhz { get; }
+    public int FrequencyKhz { get; }
     public bool IsTransmitting { get; }
 
-    public PeerTransmissionEventArgs(string peerId, double frequencyMhz, bool isTransmitting)
+    public PeerTransmissionEventArgs(string peerId, int frequencyKhz, bool isTransmitting)
     {
         PeerId = peerId;
-        FrequencyMhz = frequencyMhz;
+        FrequencyKhz = frequencyKhz;
         IsTransmitting = isTransmitting;
     }
 }

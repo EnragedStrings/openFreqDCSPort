@@ -5,14 +5,13 @@ namespace OpenFreqClient.Models;
 public class Channel
 {
     /// <summary>
-    /// Frequency in Hz (SI unit)
-    /// Example: 305.0 MHz = 305,000,000 Hz
+    /// Frequency in KHz
     /// </summary>
-    public double FrequencyMhz { get; set; }
+    public int FrequencyKhz { get; set; }
     
     public string? Name  { get; set; }
     public float RxDb {get; set;}
-    public ChannelType Type  { get; set; }
+    
     public ChannelStatus Status { get; set; } = ChannelStatus.Disconnected;
 
     public bool Enabled { get; set; } = true;
@@ -20,15 +19,6 @@ public class Channel
     public enum ChannelType
     {
         UHF, VHF, Custom
-    }
-
-    public static ChannelType ToChannelType(RadioType radioType)
-    {
-        if  (radioType == RadioType.UHF)
-            return ChannelType.UHF;
-        if (radioType == RadioType.VHF)
-            return ChannelType.VHF;
-        return ChannelType.Custom;
     }
 
     public enum ChannelStatus

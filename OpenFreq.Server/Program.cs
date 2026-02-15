@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Server;
+using OpenFreqServer.Json;
 using Serilog;
 using Serilog.Events;
 
@@ -15,7 +16,7 @@ class Program
         
         var logFile = Path.Combine(logsDirectory, $"openfreq-{DateTime.Now:yyyy-MM-dd}.log");
 
-        #if DEBUG
+#if DEBUG
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -24,12 +25,14 @@ class Program
             .Enrich.WithProperty("Application", "OpenFreqServer")
             .WriteTo.File(
                 logFile,
-                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}",
+                outputTemplate:
+                "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}",
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 30,
                 shared: true)
+            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
             .CreateLogger();
-        #else
+#else
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -43,8 +46,8 @@ class Program
                 retainedFileCountLimit: 30,
                 shared: true)
             .CreateLogger();
-        #endif
-        
+#endif
+
         try
         {
             Console.WriteLine("OpenFreq Server - Loading configuration...");
@@ -58,7 +61,7 @@ class Program
                 return;
             }
 
-            Log.Information("Server starting with configuration: Port={Port}, MaxClients={MaxClients}", 
+            Log.Information("Server starting with configuration: Port={Port}, MaxClients={MaxClients}",
                 config.WebSocketPort, config.MaxClientsPerChannel);
 
             // Setup logging infrastructure
@@ -88,7 +91,7 @@ class Program
                 {
                     e.Cancel = true;
                     Log.Information("Shutdown requested by user");
-                    shutdownCts.Cancel();  // Signal shutdown, don't block
+                    shutdownCts.Cancel(); // Signal shutdown, don't block
                 }
             };
 
@@ -106,18 +109,18 @@ class Program
             });
 
             // Start TUI (blocks until quit or shutdown requested)
-                        var tuiTask = Task.Run(() => tui.Start());
+            var tuiTask = Task.Run(() => tui.Start());
 
             // Wait for either TUI to quit or Ctrl+C
-                        await Task.WhenAny(tuiTask, Task.Delay(-1, shutdownCts.Token).ContinueWith(_ => { }));
+            await Task.WhenAny(tuiTask, Task.Delay(-1, shutdownCts.Token).ContinueWith(_ => { }));
 
             // Now properly shut down
-                        Log.Information("Shutting down server...");
-                        await server.StopAsync();  // Async all the way
-                        tui.Stop();
+            Log.Information("Shutting down server...");
+            await server.StopAsync(); // Async all the way
+            tui.Stop();
 
             // Wait for server to finish
-                        await serverTask;
+            await serverTask;
         }
         catch (Exception ex)
         {
@@ -134,26 +137,23 @@ class Program
     {
         try
         {
-            var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
-            
+            var configPath = Path.Combine(AppContext.BaseDirectory, "OpenFreq.Server.json");
+
             if (!File.Exists(configPath))
             {
                 Log.Information("Configuration file not found at: {ConfigPath}, creating default", configPath);
-                
+
                 var defaultConfig = new ServerConfig
                 {
                     ServerPassword = "",
-                    WebSocketPort = 8080,
+                    WebSocketPort = 9987,
                     AudioBasePort = 10000,
                     MaxClientsPerChannel = 50,
                     MaxChannelsPerClient = 10,
-                    EnableOpusCompression =  true
+                    EnableOpusCompression = true
                 };
 
-                var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                });
+                var json = Json.Instance.Serialize(defaultConfig);
 
                 File.WriteAllText(configPath, json);
                 Log.Information("Default configuration created at: {ConfigPath}", configPath);
@@ -161,14 +161,14 @@ class Program
             }
 
             var configJson = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<ServerConfig>(configJson);
+            var config = Json.Instance.Deserialize<ServerConfig>(configJson);
 
             if (config == null)
             {
                 Log.Error("Failed to parse configuration file");
                 return null;
             }
-            
+
             return config;
         }
         catch (Exception ex)

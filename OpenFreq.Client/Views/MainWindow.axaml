@@ -7,192 +7,490 @@
         xmlns:views="clr-namespace:OpenFreqClient.Views"
         xmlns:avalonia="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
         xmlns:converters="clr-namespace:Avalonia.Controls.Converters;assembly=Avalonia.Controls"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        xmlns:local="clr-namespace:OpenFreq.Utilities"
+        xmlns:dialogHostAvalonia="clr-namespace:DialogHostAvalonia;assembly=DialogHost.Avalonia"
+        xmlns:controls1="clr-namespace:OpenFreq.Client.Controls"
+        mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="300"
         x:Class="OpenFreqClient.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/openfreq_client.ico"
-        Title="OpenFreq Client">
+        Title="OpenFreq Client"
+        Width="800" Height="500">
 
     <Design.DataContext>
         <vm:MainWindowViewModel />
     </Design.DataContext>
 
+    <Window.Styles>
+        <!-- Card Style -->
+        <Style Selector="controls|Card">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
 
-    <!-- Side Drawer -->
-    <controls:NavigationDrawer Name="LeftDrawer"
-                               LeftDrawerOpened="False">
-        <controls:NavigationDrawer.LeftDrawerContent>
-            <StackPanel Width="300" Margin="16">
-                <TextBlock Classes="Headline6" Margin="0,0,0,16">Settings</TextBlock>
+        <!-- Section Header Style -->
+        <Style Selector="TextBlock.SectionHeader">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
 
-                <StackPanel Orientation="Horizontal" Margin="0, 4" IsEnabled="{Binding  !OpenFreqConnected}">
-                    <RadioButton GroupName="ConnectionMode"
-                                 IsChecked="{Binding !Settings.ModeIsGci}"
-                                 Content="BMS" />
+        <!-- Input Label Style -->
+        <Style Selector="TextBlock.InputLabel">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.7" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
 
-                    <RadioButton GroupName="ConnectionMode"
-                                 IsChecked="{Binding Settings.ModeIsGci}"
-                                 Content="GCI"
-                                 Margin="15,0,0,0" />
+        <!-- Status Dot Style -->
+        <Style Selector="Ellipse.StatusDot">
+            <Setter Property="Width" Value="8" />
+            <Setter Property="Height" Value="8" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
 
+        <!-- Top Bar Styles -->
+        <Style Selector="TextBlock.StatusText">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Window.Styles>
 
-                </StackPanel>
-                <Separator Foreground="{DynamicResource MaterialDividerBrush}"></Separator>
-                <!-- Server Settings -->
-                <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
-                    <TextBlock Classes="Subtitle2" Margin="0,8,0,4">OpenFreq Server</TextBlock>
-                    <TextBox Watermark="Server Address:Port"
-                             Text="{Binding Settings.OpenFreqServerAddress}"
-                             Margin="0,4"
-                             IsEnabled="{Binding !OpenFreqConnected}" />
+    <dialogHostAvalonia:DialogHost Identifier="MainDialogHost">
+        <!-- Side Drawer -->
+        <controls:NavigationDrawer Name="LeftDrawer"
+                                   LeftDrawerOpened="False">
+            <controls:NavigationDrawer.LeftDrawerContent>
+                <!-- Settings Drawer -->
+                <DockPanel Width="320">
+                    <!-- Header with Mode Selection -->
+                    <Border DockPanel.Dock="Top"
+                            Background="{DynamicResource MaterialPaperBrush}"
+                            Padding="16"
+                            BorderBrush="{DynamicResource MaterialDividerBrush}"
+                            BorderThickness="0,0,0,1">
+                        <StackPanel>
+                            <TextBlock Text="Settings"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,12" />
 
-                    <TextBox Watermark="Password" PasswordChar="*"
-                             Text="{Binding Settings.OpenFreqPassword}"
-                             Margin="0,4"
-                             IsEnabled="{Binding !OpenFreqConnected}" />
-                </StackPanel>
-                <TextBlock IsVisible="{Binding !Settings.ModeIsGci}" Classes="Body2"
-                           Text="Connection Settings controlled by BMS" />
+                            <!-- Mode Toggle with Background -->
+                            <Border Background="{DynamicResource MaterialBackgroundBrush}"
+                                    CornerRadius="8"
+                                    Padding="4">
+                                <Grid ColumnDefinitions="*,*">
+                                    <Grid.Styles>
+                                        <Style Selector="RadioButton">
+                                            <Setter Property="Theme"
+                                                    Value="{StaticResource MaterialButtonlikeRadioButton}" />
+                                        </Style>
+                                    </Grid.Styles>
+                                    <RadioButton Grid.Column="0"
+                                                 GroupName="OwnPositionMode"
+                                                 IsChecked="{Binding !Settings.ModeIsGci}"
+                                                 Content="BMS"
+                                                 FontWeight="Bold"
+                                                 HorizontalAlignment="Stretch"
+                                                 HorizontalContentAlignment="Center"
+                                                 IsEnabled="{Binding !OpenFreqConnected}" />
+                                    <RadioButton Grid.Column="1"
+                                                 GroupName="OwnPositionMode"
+                                                 IsChecked="{Binding Settings.ModeIsGci}"
+                                                 Content="GCI"
+                                                 FontWeight="Bold"
+                                                 HorizontalAlignment="Stretch"
+                                                 HorizontalContentAlignment="Center"
+                                                 IsEnabled="{Binding !OpenFreqConnected}" />
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Border>
 
-                <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
-                    <TextBlock Classes="Subtitle2" Margin="0,4,0,4">Tacview Server</TextBlock>
-                    <TextBox Watermark="Tacview Server Address:Port"
-                             Text="{Binding Settings.TacviewServerAddress}"
-                             Margin="0,4"
-                             IsEnabled="{Binding !OpenFreqConnected}" />
-                    <TextBox Watermark="Tacview Password"
-                             Text="{Binding Settings.TacviewServerPassword}"
-                             Margin="0,4"
-                             PasswordChar="*"
-                             IsEnabled="{Binding !OpenFreqConnected}" />
+                    <!-- Scrollable Settings Content -->
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="16">
 
-                    <StackPanel Orientation="Vertical" Spacing="5">
-                        <TextBlock
-                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                            Classes="Subtitle2" Margin="0,8,0,4">
-                            BMS Heightmap
-                        </TextBlock>
-                        <TextBlock
-                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
-                            Foreground="Red" Classes="Subtitle2" Margin="0,8,0,4">
-                            BMS Heightmap
-                        </TextBlock>
-                        <HyperlinkButton
-                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
-                            Content="No Heightmap selected!"
-                            Click="HeightmapButton_OnClick" />
-                        <HyperlinkButton
-                            IsVisible="{Binding  Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                            Content="{Binding Settings.HeightmapPath}"
-                            Click="HeightmapButton_OnClick" />
-                    </StackPanel>
-                </StackPanel>
+                            <!-- BMS Mode Settings -->
+                            <StackPanel IsVisible="{Binding !Settings.ModeIsGci}">
+                                <!-- Connection Status Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                            <avalonia:MaterialIcon Kind="Wan"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Connection" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <TextBlock Text="Settings controlled by BMS"
+                                                   FontSize="12"
+                                                   Opacity="0.7" />
+                                    </StackPanel>
+                                </controls:Card>
 
-                <!-- Connect Button -->
-                <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
-                    <Button
-                        Content="Connect"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,8,0,8"
-                        Command="{Binding ConnectCommand}"
-                        IsEnabled="{Binding Settings.IsReadyToConnect}"
-                        IsVisible="{Binding !OpenFreqConnected}" />
-                    <Button
-                        Content="Disconnect"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,8,0,8"
-                        Classes="accent"
-                        Command="{Binding DisconnectCommand}"
-                        IsVisible="{Binding OpenFreqConnected}" />
-                </StackPanel>
-                <Button IsVisible="{Binding DebugMode}"
-                        Command="{Binding DebugCommand}"
-                        Content="DEBUG"/>
+                                <!-- Audio Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="VolumeHigh"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Audio Devices" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
 
-                <Separator Margin="0,32,0,4" Foreground="{DynamicResource MaterialDividerBrush}"></Separator>
-                <!-- Audio Settings -->
-                <TextBlock Classes="Subtitle2">Audio Devices</TextBlock>
+                                        <TextBlock Text="Input" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.RecordingDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.RecordingDeviceIndex}"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,12" />
 
-                <TextBlock Classes="Caption" Margin="0,8,0,4">Input Device</TextBlock>
-                <ComboBox HorizontalAlignment="Stretch"
-                          Margin="0,4"
-                          ItemsSource="{Binding Settings.RecordingDeviceNames}"
-                          SelectedIndex="{Binding Settings.RecordingDeviceIndex}">
-                </ComboBox>
+                                        <TextBlock Text="Output" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.PlaybackDeviceIndex}"
+                                                  HorizontalAlignment="Stretch" />
+                                    </StackPanel>
+                                </controls:Card>
 
-                <TextBlock Classes="Caption" Margin="0,8,0,4">Output Device</TextBlock>
-                <ComboBox HorizontalAlignment="Stretch"
-                          Margin="0,4" ItemsSource="{Binding Settings.PlaybackDeviceNames}"
-                          SelectedIndex="{Binding Settings.PlaybackDeviceIndex}">
-                </ComboBox>
+                                <!-- BMS Audio Channels Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="Headphones"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="BMS Audio Channels" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
 
+                                        <TextBlock Text="UHF" Classes="InputLabel" />
+                                        <controls1:AudioChannelSelector
+                                            SelectedChannel="{Binding Settings.BmsUhfAudioChannel}"
+                                            Margin="0,0,0,12" />
 
-            </StackPanel>
-        </controls:NavigationDrawer.LeftDrawerContent>
+                                        <TextBlock Text="VHF" Classes="InputLabel" />
+                                        <controls1:AudioChannelSelector
+                                            SelectedChannel="{Binding Settings.BmsVhfAudioChannel}" />
+                                    </StackPanel>
+                                </controls:Card>
+                            </StackPanel>
 
-        <!-- Main Content -->
-        <DockPanel>
-            <!-- App Bar -->
-            <controls:ColorZone DockPanel.Dock="Top"
-                                Height="28"
-                                Classes.connected="{Binding OpenFreqConnected}">
-                <controls:ColorZone.Styles>
-                    <Style Selector="controls|ColorZone">
-                        <Setter Property="Mode" Value="Accent" />
-                    </Style>
-                    <Style Selector="controls|ColorZone.connected">
-                        <Setter Property="Mode" Value="PrimaryMid" />
-                    </Style>
-                </controls:ColorZone.Styles>
+                            <!-- GCI Mode Settings -->
+                            <StackPanel IsVisible="{Binding Settings.ModeIsGci}">
+                                <!-- Servers Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="Wan"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Connection" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
 
-                <DockPanel>
-                    <!-- Menu Button -->
-                    <Button Classes="Flat"
-                            Click="MenuButton_OnClick"
-                            DockPanel.Dock="Left"
-                            VerticalAlignment="Center"
-                            Margin="4,0,0,0"
-                            Width="24"
-                            Height="24">
-                        <avalonia:MaterialIcon Kind="Menu" Width="24" Height="24"
-                                               Foreground="White" />
-                    </Button>
+                                        <!-- OpenFreq Server -->
+                                        <TextBlock Text="OpenFreq Server" Classes="InputLabel" />
+                                        <TextBox Watermark="Address:Port"
+                                                 Text="{Binding Settings.OpenFreqServerAddress}"
+                                                 IsEnabled="{Binding !OpenFreqConnected}"
+                                                 Margin="0,0,0,8" />
+                                        <TextBox Watermark="Password"
+                                                 PasswordChar="*"
+                                                 Text="{Binding Settings.OpenFreqPassword}"
+                                                 IsEnabled="{Binding !OpenFreqConnected}"
+                                                 Margin="0,0,0,16" />
 
-                    <!-- Title -->
-                    <TextBlock Text="{Binding ConnectionStatusString}"
-                               VerticalAlignment="Center"
-                               Margin="16,0,0,0"
-                               Classes=""
-                               Foreground="White" />
+                                        <!-- Separator -->
+                                        <Separator Margin="0,0,0,16"
+                                                   Background="{DynamicResource MaterialDividerBrush}" />
+
+                                        <!-- Tacview Server -->
+                                        <TextBlock Text="Tacview Server" Classes="InputLabel" />
+                                        <TextBox Watermark="Address:Port"
+                                                 Text="{Binding Settings.TacviewServerAddress}"
+                                                 IsEnabled="{Binding !OpenFreqConnected}"
+                                                 Margin="0,0,0,8" />
+                                        <TextBox Watermark="Password"
+                                                 PasswordChar="*"
+                                                 Text="{Binding Settings.TacviewServerPassword}"
+                                                 IsEnabled="{Binding !OpenFreqConnected}" />
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <!-- Heightmap Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                            <StackPanel Orientation="Horizontal">
+                                                <avalonia:MaterialIcon Kind="Map"
+                                                                       Width="16" Height="16"
+                                                                       Margin="0,0,8,0"
+                                                                       Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                                <TextBlock Text="Heightmap" Classes="SectionHeader" Margin="0" />
+                                            </StackPanel>
+                                            <Ellipse Grid.Column="1"
+                                                     Classes="StatusDot"
+                                                     IsVisible="{Binding Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                <Ellipse.Fill>
+                                                    <SolidColorBrush Color="#10B981" />
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                        </Grid>
+
+                                        <TextBlock Text="Theater" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{x:Static local:TheaterCoordinateConverter.AllTheaters}"
+                                                  SelectedItem="{Binding Settings.SelectedTheater}"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,12" />
+
+                                        <TextBlock Text="File" Classes="InputLabel" />
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <Border Grid.Column="0"
+                                                    Background="{DynamicResource MaterialBackgroundBrush}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="12,8"
+                                                    ToolTip.Tip="{Binding Settings.HeightmapPath}">
+                                                <Panel>
+                                                    <TextBlock Text="{Binding Settings.HeightmapPath}"
+                                                               FontSize="11"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               IsVisible="{Binding Settings.HeightmapPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                    <TextBlock
+                                                        IsVisible="{Binding Settings.HeightmapPath, Converter={x:Static StringConverters.IsNullOrEmpty}}"
+                                                        Text="No heightmap selected"
+                                                        FontSize="11"
+                                                        Foreground="Red"
+                                                        Opacity="0.7" />
+                                                </Panel>
+                                            </Border>
+                                            <Button Grid.Column="1"
+                                                    Click="HeightmapButton_OnClick"
+                                                    Padding="12,8"
+                                                    Margin="8,0,0,0">
+                                                <avalonia:MaterialIcon Kind="FolderOpen" Width="16" Height="16" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <!-- Connect/Disconnect Buttons -->
+                                <Button Content="Connect to Servers"
+                                        Command="{Binding ConnectCommand}"
+                                        IsEnabled="{Binding Settings.IsReadyToConnect}"
+                                        IsVisible="{Binding !OpenFreqConnected}"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="0,0,0,16"
+                                        Height="40" />
+
+                                <Button Content="Disconnect"
+                                        Command="{Binding DisconnectCommand}"
+                                        IsVisible="{Binding OpenFreqConnected}"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="0,0,0,16"
+                                        Height="40"
+                                        Classes="accent" />
+
+                                <!-- Audio Card -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="VolumeHigh"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Audio Devices" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="Input" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.RecordingDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.RecordingDeviceIndex}"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,12" />
+
+                                        <TextBlock Text="Output" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.PlaybackDeviceIndex}"
+                                                  HorizontalAlignment="Stretch" />
+                                    </StackPanel>
+                                </controls:Card>
+                            </StackPanel>
+
+                            <!-- Debug Button (visible in both modes) -->
+                            <Button IsVisible="{Binding DebugMode}"
+                                    Command="{Binding DebugCommand}"
+                                    Content="DEBUG"
+                                    HorizontalAlignment="Stretch"
+                                    Margin="0,8,0,0" />
+
+                        </StackPanel>
+                    </ScrollViewer>
                 </DockPanel>
-            </controls:ColorZone>
+            </controls:NavigationDrawer.LeftDrawerContent>
 
-            <!-- ComboBox at top -->
-            <ComboBox DockPanel.Dock="Top"
-                      ItemsSource="{Binding TacviewFlightCallsigns}"
-                      SelectedItem="{Binding SelectedTacviewCallsign}" />
+            <!-- Main Content -->
+            <DockPanel>
+                <!-- Top Bar -->
+                <controls:Card DockPanel.Dock="Top"
+                               CornerRadius="0"
+                               Margin="0"
+                               Padding="12,8">
+                    <DockPanel>
+                        <!-- Burger Menu Button -->
+                        <Button Classes="BurgerButton Flat"
+                                Click="MenuButton_OnClick"
+                                DockPanel.Dock="Left"
+                                Margin="0,0,8,0">
+                            <avalonia:MaterialIcon Kind="Menu" Width="24" Height="24" />
+                        </Button>
 
-            <!-- Status at bottom -->
-            <TextBlock DockPanel.Dock="Bottom"
-                       Text="{Binding StatusMessage}" />
+                        <!-- App Title -->
+                        <TextBlock Text="OpenFreq"
+                                   DockPanel.Dock="Left"
+                                   FontSize="18"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,24,0" />
 
-            <!-- Content Area - fills remaining space -->
-            <Grid>
-                <ScrollViewer>
-                    <views:ChannelCardListView DataContext="{Binding ChannelList}" />
-                </ScrollViewer>
+                        <!-- Mode Toggle -->
+                        <StackPanel DockPanel.Dock="Right"
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    VerticalAlignment="Center">
+                            <StackPanel.IsEnabled>
+                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                    <Binding Path="Settings.ModeIsGci" />
+                                    <Binding Path="OpenFreqConnected" />
+                                </MultiBinding>
+                            </StackPanel.IsEnabled>
 
-                <!-- Floating Action Button -->
-                <controls:FloatingButton Click="Button_OnClick"
-                                         HorizontalAlignment="Right"
-                                         VerticalAlignment="Bottom"
-                                         Margin="24">
-                    <controls:FloatingButton.Content>
-                        <avalonia:MaterialIcon Kind="Plus" Width="24" Height="24" />
-                    </controls:FloatingButton.Content>
-                </controls:FloatingButton>
-            </Grid>
-        </DockPanel>
-    </controls:NavigationDrawer>
+                            <StackPanel.Styles>
+                                <Style Selector="RadioButton">
+                                    <Setter Property="Theme" Value="{StaticResource MaterialButtonlikeRadioButton}" />
+                                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                    <Setter Property="Height" Value="40" />
+                                    <Setter Property="MinWidth" Value="100" />
+                                    <Setter Property="Padding" Value="12, 8" />
+                                    <Setter Property="Margin" Value="5, 0" />
+                                    <Setter Property="Foreground" Value="{DynamicResource MaterialBodyBrush}" />
+                                    <Setter Property="FontWeight" Value="Bold" />
+                                </Style>
+                                <Style Selector="RadioButton:checked">
+                                    <Setter Property="Foreground" Value="{DynamicResource PrimaryHueMidBrush}" />
+                                </Style>
+                            </StackPanel.Styles>
 
+                            <RadioButton GroupName="3dMode"
+                                         IsChecked="{Binding !Is3dMode}"
+                                         ToolTip.Tip="Lobby Mode - Your voice will only be heard by other players in the Lobby without any effects.">
+                                
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <avalonia:MaterialIcon Kind="Account" Width="20" Height="20" />
+                                    <TextBlock Text="Lobby" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </RadioButton>
+
+                            <RadioButton GroupName="3dMode"
+                                         IsChecked="{Binding Is3dMode}"
+                                         ToolTip.Tip="3D Mode - Your voice will only be heard by other players in the game.">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <avalonia:MaterialIcon Kind="ShieldAirplane" Width="20" Height="20" />
+                                    <TextBlock Text="Game" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+
+                        <!-- Connection Statuses (Center/Fill) -->
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="16"
+                                    VerticalAlignment="Center">
+                            <!-- OpenFreq Server Status -->
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Ellipse Classes="StatusDot">
+                                    <Ellipse.Fill>
+                                        <SolidColorBrush Color="{Binding OpenFreqStatusColor}" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <TextBlock Text="{Binding OpenFreqConnectionState, StringFormat='OpenFreq: {0}'}"
+                                           Classes="StatusText" />
+                            </StackPanel>
+
+                            <!-- Separator -->
+                            <Border Width="1"
+                                    Height="16"
+                                    Background="{DynamicResource MaterialDividerBrush}"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding Settings.ModeIsGci}"/>
+
+                            <!-- Tacview Server Status -->
+                            <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding Settings.ModeIsGci}">
+                                <Ellipse Classes="StatusDot">
+                                    <Ellipse.Fill>
+                                        <SolidColorBrush Color="{Binding TacviewStatusColor}" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <TextBlock Text="{Binding AcmiConnectionStatus, StringFormat='Tacview: {0}'}"
+                                           Classes="StatusText" />
+                            </StackPanel>
+                        </StackPanel>
+                        
+                    </DockPanel>
+                </controls:Card>
+
+                <!-- IVC Warning Banner -->
+                <controls:Card DockPanel.Dock="Top"
+                               Margin="16,12,16,12"
+                               Background="#FFF3E0"
+                               Padding="16,12"
+                               IsVisible="{Binding IvcWarning}">
+                    <DockPanel Margin="0,0,12,0"
+                               VerticalAlignment="Top">
+                        <avalonia:MaterialIcon Kind="Warning"
+                                               Width="20"
+                                               Height="20"
+                                               Foreground="#FF9800" />
+
+                        <StackPanel Margin="15, 0, 0, 0">
+                            <TextBlock Text="IVC Conflict Detected"
+                                       Classes="Subtitle1"
+                                       Foreground="#E65100"
+                                       Margin="0,0,0,4" />
+                            <TextBlock Text="Falcon BMS IVC must be closed to use OpenFreq in BMS mode."
+                                       Classes="Caption"
+                                       Foreground="Black"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DockPanel>
+                </controls:Card>
+
+
+                <!-- Status at bottom -->
+                <TextBlock DockPanel.Dock="Bottom"
+                           Text="{Binding StatusMessage}"
+                           Margin="8,4"
+                           FontSize="12"
+                           Opacity="0.7" />
+
+                <!-- Content Area - fills remaining space -->
+                <Grid>
+                    <ScrollViewer x:Name="ChannelGroupsScrollViewer">
+                        <views:ChannelCardListView DataContext="{Binding ChannelList}" />
+                    </ScrollViewer>
+
+                    <!-- Floating Action Button -->
+                    <controls:FloatingButton Click="AddChannelGroupButton_OnClick"
+                                             IsVisible="{Binding Settings.ModeIsGci}"
+                                             HorizontalAlignment="Right"
+                                             VerticalAlignment="Bottom"
+                                             Margin="24">
+                        <controls:FloatingButton.Content>
+                            <avalonia:MaterialIcon Kind="Plus" Width="24" Height="24" />
+                        </controls:FloatingButton.Content>
+                    </controls:FloatingButton>
+                </Grid>
+            </DockPanel>
+        </controls:NavigationDrawer>
+    </dialogHostAvalonia:DialogHost>
 </Window>

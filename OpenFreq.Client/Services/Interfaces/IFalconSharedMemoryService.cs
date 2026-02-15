@@ -2,6 +2,7 @@ using System;
 using FalconBmsDataService.Models;
 using FalconRadioService.Models;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Common;
 
 namespace FalconBmsDataService.Services;
 
@@ -34,7 +35,6 @@ public interface IFalconSharedMemoryService : IDisposable, ILifecycleService
     /// Event fired when service state changes
     /// </summary>
     event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
-    
+
     event EventHandler<FlyingStateChangedEventArgs>? FlyingStateChanged;
 }
-

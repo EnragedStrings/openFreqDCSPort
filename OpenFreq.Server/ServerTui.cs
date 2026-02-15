@@ -344,7 +344,7 @@ public class TerminalGuiServer : IDisposable
             foreach (var freq in frequencies)
             {
                 var status = freq.ClientCount > 0 ? "● Active" : "○ Idle";
-                _frequencyLines.Add($"{$"{freq.Frequency:F3} MHz",-15} {freq.ClientCount,8} {status,10}");
+                _frequencyLines.Add($"{$"{freq.FrequencyKhz/1000d:F3} MHz",-15} {freq.ClientCount,8} {status,10}");
             }
 
             var totalActive = frequencies.Count(f => f.ClientCount > 0);

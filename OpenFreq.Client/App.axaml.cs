@@ -7,6 +7,7 @@ using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services.Interfaces;
 using OpenFreqClient.ViewModels;
 using OpenFreqClient.Views;
@@ -26,38 +27,57 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            
+        
             // Get services from DI
             var serviceProvider = Program.ServiceProvider;
-            
+            if (serviceProvider is null)
+            {
+                throw new InvalidOperationException("Service provider not initialized");
+            }
+        
+#if WINDOWS
+        _services =
+        [
+            serviceProvider.GetRequiredService<IFalconRadioSharedMemoryService>(),
+            serviceProvider.GetRequiredService<IFalconSharedMemoryService>(),
+            serviceProvider.GetRequiredService<IAcmiClientService>(),
+            serviceProvider.GetRequiredService<IHotkeyService>()
+        ];
+#else
             _services = new List<ILifecycleService>
             {
-                serviceProvider.GetRequiredService<IFalconRadioSharedMemoryService>(),
-                serviceProvider.GetRequiredService<IFalconSharedMemoryService>(),
+                serviceProvider.GetRequiredService<IAcmiClientService>(),
                 serviceProvider.GetRequiredService<IHotkeyService>(),
             };
-            
+#endif
+        
             // Start services
             foreach (var service in _services)
             {
                 service.Start();
             }
-            
+        
             var mainViewModel = Program.ServiceProvider?.GetService<MainWindowViewModel>()
                                 ?? throw new InvalidOperationException("Service provider not initialized");
             desktop.MainWindow = new MainWindow
             {
                 DataContext = mainViewModel,
             };
-            
-            desktop.Exit += (s, e) =>
+        
+            desktop.ShutdownRequested += async (s, e) =>
             {
+                // Defer shutdown until we're done cleaning up
+                e.Cancel = true;
+            
                 foreach (var service in _services)
                 {
                     service.Stop();
                 }
-                
-                mainViewModel.Dispose();
+            
+                await mainViewModel.DisposeAsync();
+            
+                // Now actually shutdown
+                desktop.Shutdown();
             };
         }
 

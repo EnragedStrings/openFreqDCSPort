@@ -1,24 +1,18 @@
 using System;
 using System.IO;
-using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using OpenFreqClient.Models;
 
 namespace OpenFreqClient.Services;
 
-public class ConfigurationService : IConfigurationService
+public class ConfigurationService(ILogger<ConfigurationService> logger) : IConfigurationService
 {
     private static readonly string ConfigDirectory = 
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenFreq");
     
     private static readonly string ConfigFilePath = 
-        Path.Combine(ConfigDirectory, "config.json");
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true
-    };
+        Path.Combine(ConfigDirectory, "OpenFreq.Server.json");
 
     public async Task<AppConfiguration> LoadConfigurationAsync()
     {
@@ -30,12 +24,12 @@ public class ConfigurationService : IConfigurationService
             }
 
             var json = await File.ReadAllTextAsync(ConfigFilePath);
-            return JsonSerializer.Deserialize<AppConfiguration>(json, JsonOptions) 
+            return Json.Json.Instance.Deserialize<AppConfiguration>(json) 
                    ?? new AppConfiguration();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to load configuration: {ex.Message}");
+            logger.LogError("Failed to load configuration: {ExMessage}", ex.Message);
             return new AppConfiguration();
         }
     }
@@ -47,12 +41,12 @@ public class ConfigurationService : IConfigurationService
             // Ensure directory exists
             Directory.CreateDirectory(ConfigDirectory);
 
-            var json = JsonSerializer.Serialize(config, JsonOptions);
+            var json = Json.Json.Instance.Serialize(config);
             await File.WriteAllTextAsync(ConfigFilePath, json);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to save configuration: {ex.Message}");
+            logger.LogError("Failed to save configuration: {ExMessage}", ex.Message);
         }
     }
 

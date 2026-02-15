@@ -6,6 +6,7 @@ using OpenFreq.Client.Services;
 using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services.Interfaces;
 using OpenFreqClient.ViewModels;
+using Serilog;
 
 namespace OpenFreqClient.Services;
 
@@ -18,12 +19,8 @@ public static class ServiceCollectionExtensions
     {
         services.AddLogging(builder =>
         {
-            builder.AddConsole();
-            #if DEBUG
-            builder.SetMinimumLevel(LogLevel.Debug);
-            #else
-            builder.SetMinimumLevel(LogLevel.Information);
-            #endif
+            builder.ClearProviders();
+            builder.AddSerilog(dispose: true);
         });
         
         // Register services as singletons (one instance for the application lifetime)
@@ -34,12 +31,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAcmiClientService, AcmiClientService>();
         services.AddSingleton<IFalconSharedMemoryService, FalconSharedMemoryService>();
         services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
+        services.AddSingleton<IIvcMonitorService, IvcMonitorService>();
 
         // Register ViewModels
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<ChannelCardListViewModel>();
         services.AddSingleton<MainWindowViewModel>();
-        services.AddSingleton<SettingsViewModel>();
         
         return services;
     }

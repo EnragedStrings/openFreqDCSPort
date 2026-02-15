@@ -5,6 +5,7 @@ using System.Text.Json;
 using Concentus;
 using Concentus.Enums;
 using Concentus.Structs;
+using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Rtp;
 
 namespace OpenFreq.Common;
@@ -15,6 +16,7 @@ namespace OpenFreq.Common;
 /// </summary>
 public class RtpAudioSender : IDisposable
 {
+    private readonly ILogger<RtpAudioSender> _logger;
     private const int OPUS_FRAME_SIZE = 960; // 20ms at 48kHz
 
     private readonly byte[]
@@ -40,10 +42,7 @@ public class RtpAudioSender : IDisposable
     {
         public byte[] PcmData;
         public string ClientId;
-        public AircraftPosition? Position;
         public List<FrequencyTransmission> FrequencyTransmissions;
-        public bool BeginMarker;
-        public bool EndMarker;
         public uint Timestamp;
         public ushort SequenceNumber;
     }
@@ -65,8 +64,9 @@ public class RtpAudioSender : IDisposable
     /// <summary>
     /// Create RTP audio sender
     /// </summary>
-    public RtpAudioSender(string serverHost, int serverPort, bool opusEnabled = true)
+    public RtpAudioSender(ILogger<RtpAudioSender> logger, string serverHost, int serverPort, bool opusEnabled = true)
     {
+        _logger = logger;
         _opusEnabled = opusEnabled;
         _serverEndpoint = new IPEndPoint(IPAddress.Parse(serverHost), serverPort);
         _udpClient = new UdpClient();
@@ -88,17 +88,37 @@ public class RtpAudioSender : IDisposable
 
         if (_opusEnabled)
         {
-            _opusEncoder =
-                OpusCodecFactory.CreateEncoder(sampleRate: OpenFreqRtcClient.SAMPLE_RATE, OpenFreqRtcClient.CHANNELS,
-                        OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY) as
-                    OpusEncoder;
+            try
+            {
+                #pragma warning disable CS0618 // Do not use the factory - it does not work with Linux
+                _opusEncoder = new OpusEncoder(
+                    OpenFreqRtcClient.SAMPLE_RATE,
+                    OpenFreqRtcClient.CHANNELS,
+                    OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY
+                );
+                #pragma warning restore CS0618 // Type or member is obsolete
+            }
+            catch (OpusException ex)
+            {
+                // This is the Opus error code
+                _logger.LogError("Opus error: {OpusErrorCode}", ex.OpusErrorCode);
+                _logger.LogError("Message: {Message}", ex.Message);
+            }
 
-            // Configure for low latency VoIP
-            _opusEncoder.Bitrate = 128000; // 128 kbps
-            _opusEncoder.Complexity = 5; // Medium complexity
-            _opusEncoder.SignalType = OpusSignal.OPUS_SIGNAL_MUSIC;
-            _opusEncoder.UseInbandFEC = true; // Forward error correction
-            _opusEncoder.PacketLossPercent = 5; // Assume 5% loss for FEC tuning
+            if (_opusEncoder == null)
+            {
+                _logger.LogError("Could not create OpusEncoder");
+                return;
+            }
+            else
+            {
+                _opusEncoder.Bitrate = 98000; 
+                _opusEncoder.Complexity = 8;
+                _opusEncoder.SignalType = OpusSignal.OPUS_SIGNAL_MUSIC;
+                _opusEncoder.UseInbandFEC = true;
+                _opusEncoder.PacketLossPercent = 15;
+                _opusEncoder.ForceMode = OpusMode.MODE_SILK_ONLY;
+            }
         }
 
         // Start pacing timer - sends one packet every 10ms
@@ -107,10 +127,10 @@ public class RtpAudioSender : IDisposable
         _pacingTimer.AutoReset = true;
         _pacingTimer.Start();
 
-        Console.WriteLine($"[RtpAudioSender] Initialized");
-        Console.WriteLine($"[RtpAudioSender]   Server: {serverHost}:{serverPort}");
-        Console.WriteLine($"[RtpAudioSender]   Opus: {_opusEnabled}");
-        Console.WriteLine($"[RtpAudioSender]   SSRC: 0x{_ssrc:X8}");
+        _logger.LogInformation("Initialized");
+        _logger.LogInformation("  Server: {ServerHost}:{ServerPort}", serverHost, serverPort);
+        _logger.LogInformation("  Opus: {OpusEnabled}", _opusEnabled);
+        _logger.LogInformation("  SSRC: 0x{Ssrc:X8}", _ssrc);
     }
 
 
@@ -122,7 +142,7 @@ public class RtpAudioSender : IDisposable
     /// <param name="position">Aircraft position</param>
     /// <param name="frequencyTransmissions">List of FrequencyTransmissions</param>
     /// 
-    public void SendAudio(byte[] audioData, string clientId, AircraftPosition? position, List<FrequencyTransmission> frequencyTransmissions)
+    public void SendAudio(byte[] audioData, string clientId, List<FrequencyTransmission> frequencyTransmissions)
     {
         try
         {
@@ -147,9 +167,9 @@ public class RtpAudioSender : IDisposable
                     // First chunk uses original markers, subsequent chunks clear beginMarkers
                     var markers = isFirstChunk 
                         ? frequencyTransmissions 
-                        : frequencyTransmissions.Select(f => new FrequencyTransmission(f.Mhz, false, f.EndMarker)).ToList();
+                        : frequencyTransmissions.Select(f => new FrequencyTransmission(f.Khz, f.TxPowerWatts, f.Position,false, f.EndMarker)).ToList();
                 
-                    QueueRawFrame(clientId, position, markers);
+                    QueueRawFrame(clientId, markers);
                     isFirstChunk = false;
                     _bufferPosition = 0;
                 }
@@ -157,21 +177,20 @@ public class RtpAudioSender : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[RtpAudioSender] Error: {ex.Message}");
+            _logger.LogError(ex, "Error in SendAudio");
         }
     }
 
-    private void QueueRawFrame(string clientId, AircraftPosition? position, List<FrequencyTransmission> frequencyTransmissions)
+    private void QueueRawFrame(string clientId, List<FrequencyTransmission> frequencyTransmissions)
     {
        // Copy the buffer data (must copy since _audioBuffer will be reused)
-        byte[] pcmCopy = new byte[_audioBuffer.Length];
+        var pcmCopy = new byte[_audioBuffer.Length];
         Buffer.BlockCopy(_audioBuffer, 0, pcmCopy, 0, _audioBuffer.Length);
 
         var queued = new QueuedAudio
         {
             PcmData = pcmCopy,
             ClientId = clientId,
-            Position = position,
             FrequencyTransmissions = frequencyTransmissions,
             Timestamp = _timestamp,
             SequenceNumber = _sequenceNumber,
@@ -190,7 +209,7 @@ public class RtpAudioSender : IDisposable
 
     private void OnPacingTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
     {
-        QueuedAudio? queued = null;
+        QueuedAudio? queued;
 
         lock (_queueLock)
         {
@@ -199,9 +218,6 @@ public class RtpAudioSender : IDisposable
 
             queued = _sendQueue.Dequeue();
         }
-
-        if (queued == null)
-            return;
 
         try
         {
@@ -215,7 +231,7 @@ public class RtpAudioSender : IDisposable
                 Buffer.BlockCopy(queuedValue.PcmData, 0, _pcmSamples, 0, queuedValue.PcmData.Length);
 
                 // Encode to Opus using reusable buffer
-                int opusBytes = _opusEncoder.Encode(
+                var opusBytes = _opusEncoder.Encode(
                     _pcmSamples,
                     0,
                     OPUS_FRAME_SIZE, // Samples per channel
@@ -226,7 +242,7 @@ public class RtpAudioSender : IDisposable
 
                 if (opusBytes <= 0)
                 {
-                    Console.WriteLine("[RtpAudioSender] Opus encode failed");
+                    _logger.LogWarning("Opus encode failed");
                     return;
                 }
 
@@ -242,17 +258,16 @@ public class RtpAudioSender : IDisposable
             // Build metadata
             var metadata = new AudioPacketMetadata
             {
-                clientId = queuedValue.ClientId,
-                Position = queuedValue.Position,
+                ClientId = queuedValue.ClientId,
                 Frequencies = queuedValue.FrequencyTransmissions,
             };
 
-            string metadataJson = JsonSerializer.Serialize(metadata);
-            byte[] metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
-            ushort metadataLength = (ushort)metadataBytes.Length;
+            var metadataJson = JsonSerializer.Serialize(metadata, OpenFreqJsonContext.Default.AudioPacketMetadata);
+            var metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
+            var metadataLength = (ushort)metadataBytes.Length;
 
             // Build payload: [2 bytes length][metadata JSON][audio data]
-            byte[] payload = new byte[2 + metadataLength + encodedAudio.Length];
+            var payload = new byte[2 + metadataLength + encodedAudio.Length];
             payload[0] = (byte)(metadataLength >> 8);
             payload[1] = (byte)(metadataLength & 0xFF);
             Array.Copy(metadataBytes, 0, payload, 2, metadataLength);
@@ -270,12 +285,12 @@ public class RtpAudioSender : IDisposable
             };
             
             // Send the packet
-            byte[] rtpBytes = rtpPacket.ToBytes();
+            var rtpBytes = rtpPacket.ToBytes();
             _udpClient.Send(rtpBytes, rtpBytes.Length, _serverEndpoint);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[RtpAudioSender] Pacing timer error: {ex.Message}");
+            _logger.LogError(ex, "Pacing timer error");
         }
     }
 
@@ -285,7 +300,7 @@ public class RtpAudioSender : IDisposable
     public (int packetsSent, TimeSpan uptime, double packetsPerSecond) GetStatistics()
     {
         var uptime = DateTime.UtcNow - _startTime;
-        double pps = uptime.TotalSeconds > 0 ? _packetsSent / uptime.TotalSeconds : 0;
+        var pps = uptime.TotalSeconds > 0 ? _packetsSent / uptime.TotalSeconds : 0;
         return (_packetsSent, uptime, pps);
     }
 
@@ -298,7 +313,7 @@ public class RtpAudioSender : IDisposable
         _opusEncoder?.Dispose();
 
         var stats = GetStatistics();
-        Console.WriteLine(
-            $"[RtpAudioSender] Disposed. Sent {stats.packetsSent} packets over {stats.uptime.TotalSeconds:F1}s ({stats.packetsPerSecond:F1} pps)");
+        _logger.LogInformation("Disposed. Sent {PacketsSent} packets over {UptimeSeconds:F1}s ({PacketsPerSecond:F1} pps)", 
+            stats.packetsSent, stats.uptime.TotalSeconds, stats.packetsPerSecond);
     }
 }

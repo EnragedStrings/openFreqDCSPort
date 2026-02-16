@@ -1,3 +1,4 @@
+using OpenFreqAudio;
 using OpenFreqClient.Services.Interfaces;
 
 namespace OpenFreqClient.Models;
@@ -16,6 +17,9 @@ public class OpenFreqSettings
     public string InputDeviceName { get; set; } = "";
     public string OutputDeviceName { get; set; } = "";
     public string SelectedTheater { get; set; } = "Korea KTO";
+
+    public RadioPlayback.AudioChannel BmsUhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    public RadioPlayback.AudioChannel BmsVhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
     
     // Window Position & Size
     public int? Left { get; set; }

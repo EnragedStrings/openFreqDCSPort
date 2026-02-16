@@ -229,6 +229,8 @@ public partial class SettingsViewModel : ViewModelBase
         TacviewServerAddress = settings.TacviewServerAddress;
         TacviewServerPassword = settings.TacviewServerPassword;
         SelectedTheater = settings.SelectedTheater;
+        BmsUhfAudioChannel = settings.BmsUhfChannel;
+        BmsVhfAudioChannel = settings.BmsVhfChannel;
 
         // Restore audio device selection
         InputDeviceName = settings.InputDeviceName;
@@ -348,6 +350,8 @@ public partial class SettingsViewModel : ViewModelBase
             OutputDeviceName = OutputDeviceName,
             HeightmapPath = HeightmapPath,
             SelectedTheater = SelectedTheater,
+            BmsUhfChannel = BmsUhfAudioChannel,
+            BmsVhfChannel =  BmsVhfAudioChannel,
             Left = _left,
             Top = _top,
             Width = _width,

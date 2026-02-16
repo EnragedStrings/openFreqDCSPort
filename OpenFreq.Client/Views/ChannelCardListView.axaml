@@ -115,35 +115,62 @@
                                         GroupName="PositionSource"
                                         Content="Fixed Position" />
 
-                                    <Grid ColumnDefinitions="2*,*,Auto"
+                                    <Grid ColumnDefinitions="*, Auto"
                                           ColumnSpacing="8"
                                           Margin="32,0,0,0"
                                           IsEnabled="{Binding RadioStationData.Type, 
                                           Converter={StaticResource EnumToBoolConverter}, 
                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}">
 
-                                        <StackPanel Grid.Column="0">
-                                            <TextBox Text="{Binding LatLonInput}"
-                                                     Watermark="Lat Long (e.g., 37.12345 -122.98765)"
-                                                     Classes="Outline"
-                                                     Classes.error="{Binding HasCoordinateError}" />
-                                            <TextBlock Text="{Binding CoordinateError}"
-                                                       Foreground="{DynamicResource MaterialValidationErrorBrush}"
-                                                       FontSize="11"
-                                                       Margin="4,2"
-                                                       IsVisible="{Binding HasCoordinateError}" />
+                                        <StackPanel Grid.Column="0" Orientation="Vertical" HorizontalAlignment="Left"
+                                                    Spacing="10">
+                                            <Grid ColumnDefinitions="1*,1*, 1*"
+                                                  RowDefinitions="Auto, Auto" ColumnSpacing="10">
+                                                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal"
+                                                            Spacing="10">
+                                                    <TextBlock Text="Latitude" VerticalAlignment="Center" />
+                                                    <TextBox
+                                                        Text="{Binding Latitude, StringFormat={}{0:F5}}"
+                                                        Watermark="Latitude"
+                                                        Classes="Outline" VerticalAlignment="Center" />
+                                                </StackPanel>
+
+                                                <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal"
+                                                            Spacing="10" Margin="15, 0">
+                                                    <TextBlock Text="Longitude" VerticalAlignment="Center" />
+                                                    <TextBox
+                                                        Text="{Binding Longitude, StringFormat={}{0:F5}}"
+                                                        Watermark="Longitude"
+                                                        Classes="Outline" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"
+                                                            Spacing="10">
+                                                    <TextBlock Text="Altitude (feet AGL)" VerticalAlignment="Center"
+                                                               Margin="15, 0" />
+                                                    <TextBox
+                                                        Text="{Binding AltitudeFeet, Converter={StaticResource NullableDoubleConverter}}"
+                                                        Watermark="Alt (ft AGL)"
+                                                        Classes="Outline" VerticalAlignment="Center"
+                                                        MinWidth="60" />
+
+                                                </StackPanel>
+                                                <TextBlock Grid.Row="1" Grid.ColumnSpan="3"
+                                                           Text="{Binding CoordinateError}"
+                                                           Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                                                           FontSize="11"
+                                                           Margin="4,2"
+                                                           IsVisible="{Binding HasCoordinateError}" />
+                                            </Grid>
+
+
                                         </StackPanel>
 
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                            <TextBox
-                                                Text="{Binding AltitudeInput, Converter={StaticResource NullableDoubleConverter}}"
-                                                Watermark="Alt (ft AGL)"
-                                                Classes="Outline" VerticalAlignment="Center"
-                                                Width="80" />
-                                            <TextBlock Text="ft AGL" VerticalAlignment="Center" Margin="5, 0" />
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+
                                         </StackPanel>
 
-                                        <Button Grid.Column="2"
+                                        <Button Grid.Column="1"
                                                 Theme="{StaticResource MaterialFlatButton}" Classes="primary"
                                                 Command="{Binding OpenMapPickerCommand}"
                                                 ToolTip.Tip="Pick on map"

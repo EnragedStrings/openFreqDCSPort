@@ -423,7 +423,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     {
         var channelGroup = new ChannelCardGroupViewModel(_openFreqService, _hotkeyService, _acmiClientService,
             _settings, channelGroupData.Name, channelGroupData.RadioStationData.Preset,
-            channelGroupData.RadioStationData.Type, channelGroupData.Latitude, channelGroupData.Longitude, editMode);
+            channelGroupData.RadioStationData.Type, channelGroupData.Latitude, channelGroupData.Longitude, channelGroupData.AltitudeFt, editMode);
         AllChannelGroups.Add(channelGroup);
         return channelGroup;
     }

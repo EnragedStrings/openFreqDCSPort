@@ -55,12 +55,12 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     // UI Properties
     [ObservableProperty] public partial double Latitude { get; set; }
     [ObservableProperty] public partial double Longitude { get; set; }
-    [ObservableProperty] public partial string LatLonInput { get; set; } = "";
-    [ObservableProperty] public partial double? AltitudeInput { get; set; }
+    [ObservableProperty] public partial double AltitudeFeet { get; set; }
     [ObservableProperty] public partial string? CoordinateError { get; set; }
     [ObservableProperty] public partial bool HasCoordinateError { get; set; }
-
-    private bool _isUpdatingFromInput;
+    
+    private const double FEET_PER_METER = 3.28084d;
+    private bool _isUpdatingPosition;
     
     private MapPickerWindow? _trackingWindow;
     private CancellationTokenSource? _trackingCts;
@@ -68,7 +68,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
     public ChannelCardGroupViewModel(IOpenFreqService openFreqService, IHotkeyService hotkeyService,
         IAcmiClientService acmiClientService, SettingsViewModel settingsViewModel, string name,
-        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType, double latitude = 0, double longitude = 0, bool editMode = true)
+        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType, double latitude = 0, double longitude = 0, double altitudeFeet = 0, bool editMode = true)
     {
         RadioStationData = new RadioStationData
         {
@@ -81,6 +81,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         Name = name;
         Latitude = latitude;
         Longitude = longitude;
+        AltitudeFeet = altitudeFeet;
         _acmiClientService = acmiClientService;
         EditMode = editMode;
 
@@ -101,6 +102,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Register<ChannelUpdatedMessage>(this, OnChannelUpdated);
         WeakReferenceMessenger.Default.Register<ChannelEnabledDisabledMessage>(this, OnChannelEnabledDisabled);
         WeakReferenceMessenger.Default.Register<ChannelDeleteRequestedMessage>(this, OnChannelDeleteRequested);
+        
+        UpdateRadioStationPosition();
     }
 
     private async void OnAcmiConnectionStatusChanged(object? sender, AcmiConnectionEventArgs e)
@@ -312,6 +315,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     public void AddChannel()
     {
+        EditMode = false;
         CreateChannel(225000, $"Channel #{Channels.Count + 1}");
     }
 
@@ -380,92 +384,62 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         }
     }
 
-    partial void OnLatLonInputChanged(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            CoordinateError = null;
-            HasCoordinateError = false;
-            return;
-        }
-
-        var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2)
-        {
-            CoordinateError = "Please enter both latitude and longitude separated by a space";
-            HasCoordinateError = true;
-            return;
-        }
-
-        if (!double.TryParse(parts[0], out var lat) ||
-            !double.TryParse(parts[1], out var lon))
-        {
-            CoordinateError = "Invalid coordinate format. Please enter valid numbers";
-            HasCoordinateError = true;
-            return;
-        }
-
-        // Round to 5 decimal places
-        lat = Math.Round(lat, 5);
-        lon = Math.Round(lon, 5);
-
-        // Check theater bounds
-        if (!TheaterCoordinateConverter.IsWithinTheaterBounds(Settings.SelectedTheater, lat, lon))
-        {
-            CoordinateError = "Coordinates are outside the theater bounds";
-            HasCoordinateError = true;
-            return;
-        }
-
-        // All validation passed
-        CoordinateError = null;
-        HasCoordinateError = false;
-
-        _isUpdatingFromInput = true;
-        Latitude = lat;
-        Longitude = lon;
-        _isUpdatingFromInput = false;
-    }
-
     partial void OnLatitudeChanged(double value)
     {
-        UpdatePosition(value, Longitude);
-        if (!_isUpdatingFromInput)
-        {
-            LatLonInput = $"{value:F5} {Longitude:F5}";
-        }
+        ValidateAndUpdatePosition();
     }
 
     partial void OnLongitudeChanged(double value)
     {
-        UpdatePosition(Latitude, value);
-        if (!_isUpdatingFromInput)
+        ValidateAndUpdatePosition();
+    }
+
+    partial void OnAltitudeFeetChanged(double value)
+    {
+        ValidateAndUpdatePosition();
+    }
+    
+    private void ValidateAndUpdatePosition()
+    {
+        if (_isUpdatingPosition) return;
+    
+        _isUpdatingPosition = true;
+    
+        try
         {
-            LatLonInput = $"{Latitude:F5} {value:F5}";
+            // Validate coordinates
+            if (!TheaterCoordinateConverter.IsWithinTheaterBounds(Settings.SelectedTheater, Latitude, Longitude))
+            {
+                CoordinateError = "Coordinates are outside the theater bounds";
+                HasCoordinateError = true;
+                return;
+            }
+        
+            // Clear errors
+            CoordinateError = null;
+            HasCoordinateError = false;
+        
+            // Update RadioStationData
+            UpdateRadioStationPosition();
+        }
+        finally
+        {
+            _isUpdatingPosition = false;
         }
     }
 
-    private void UpdatePosition(double lat, double lon)
+    private void UpdateRadioStationPosition()
     {
-        if (RadioStationData.Position == null)
-        {
-            RadioStationData.Position = new Position(0d, 0d, 0d);
-        }
-
         var xy = TheaterCoordinateConverter.LatLonToXYMeters(
             Settings.SelectedTheater,
-            lat,
-            lon,
+            Latitude,
+            Longitude,
             TheaterCoordinateConverter.CoordinateSystem.BMS_HEIGHTMAP_COORDINATE_SYTEM);
-        RadioStationData.Position = new Position(xy.x, xy.y, RadioStationData.Position.Z);
-    }
-
-    partial void OnAltitudeInputChanged(double? value)
-    {
-        if (value == null) return;
-        const double FEET_PER_METER = 3.28084d;
-        RadioStationData.Position ??= new Position(0d, 0d, 0d);
-        RadioStationData.Position.Z = value.Value / FEET_PER_METER;
+    
+        RadioStationData.Position = new Position(
+            xy.x, 
+            xy.y, 
+            AltitudeFeet / FEET_PER_METER);
     }
 
     [RelayCommand]

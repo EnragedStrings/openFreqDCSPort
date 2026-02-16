@@ -82,7 +82,7 @@ public class SignalStrengthTracker : IDisposable
     {
         // Primary indicator: SNR (Signal-to-Noise Ratio)
         // Typical range: -10 dB (unusable) to +40 dB (extremely strong)
-        float snr = audioParams.SNR_dB;
+        float snr = audioParams.ReceivedSnrDb;
 
         // Map SNR to 0-100 range
         // -10 dB -> 0%, +40 dB -> 100%
@@ -90,12 +90,23 @@ public class SignalStrengthTracker : IDisposable
         const float maxSnr = 40f;
         float strength = ((snr - minSnr) / (maxSnr - minSnr)) * 100f;
 
-        // Apply gain influence (if gain is significantly attenuated)
-        // This accounts for cases where gain reduction might indicate weak signals
-        if (audioParams.Gain < 0.5f)
+        // Apply quality degradation based on dropout/fade rates
+        // These indicate poor signal quality even if SNR seems adequate
+        float qualityFactor = 1.0f;
+    
+        // Reduce strength for high dropout rates (>1.0 is severe multipath)
+        if (audioParams.DropoutRate > 0.1f)
         {
-            strength *= (0.5f + audioParams.Gain); // Reduce strength for low gain
+            qualityFactor *= Math.Max(0.5f, 1.0f - (audioParams.DropoutRate * 0.3f));
         }
+    
+        // Reduce strength for deep fades (>0.2 is problematic)
+        if (audioParams.DeepFadeRate > 0.05f)
+        {
+            qualityFactor *= Math.Max(0.6f, 1.0f - (audioParams.DeepFadeRate * 0.5f));
+        }
+
+        strength *= qualityFactor;
 
         // Clamp to 0-100
         return Math.Clamp(strength, 0f, 100f);

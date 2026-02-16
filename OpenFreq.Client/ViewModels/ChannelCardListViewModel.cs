@@ -91,7 +91,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
     {
         // Clean up in case the SHMEM has disconnected (BMS likely crashed)
-        if (_settings.ConnectionMode != IOpenFreqService.Mode.BMS || e.NewState == ServiceState.Connected || FalconChannelGroup == null) return;
+        if (_settings.ConnectionMode != IOpenFreqService.Mode.BMS || e.NewState == ServiceState.Connected ||
+            FalconChannelGroup == null) return;
         DeleteChannelGroup(FalconChannelGroup);
         FalconChannelGroup = null;
     }
@@ -150,30 +151,34 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         _logger.LogDebug($"VOLUME {e.OldVolume} -> {e.NewVolume}");
 
-        // BMS dB scale
-        const float dbMin = -6.0f; // +6dB boost at DX=0
-        const float dbMax = 40.0f; // -40dB attenuation at DX=10000
-        const float dxMin = 0.0f; // BMS formula uses full 0-10000 internally
-        const float dxMax = 10000.0f;
+        const float dxMin = 1000f;   // loudest position
+        const float dxMax = 10000f;  // mute position
 
-        // Convert DX value to dB (matching BMS RADIOVOLUMERESCALE_DX_TO_DB)
-        var dB = ((e.NewVolume - dxMin) * (dbMax - dbMin) / (dxMax - dxMin)) + dbMin;
+        const float dbMin = -80f;    // silence
+        const float dbMax = 6f;      // 2x boost
 
-        // Negate for attenuation (matching BMS sprintf line: -vol)
-        var attenuationDb = -dB;
+        // Clamp input
+        var clampedDx = Math.Clamp(e.NewVolume, dxMin, dxMax);
 
-        // Convert dB to linear amplitude: amplitude = 10^(dB/20)
-        var amplitude = MathF.Pow(10.0f, attenuationDb / 20.0f);
+        // Invert and normalize knob position (0..1)
+        var t = (dxMax - clampedDx) / (dxMax - dxMin);
 
-        // Allow boost up to +6dB like BMS does
-        var normalized = Math.Clamp(amplitude, 0f, 2f);
+        // Convert to dB
+        var db = dbMin + t * (dbMax - dbMin);
 
+        // Convert dB → linear gain
+        var gain = (float)Math.Pow(10.0f, db / 20.0f);
+
+        // Prevent denormals / tiny noise
+        if (gain < 0.00001f)
+            gain = 0f;
+        
         var channels = FalconChannelGroup?.Channels.Where(c => c.BmsRadioType == e.RadioType).ToList();
-        if (channels != null)
-            foreach (var channel in channels)
-            {
-                _openFreqService.SetVolume(channel.FrequencyKhz, normalized);
-            }
+        if (channels == null) return;
+        foreach (var channel in channels)
+        {
+            _openFreqService.SetVolume(channel.FrequencyKhz, gain);
+        }
     }
 
     private void OnRadioPowerChanged(object? sender, RadioPowerChangedEventArgs e)
@@ -423,7 +428,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     {
         var channelGroup = new ChannelCardGroupViewModel(_openFreqService, _hotkeyService, _acmiClientService,
             _settings, channelGroupData.Name, channelGroupData.RadioStationData.Preset,
-            channelGroupData.RadioStationData.Type, channelGroupData.Latitude, channelGroupData.Longitude, channelGroupData.AltitudeFt, editMode);
+            channelGroupData.RadioStationData.Type, channelGroupData.Latitude, channelGroupData.Longitude,
+            channelGroupData.AltitudeFt, editMode);
         AllChannelGroups.Add(channelGroup);
         return channelGroup;
     }

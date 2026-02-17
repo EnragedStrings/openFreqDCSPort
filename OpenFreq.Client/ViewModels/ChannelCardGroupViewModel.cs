@@ -26,7 +26,7 @@ namespace OpenFreqClient.ViewModels;
 public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 {
     public Guid Id { get; } = Guid.NewGuid();
-    [ObservableProperty] public partial SettingsViewModel Settings { get; set; }
+    public SettingsViewModel Settings {get;}
 
     [ObservableProperty] public partial string Name { get; set; }
 
@@ -123,7 +123,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
     public ChannelCardViewModel CreateChannel(int frequencyKhz, string name, bool isInEditMode = true, RadioType? bmsRadioType = null)
     {
-        var channel = new ChannelCardViewModel(_hotkeyService, RadioStationData, this);
+        var channel = new ChannelCardViewModel(_hotkeyService, RadioStationData, this, Settings);
         channel.Name = name;
         channel.FrequencyKhz = frequencyKhz;
         channel.IsEditing = isInEditMode;
@@ -460,14 +460,14 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     }
     
     [RelayCommand]
-    private async Task TrackSelectedAircraftAsync()
+    private Task TrackSelectedAircraftAsync()
     {
         if (string.IsNullOrEmpty(RadioStationData.AcmiAircraftId))
-            return;
+            return Task.CompletedTask;
         
         var aircraft = _acmiClientService.GetAircraft(RadioStationData.AcmiAircraftId);
         if (aircraft == null)
-            return;
+            return Task.CompletedTask;
         
         // Open tracking window
         _trackingWindow = new MapPickerWindow(
@@ -495,6 +495,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
                 StopTracking();
             };
         }
+
+        return Task.CompletedTask;
     }
     
     private async Task UpdateTrackingPositionAsync(CancellationToken cancellationToken)

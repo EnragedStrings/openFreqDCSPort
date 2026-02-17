@@ -18,6 +18,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 {
     private readonly IHotkeyService _hotkeyService;
     private readonly ChannelCardGroupViewModel _parentChannelCardGroupViewModel;
+    public SettingsViewModel Settings { get; }
 
     public Guid Id { get; } = Guid.NewGuid();
 
@@ -120,11 +121,12 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
 
     public ChannelCardViewModel(IHotkeyService hotkeyService, RadioStationData radioStationData,
-        ChannelCardGroupViewModel parentChannelCardGroupViewModel, bool isEnabled = true, RadioType? bmsRadioType = null)
+        ChannelCardGroupViewModel parentChannelCardGroupViewModel, SettingsViewModel settings, bool isEnabled = true, RadioType? bmsRadioType = null)
     {
         _hotkeyService = hotkeyService;
         RadioStationData = radioStationData;
         _parentChannelCardGroupViewModel = parentChannelCardGroupViewModel;
+        Settings = settings;
         IsEnabled = isEnabled;
         BmsRadioType = bmsRadioType;
 
@@ -139,13 +141,14 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     }
 
     public ChannelCardViewModel(IHotkeyService hotkeyService, Channel channel, RadioStationData radioStationData,
-        ChannelCardGroupViewModel parentChannelCardGroupViewModel, RadioType? bmsRadioType = null)
+        ChannelCardGroupViewModel parentChannelCardGroupViewModel, SettingsViewModel settings, RadioType? bmsRadioType = null)
     {
         _hotkeyService = hotkeyService;
         IsEnabled = channel.Enabled;
         BmsRadioType = bmsRadioType;
         RadioStationData = radioStationData;
         _parentChannelCardGroupViewModel = parentChannelCardGroupViewModel;
+        Settings = settings;
         FrequencyKhz = channel.FrequencyKhz;
         Name = channel.Name;
         RxDb = channel.RxDb;

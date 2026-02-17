@@ -81,6 +81,14 @@ public partial class SettingsViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial RadioPlayback.AudioChannel BmsVhfAudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    
+    // This is displayed in the Top Bar but shared throughout the app
+    [ObservableProperty] public partial bool Is3dMode { get; set; }
+    
+    partial void OnIs3dModeChanged(bool value)
+    {
+        _openFreqService.Apply3dAudioEffects = value;
+    }
 
     partial void OnConnectionModeChanged(IOpenFreqService.Mode value)
     {

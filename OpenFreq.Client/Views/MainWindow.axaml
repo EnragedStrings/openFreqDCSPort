@@ -383,7 +383,7 @@
                             </StackPanel.Styles>
 
                             <RadioButton GroupName="3dMode"
-                                         IsChecked="{Binding !Is3dMode}"
+                                         IsChecked="{Binding !Settings.Is3dMode}"
                                          ToolTip.Tip="Lobby Mode - Your voice will only be heard by other players in the Lobby without any effects.">
                                 
                                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -393,7 +393,7 @@
                             </RadioButton>
 
                             <RadioButton GroupName="3dMode"
-                                         IsChecked="{Binding Is3dMode}"
+                                         IsChecked="{Binding Settings.Is3dMode}"
                                          ToolTip.Tip="3D Mode - Your voice will only be heard by other players in the game.">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <avalonia:MaterialIcon Kind="ShieldAirplane" Width="20" Height="20" />

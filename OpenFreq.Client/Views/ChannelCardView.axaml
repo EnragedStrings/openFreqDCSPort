@@ -171,6 +171,7 @@
 
                 <!-- Signal Strength -->
                 <ProgressBar Grid.Row="3" Grid.Column="0"
+                             IsVisible="{Binding Settings.Is3dMode}"
                              Value="{Binding SignalStrength}"
                              Margin="4,8,4,4"
                              Height="6"

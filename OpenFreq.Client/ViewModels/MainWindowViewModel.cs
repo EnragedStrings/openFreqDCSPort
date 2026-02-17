@@ -68,7 +68,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty] public partial string ErrorMessage { get; set; } = "";
 
     [ObservableProperty] private partial ObservableCollection<string> ErrorLog { get; set; } = [];
-    [ObservableProperty] public partial bool Is3dMode { get; set; }
     [ObservableProperty] public partial bool IvcWarning { get; set; }
 
     public Color OpenFreqStatusColor => OpenFreqConnectionState switch
@@ -142,7 +141,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     {
         if (e.OldState != ServiceState.Connected) return;
         if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
-        Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
+        Settings.Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
         await DisconnectAsync();
     }
 
@@ -183,7 +182,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnFlyingStateChanged(object? sender, FlyingStateChangedEventArgs e)
     {
-        Is3dMode = e.NewFlyingState;
+        Settings.Is3dMode = e.NewFlyingState;
     }
 
     private void FalconRadioSharedMemoryServiceOnConnectionParametersChanged(object? sender,
@@ -211,7 +210,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (_openFreqService.IsConnected)
             {
                 _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.Connected);
-                Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
+                Settings.Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
             }
             else
             {
@@ -480,10 +479,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     }
 
 
-    partial void OnIs3dModeChanged(bool value)
-    {
-        _openFreqService.Apply3dAudioEffects = value;
-    }
+   
 
     [RelayCommand]
     private Task Debug()

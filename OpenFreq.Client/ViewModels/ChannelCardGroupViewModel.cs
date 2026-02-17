@@ -26,7 +26,7 @@ namespace OpenFreqClient.ViewModels;
 public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 {
     public Guid Id { get; } = Guid.NewGuid();
-    public SettingsViewModel Settings {get;}
+    public SettingsViewModel Settings { get; }
 
     [ObservableProperty] public partial string Name { get; set; }
 
@@ -58,17 +58,18 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial double AltitudeFeet { get; set; }
     [ObservableProperty] public partial string? CoordinateError { get; set; }
     [ObservableProperty] public partial bool HasCoordinateError { get; set; }
-    
+
     private const double FEET_PER_METER = 3.28084d;
     private bool _isUpdatingPosition;
-    
+
     private MapPickerWindow? _trackingWindow;
     private CancellationTokenSource? _trackingCts;
     [ObservableProperty] public partial bool IsTracking { get; set; }
 
     public ChannelCardGroupViewModel(IOpenFreqService openFreqService, IHotkeyService hotkeyService,
         IAcmiClientService acmiClientService, SettingsViewModel settingsViewModel, string name,
-        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType, double latitude = 0, double longitude = 0, double altitudeFeet = 0, bool editMode = true)
+        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType, double latitude = 0,
+        double longitude = 0, double altitudeFeet = 0, bool editMode = true)
     {
         RadioStationData = new RadioStationData
         {
@@ -92,7 +93,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         _openFreqService.FrequencyStatusChanged += OnFrequencyStatusChanged;
 
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChanged;
-        
+
 
         // Subscribe to hotkey events
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
@@ -102,8 +103,12 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Register<ChannelUpdatedMessage>(this, OnChannelUpdated);
         WeakReferenceMessenger.Default.Register<ChannelEnabledDisabledMessage>(this, OnChannelEnabledDisabled);
         WeakReferenceMessenger.Default.Register<ChannelDeleteRequestedMessage>(this, OnChannelDeleteRequested);
-        
-        UpdateRadioStationPosition();
+
+        // Only update position if valid coordinates provided
+        if (latitude != 0 || longitude != 0)
+        {
+            UpdateRadioStationPosition();
+        }
     }
 
     private async void OnAcmiConnectionStatusChanged(object? sender, AcmiConnectionEventArgs e)
@@ -111,7 +116,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         if (e.Status == AcmiConnectionStatus.Connected)
         {
             IsAcmiConnected = true;
-           await UpdateTacviewCallsigns(new CancellationTokenSource().Token);
+            await UpdateTacviewCallsigns(new CancellationTokenSource().Token);
         }
         else
         {
@@ -119,9 +124,9 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         }
     }
 
-    
 
-    public ChannelCardViewModel CreateChannel(int frequencyKhz, string name, bool isInEditMode = true, RadioType? bmsRadioType = null)
+    public ChannelCardViewModel CreateChannel(int frequencyKhz, string name, bool isInEditMode = true,
+        RadioType? bmsRadioType = null)
     {
         var channel = new ChannelCardViewModel(_hotkeyService, RadioStationData, this, Settings);
         channel.Name = name;
@@ -155,7 +160,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             // Always join the new frequency
             _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, RadioStationData, message.IsEnabled)
                 .Wait(TimeSpan.FromMilliseconds(100));
-            
+
             _openFreqService.SetAudioChannel(message.NewFrequencyKhz, message.CurrentAudioChannel);
         }
     }
@@ -264,8 +269,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
         oldChannel.FrequencyKhz = newFreqKhz;
         OnChannelUpdated(this,
-            new ChannelUpdatedMessage(oldChannel.Id, oldFreqKhz, newFreqKhz, oldChannel.Status, oldChannel.HotKey,
-                oldChannel.HotKey, setEnabled, oldChannel.AudioChannel));
+            new ChannelUpdatedMessage(oldChannel.Id, oldFreqKhz, newFreqKhz, oldChannel.Status, oldChannel.PttHotKey,
+                oldChannel.PttHotKey, setEnabled, oldChannel.AudioChannel));
 
         return true;
     }
@@ -398,13 +403,13 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         ValidateAndUpdatePosition();
     }
-    
+
     private void ValidateAndUpdatePosition()
     {
         if (_isUpdatingPosition) return;
-    
+
         _isUpdatingPosition = true;
-    
+
         try
         {
             // Validate coordinates
@@ -414,11 +419,11 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
                 HasCoordinateError = true;
                 return;
             }
-        
+
             // Clear errors
             CoordinateError = null;
             HasCoordinateError = false;
-        
+
             // Update RadioStationData
             UpdateRadioStationPosition();
         }
@@ -435,10 +440,10 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             Latitude,
             Longitude,
             TheaterCoordinateConverter.CoordinateSystem.BMS_HEIGHTMAP_COORDINATE_SYTEM);
-    
+
         RadioStationData.Position = new Position(
-            xy.x, 
-            xy.y, 
+            xy.x,
+            xy.y,
             AltitudeFeet / FEET_PER_METER);
     }
 
@@ -458,17 +463,17 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             Longitude = result.Value.lon;
         }
     }
-    
+
     [RelayCommand]
     private Task TrackSelectedAircraftAsync()
     {
         if (string.IsNullOrEmpty(RadioStationData.AcmiAircraftId))
             return Task.CompletedTask;
-        
+
         var aircraft = _acmiClientService.GetAircraft(RadioStationData.AcmiAircraftId);
         if (aircraft == null)
             return Task.CompletedTask;
-        
+
         // Open tracking window
         _trackingWindow = new MapPickerWindow(
             aircraft.Transform.Latitude,
@@ -476,29 +481,26 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             aircraft.Transform.Heading,
             Settings.SelectedTheater,
             aircraft.CallSign);
-        
+
         IsTracking = true;
-        
+
         // Start update task
         _trackingCts = new CancellationTokenSource();
         _ = UpdateTrackingPositionAsync(_trackingCts.Token);
-        
+
         // Show window (non-blocking)
         var desktop = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
         if (desktop?.MainWindow != null)
         {
             _trackingWindow.Show(desktop.MainWindow);
-            
+
             // Handle window close
-            _trackingWindow.Closed += (_, _) =>
-            {
-                StopTracking();
-            };
+            _trackingWindow.Closed += (_, _) => { StopTracking(); };
         }
 
         return Task.CompletedTask;
     }
-    
+
     private async Task UpdateTrackingPositionAsync(CancellationToken cancellationToken)
     {
         try
@@ -515,7 +517,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
                         (aircraft.Transform.Heading + 360) % 360, // the ACMI streams sends headings as +/-180
                         aircraft.Transform.AltitudeFt);
                 }
-                
+
                 // Update rate: 10 Hz (100ms)
                 await Task.Delay(100, cancellationToken);
             }
@@ -530,7 +532,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             Console.WriteLine($"Tracking error: {ex}");
         }
     }
-    
+
     [RelayCommand]
     private void StopTracking()
     {
@@ -538,16 +540,16 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         _trackingCts?.Cancel();
         _trackingCts?.Dispose();
         _trackingCts = null;
-        
+
         _trackingWindow?.Close();
         _trackingWindow = null;
     }
-    
+
     public class ChannelCardGroupDeleteRequestedMessage(Guid channelCardGroupId)
     {
         public Guid ChannelCardGroupId { get; } = channelCardGroupId;
     }
-    
+
     [RelayCommand]
     public void DeleteChannelGroup()
     {

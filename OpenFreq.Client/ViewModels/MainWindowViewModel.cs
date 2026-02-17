@@ -423,13 +423,13 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                         channelGroup.CreateChannel(channelData.FrequencyKhz, channelData.Name ?? "");
                     channel.IsEditing = false;
 
-                    // Parse and set hotkey
+                    // Parse and set PTT hotkey
                     if (Enum.TryParse<KeyCode>(channelData.HotkeyCode, out var keyCode))
                     {
-                        channel.HotKey = keyCode;
+                        channel.PttHotKey = keyCode;
                         if (keyCode != KeyCode.VcUndefined)
                         {
-                            _hotkeyService.RegisterHotkey(keyCode, channel.Id);
+                            _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.Ptt, keyCode, channel.Id);
                         }
                     }
                 }
@@ -463,7 +463,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                             {
                                 Name = c.Name,
                                 FrequencyKhz = c.FrequencyKhz,
-                                HotkeyCode = c.HotKey.ToString(),
+                                HotkeyCode = c.PttHotKey.ToString(),
                                 Enabled = c.IsEnabled
                             }).ToList()
                         };

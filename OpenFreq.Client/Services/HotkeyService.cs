@@ -10,13 +10,16 @@ namespace OpenFreqClient.Services;
 
 public class HotkeyService : IHotkeyService
 {
+    
+    
     private TaskPoolGlobalHook? _hook;
     private CancellationTokenSource? _cts;
     private Task? _hookTask;
     private bool _paused;
 
-    private readonly Dictionary<KeyCode, List<Guid>> _bindings = new();
-    private readonly HashSet<KeyCode> _pressedKeys = new();
+    private readonly Dictionary<KeyCode, List<Guid>> _pttBindings = new();
+    private readonly Dictionary<KeyCode, List<Guid>> _squelchToggleBindings = new();
+    private readonly HashSet<KeyCode> _pressedKeys = [];
 
     public event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed;
     public event EventHandler<HotkeyReleasedEventArgs>? HotkeyReleased;
@@ -76,28 +79,42 @@ public class HotkeyService : IHotkeyService
         _paused = false;
     }
 
-    public void RegisterHotkey(KeyCode key, Guid channelId)
+    public void RegisterHotkey(IHotkeyService.HotkeyType type, KeyCode key, Guid channelId)
     {
-        if (_bindings.TryGetValue(key, out var bindings))
+        var bindings = type switch
         {
-            if (bindings.Contains(channelId))
+            IHotkeyService.HotkeyType.Ptt => _pttBindings,
+            IHotkeyService.HotkeyType.SquelchToggle => _squelchToggleBindings,
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+        };
+        
+        if (bindings.TryGetValue(key, out var bindingsList))
+        {
+            if (bindingsList.Contains(channelId))
             {
                 return;
             }
 
-            bindings.Add(channelId);
+            bindingsList.Add(channelId);
         }
         else
         {
-            _bindings[key] = new List<Guid> { channelId };
+            bindings[key] = [channelId];
         }
     }
 
-    public void UnregisterHotkey(KeyCode key, Guid channelId)
+    public void UnregisterHotkey(IHotkeyService.HotkeyType type, KeyCode key, Guid channelId)
     {
-        if (_bindings.TryGetValue(key, out var bindings))
+        var bindings = type switch
         {
-            bindings.Remove(channelId);
+            IHotkeyService.HotkeyType.Ptt => _pttBindings,
+            IHotkeyService.HotkeyType.SquelchToggle => _squelchToggleBindings,
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+        };
+        
+        if (bindings.TryGetValue(key, out var bindingsList))
+        {
+            bindingsList.Remove(channelId);
         }
     }
 
@@ -147,9 +164,15 @@ public class HotkeyService : IHotkeyService
 
         _pressedKeys.Add(e.Data.KeyCode);
 
-        if (_bindings.TryGetValue(e.Data.KeyCode, out var bindings))
+        // We allow for arbitrary double binds, so just fire every valid event
+        if (_pttBindings.TryGetValue(e.Data.KeyCode, out var pttBindingsList))
         {
-            HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(bindings));
+            HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBindingsList));
+        }
+        
+        if (_squelchToggleBindings.TryGetValue(e.Data.KeyCode, out var squelchBindingsList))
+        {
+            HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(IHotkeyService.HotkeyType.SquelchToggle, squelchBindingsList));
         }
     }
 
@@ -157,9 +180,14 @@ public class HotkeyService : IHotkeyService
     {
         _pressedKeys.Remove(e.Data.KeyCode);
 
-        if (_bindings.TryGetValue(e.Data.KeyCode, out var binding))
+        if (_pttBindings.TryGetValue(e.Data.KeyCode, out var pttBinding))
         {
-            HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(binding));
+            HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBinding));
+        }
+
+        if (_squelchToggleBindings.TryGetValue(e.Data.KeyCode, out var squelchBinding))
+        {
+            HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(IHotkeyService.HotkeyType.SquelchToggle, squelchBinding));
         }
     }
 
@@ -169,24 +197,14 @@ public class HotkeyService : IHotkeyService
     }
 }
 
-public class HotkeyBinding
+public class HotkeyPressedEventArgs(IHotkeyService.HotkeyType type, List<Guid> channelIds) : EventArgs
 {
-    public KeyCode Key { get; }
-    public Guid ChannelCard { get; }
-
-    public HotkeyBinding(KeyCode key, Guid channelCard)
-    {
-        Key = key;
-        ChannelCard = channelCard;
-    }
-}
-
-public class HotkeyPressedEventArgs(List<Guid> channelIds) : EventArgs
-{
+    public IHotkeyService.HotkeyType Type { get; } = type;
     public List<Guid> ChannelIds { get; } = channelIds;
 }
 
-public class HotkeyReleasedEventArgs(List<Guid> channelIds) : EventArgs
+public class HotkeyReleasedEventArgs(IHotkeyService.HotkeyType type, List<Guid> channelIds) : EventArgs
 {
+    public IHotkeyService.HotkeyType Type { get; } = type;
     public List<Guid> ChannelIds { get; } = channelIds;
 }

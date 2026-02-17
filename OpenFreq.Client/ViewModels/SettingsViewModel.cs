@@ -14,6 +14,7 @@ using OpenFreq.Services.Acmi;
 using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services.Interfaces;
+using SharpHook.Data;
 
 namespace OpenFreqClient.ViewModels;
 
@@ -81,6 +82,12 @@ public partial class SettingsViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial RadioPlayback.AudioChannel BmsVhfAudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+
+    [ObservableProperty] 
+    public partial KeyCode BmsUhfSquelchHotkey { get; set; } = KeyCode.VcUndefined;
+    
+    [ObservableProperty]
+    public partial KeyCode BmsVhfSquelchHotkey { get; set; } = KeyCode.VcUndefined;
     
     // This is displayed in the Top Bar but shared throughout the app
     [ObservableProperty] public partial bool Is3dMode { get; set; }

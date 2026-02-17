@@ -87,16 +87,16 @@
                     <Button Classes="Flat"
                             Command="{Binding BeginCaptureHotkeyCommand}"
                             Width="40" Height="40"
-                            ToolTip.Tip="{Binding HasHotkey, Converter={StaticResource HotkeyTooltipConverter}}"
-                            IsVisible="{Binding !IsCapturingHotkey}">
+                            ToolTip.Tip="{Binding HasPttHotkey, Converter={StaticResource HotkeyTooltipConverter}}"
+                            IsVisible="{Binding !IsCapturingPttHotkey}">
                         <Grid>
                             <avalonia:MaterialIcon Kind="Keyboard"
                                                    Width="24" Height="24"
-                                                   IsVisible="{Binding !HasHotkey}" />
+                                                   IsVisible="{Binding !HasPttHotkey}" />
                             <avalonia:MaterialIcon Kind="KeyboardOutline"
                                                    Width="24" Height="24"
                                                    Foreground="{DynamicResource SystemAccentColor}"
-                                                   IsVisible="{Binding HasHotkey}" />
+                                                   IsVisible="{Binding HasPttHotkey}" />
                         </Grid>
                     </Button>
 
@@ -104,7 +104,7 @@
                     <Button Classes="Flat"
                             Width="40" Height="40"
                             IsEnabled="False"
-                            IsVisible="{Binding IsCapturingHotkey}">
+                            IsVisible="{Binding IsCapturingPttHotkey}">
                         <avalonia:MaterialIcon Kind="Keyboard"
                                                Width="24" Height="24"
                                                Foreground="{DynamicResource MaterialValidationErrorBrush}" />
@@ -160,7 +160,7 @@
                         Padding="8,4"
                         Margin="4"
                         HorizontalAlignment="Left"
-                        IsVisible="{Binding HasHotkey}">
+                        IsVisible="{Binding HasPttHotkey}">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <avalonia:MaterialIcon Kind="Keyboard" Width="14" Height="14" />
                         <TextBlock Text="{Binding HotkeyDisplay}"

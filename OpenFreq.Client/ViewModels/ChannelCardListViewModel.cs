@@ -254,15 +254,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                         switch (type)
                         {
                             case RadioType.VHF:
-                                channel.HotKey = KeyCode.VcF1;
+                                channel.PttHotKey = KeyCode.VcF1;
                                 channel.AudioChannel = _settings.BmsVhfAudioChannel;
                                 break;
                             case RadioType.UHF:
-                                channel.HotKey = KeyCode.VcF2;
+                                channel.PttHotKey = KeyCode.VcF2;
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                             case RadioType.GUARD:
-                                channel.HotKey = KeyCode.VcF2;
+                                channel.PttHotKey = KeyCode.VcF2;
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                         }

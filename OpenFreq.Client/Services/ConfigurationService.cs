@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,7 @@ public class ConfigurationService(ILogger<ConfigurationService> logger) : IConfi
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenFreq");
     
     private static readonly string ConfigFilePath = 
-        Path.Combine(ConfigDirectory, "OpenFreq.Server.json");
+        Path.Combine(ConfigDirectory, "OpenFreq.Client.json");
 
     public async Task<AppConfiguration> LoadConfigurationAsync()
     {

@@ -19,9 +19,15 @@ public interface IHotkeyService : IDisposable, ILifecycleService
     void Resume();
     
     // Binding management
-    void RegisterHotkey(KeyCode key, Guid channelId);
-    void UnregisterHotkey(KeyCode key, Guid channelId);
+    void RegisterHotkey(HotkeyType type, KeyCode key, Guid channelId);
+    void UnregisterHotkey(HotkeyType type, KeyCode key, Guid channelId);
     
     // Capture
     Task<KeyCode> CaptureNextKeyAsync(CancellationToken cancellationToken = default);
+    
+    public enum HotkeyType
+    {
+        Ptt, // used for PTT
+        SquelchToggle // toggle squelch on/off
+    }
 }

@@ -12,19 +12,20 @@ public class Channel
     public string? Name  { get; set; }
     public float RxDb {get; set;}
     
-    public ChannelStatus Status { get; set; } = ChannelStatus.Disconnected;
-
-    public bool Enabled { get; set; } = true;
-
     public enum ChannelType
     {
         UHF, VHF, Custom
     }
 
-    public enum ChannelStatus
+    public enum ChannelConnectionStatus
     {
         Connected,
         Disconnected,
+    }
+
+    public enum ChannelTransmissionStatus
+    {
+        Idle,
         Receiving,
         Transmitting
     }

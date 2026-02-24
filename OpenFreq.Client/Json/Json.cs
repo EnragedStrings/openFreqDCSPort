@@ -10,6 +10,7 @@ public class Json : JsonSerializerBase
     
     protected override JsonSerializerOptions Options { get; } = new()
     {
+        WriteIndented = true,
         TypeInfoResolver = JsonTypeInfoResolver.Combine(
             OpenFreqJsonContext.Default,
             ClientJsonContext.Default)

@@ -11,6 +11,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using FalconBmsDataService.Models;
+using FalconRadioService.Services;
 using OpenFreq.Client.Models;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
@@ -59,12 +60,13 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial string? CoordinateError { get; set; }
     [ObservableProperty] public partial bool HasCoordinateError { get; set; }
 
-    private const double FEET_PER_METER = 3.28084d;
+    private const double FeetPerMeter = 3.28084d;
     private bool _isUpdatingPosition;
 
     private MapPickerWindow? _trackingWindow;
     private CancellationTokenSource? _trackingCts;
     [ObservableProperty] public partial bool IsTracking { get; set; }
+    public bool IsBmsGroup => RadioStationData.Type == RadioStationData.RadioStationType.BMS;
 
     public ChannelCardGroupViewModel(IOpenFreqService openFreqService, IHotkeyService hotkeyService,
         IAcmiClientService acmiClientService, SettingsViewModel settingsViewModel, string name,
@@ -90,7 +92,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         _openFreqService.ConnectionStateChanged += OnConnectionStateChanged;
 
         // Subscribe to frequency status changes
-        _openFreqService.FrequencyStatusChanged += OnFrequencyStatusChanged;
+        _openFreqService.FrequencyConnectionStatusChanged += OnFrequencyConnectionStatusChanged;
+        _openFreqService.FrequencyTransmissionStatusChanged += OnFrequencyTransmissionStatusChanged;
 
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChanged;
 
@@ -101,13 +104,27 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
         // Subscribe to channel updates for binding changes
         WeakReferenceMessenger.Default.Register<ChannelUpdatedMessage>(this, OnChannelUpdated);
-        WeakReferenceMessenger.Default.Register<ChannelEnabledDisabledMessage>(this, OnChannelEnabledDisabled);
+        WeakReferenceMessenger.Default.Register<ChannelJoinLeaveRequestedMessage>(this, OnChannelJoinLeaveRequested);
+        WeakReferenceMessenger.Default.Register<SquelchEnabledDisabledMessage>(this, OnSquelchEnabledDisabled);
         WeakReferenceMessenger.Default.Register<ChannelDeleteRequestedMessage>(this, OnChannelDeleteRequested);
 
         // Only update position if valid coordinates provided
         if (latitude != 0 || longitude != 0)
         {
             UpdateRadioStationPosition();
+        }
+    }
+
+    private async void OnChannelJoinLeaveRequested(object recipient, ChannelJoinLeaveRequestedMessage message)
+    {
+        if (!_openFreqService.IsAuthenticated) return;
+        if (message.Join)
+        {
+            await _openFreqService.JoinFrequencyAsync(message.FrequencyKhz, message.RadioStationData);
+        }
+        else
+        {
+            await _openFreqService.LeaveFrequencyAsync(message.FrequencyKhz);
         }
     }
 
@@ -128,11 +145,19 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     public ChannelCardViewModel CreateChannel(int frequencyKhz, string name, bool isInEditMode = true,
         RadioType? bmsRadioType = null)
     {
-        var channel = new ChannelCardViewModel(_hotkeyService, RadioStationData, this, Settings);
+        var channel = new ChannelCardViewModel(_hotkeyService, name, frequencyKhz, isInEditMode, RadioStationData, this,
+            Settings);
         channel.Name = name;
         channel.FrequencyKhz = frequencyKhz;
         channel.IsEditing = isInEditMode;
         channel.BmsRadioType = bmsRadioType;
+        
+        // 9999 is BMS's "radio off" parking frequency - always ensure it's disconnected
+        if (frequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+        {
+            channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
+        }
+        
         if (Dispatcher.UIThread.CheckAccess())
         {
             // Already on UI thread - add directly
@@ -147,22 +172,20 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         return channel;
     }
 
-    private void OnChannelUpdated(object recipient, ChannelUpdatedMessage message)
+    private async void OnChannelUpdated(object recipient, ChannelUpdatedMessage message)
     {
-        if (message.NeedsReconnect && _openFreqService.IsAuthenticated)
+        if (!_openFreqService.IsAuthenticated) return;
+        
+        // Always leave the old frequency first
+        await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz);
+        
+        if (!message.IsBmsChannel)
         {
-            // Only leave old frequency if the channel was previously connected
-            if (message.OldStatus != Channel.ChannelStatus.Disconnected)
-            {
-                _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz).Wait(TimeSpan.FromMilliseconds(100));
-            }
-
-            // Always join the new frequency
-            _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, RadioStationData, message.IsEnabled)
-                .Wait(TimeSpan.FromMilliseconds(100));
-
+            // For non-BMS channels, immediately join the new frequency
+            await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, RadioStationData);
             _openFreqService.SetAudioChannel(message.NewFrequencyKhz, message.CurrentAudioChannel);
         }
+        // For BMS channels, the join will be handled by OnBmsFrequencyChanged after checking power state
     }
 
     private void OnConnectionStateChanged(object? sender, ConnectionState state)
@@ -173,7 +196,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             // Reset all channel status on disconnect
             foreach (var channel in Channels)
             {
-                channel.Status = Channel.ChannelStatus.Disconnected;
+                channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
             }
         }
         else if (Settings.ModeIsGci && state == ConnectionState.Connected && !IsAcmiConnected)
@@ -182,23 +205,33 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnFrequencyStatusChanged(object? sender, FrequencyStatusEventArgs e)
+    private void OnFrequencyConnectionStatusChanged(object? sender, FrequencyConnectionStatusEventArgs e)
     {
-        var channel = Channels.FirstOrDefault(c => Math.Abs(c.FrequencyKhz - e.FrequencyKhz) < 0.01);
-        channel?.Status = e.Status;
-    }
-
-    private void OnChannelEnabledDisabled(object recipient, ChannelEnabledDisabledMessage message)
-    {
-        switch (message.Enabled)
+        var channel = Channels.FirstOrDefault(c => c.FrequencyKhz == e.FrequencyKhz);
+        if (channel == null) return;
+        
+        // 9999 is BMS's "radio off" parking frequency - always keep it disconnected
+        if (e.FrequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
         {
-            case true:
-                _openFreqService.EnableFrequency(message.FrequencyKhz);
-                break;
-            case false:
-                _openFreqService.DisableFrequency(message.FrequencyKhz);
-                break;
+            channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
         }
+        else
+        {
+            channel.ConnectionStatus = e.ConnectionStatus;
+        }
+    }
+    
+    private void OnFrequencyTransmissionStatusChanged(object? sender, FrequencyTransmissionStatusEventArgs e)
+    {
+        var channel = Channels.FirstOrDefault(c => c.FrequencyKhz == e.FrequencyKhz);
+        channel?.TransmissionStatus = e.TransmissionStatus;
+    }
+    
+    
+
+    private void OnSquelchEnabledDisabled(object recipient, SquelchEnabledDisabledMessage message)
+    {
+        _openFreqService.SetSquelch(message.FrequencyKhz, message.SquelchEnabled);
     }
 
     private void OnChannelDeleteRequested(object recipient, ChannelDeleteRequestedMessage message)
@@ -227,7 +260,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             foreach (var channelId in e.ChannelIds)
             {
                 var channel = Channels.FirstOrDefault(c => c.Id == channelId);
-                if (channel != null && channel.Status != Channel.ChannelStatus.Disconnected && !channel.IsEditing)
+                if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
+                    !channel.IsEditing)
                 {
                     // mute all channels of the same channel type in this group when transmitting
                     var mutedFrequencies = GetAllFrequenciesOfChannelGroup(channel.Type);
@@ -249,7 +283,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             foreach (var channelId in e.ChannelIds)
             {
                 var channel = Channels.FirstOrDefault(c => c.Id == channelId);
-                if (channel != null && channel.Status != Channel.ChannelStatus.Disconnected)
+                if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected)
                 {
                     await _openFreqService.StopTransmissionAsync(channel.FrequencyKhz);
                 }
@@ -261,17 +295,30 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public bool ChangeChannelFrequency(int oldFreqKhz, int newFreqKhz, bool setEnabled)
+    public bool ChangeChannelFrequency(int oldFreqKhz, int newFreqKhz, bool joined)
     {
         var oldChannel =
-            Channels.FirstOrDefault(c => Math.Abs(c.FrequencyKhz - oldFreqKhz) < 0.01);
-        if (oldChannel == null) return false;
+            Channels.FirstOrDefault(c => c.FrequencyKhz == oldFreqKhz);
+        if (oldChannel == null)
+        {
+            // TODO Log warning
+            return false;
+        }
 
         oldChannel.FrequencyKhz = newFreqKhz;
+        
+        // 9999 is BMS's "radio off" parking frequency - always ensure it's disconnected
+        if (newFreqKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+        {
+            oldChannel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
+        }
+        
         OnChannelUpdated(this,
-            new ChannelUpdatedMessage(oldChannel.Id, oldFreqKhz, newFreqKhz, oldChannel.Status, oldChannel.PttHotKey,
-                oldChannel.PttHotKey, setEnabled, oldChannel.AudioChannel));
-
+            new ChannelUpdatedMessage(oldChannel.Id, oldFreqKhz, newFreqKhz, oldChannel.ConnectionStatus,
+                oldChannel.AudioChannel, true));
+        
+        // Note: Join will be handled by OnBmsFrequencyChanged which explicitly joins for non-9999 frequencies
+        
         return true;
     }
 
@@ -279,7 +326,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         foreach (var channel in Channels)
         {
-            await _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, RadioStationData, channel.IsEnabled);
+            await _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, RadioStationData);
             _openFreqService.SetAudioChannel(channel.FrequencyKhz, channel.AudioChannel);
         }
     }
@@ -288,7 +335,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         foreach (var channel in Channels)
         {
-            if (channel.Status != Channel.ChannelStatus.Disconnected)
+            if (channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected)
             {
                 await _openFreqService.LeaveFrequencyAsync(channel.FrequencyKhz);
             }
@@ -297,9 +344,17 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        foreach (var channel in Channels)
+        {
+            channel.Dispose();
+        }
+
+        Channels.Clear();
+
         _hotkeyService.HotkeyPressed -= OnHotkeyPressed;
         _hotkeyService.HotkeyReleased -= OnHotkeyReleased;
-        _openFreqService.FrequencyStatusChanged -= OnFrequencyStatusChanged;
+        _openFreqService.FrequencyConnectionStatusChanged -= OnFrequencyConnectionStatusChanged;
+        _openFreqService.FrequencyTransmissionStatusChanged -= OnFrequencyTransmissionStatusChanged;
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
 
         _callsignUpdateCts?.Cancel();
@@ -341,11 +396,6 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         while (_acmiClientService.Status == AcmiConnectionStatus.Connected
                && !cancellationToken.IsCancellationRequested)
         {
-            if (SelectedTacviewCallsign != null)
-            {
-                var aircraft = _acmiClientService.GetAircraft(SelectedTacviewCallsign.ObjectId);
-            }
-
             var currentAircraft = _acmiClientService.GetAllAircraft()
                 .Select(ac => new TacviewAircraftItem(ac.CallSign, ac.ObjectId))
                 .ToList();
@@ -444,7 +494,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         RadioStationData.Position = new Position(
             xy.x,
             xy.y,
-            AltitudeFeet / FEET_PER_METER);
+            AltitudeFeet / FeetPerMeter);
     }
 
     [RelayCommand]
@@ -567,5 +617,23 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         return query
             .Select(c => c.FrequencyKhz)
             .ToList();
+    }
+
+    protected bool Equals(ChannelCardGroupViewModel other)
+    {
+        return Id.Equals(other.Id);
+    }
+
+    public override bool Equals(object? obj)
+    {
+        if (obj is null) return false;
+        if (ReferenceEquals(this, obj)) return true;
+        if (obj.GetType() != GetType()) return false;
+        return Equals((ChannelCardGroupViewModel)obj);
+    }
+
+    public override int GetHashCode()
+    {
+        return Id.GetHashCode();
     }
 }

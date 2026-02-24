@@ -26,7 +26,8 @@ public interface IOpenFreqService : IDisposable
     // Events
     event EventHandler<ConnectionState>? ConnectionStateChanged;
     event EventHandler<string>? StatusMessageReceived;
-    event EventHandler<FrequencyStatusEventArgs>? FrequencyStatusChanged;
+    event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
+    event EventHandler<FrequencyTransmissionStatusEventArgs>? FrequencyTransmissionStatusChanged;
     event EventHandler<PeerActivityEventArgs>? PeerActivityReceived;
 
     // Methods
@@ -34,7 +35,7 @@ public interface IOpenFreqService : IDisposable
     Task ConnectAsync();
     Task DisconnectAsync();
     bool FrequencyJoined(int frequencyKhz);
-    Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData, bool isEnabled);
+    Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData);
     Task LeaveFrequencyAsync(int frequencyKhz);
     Task StartTransmissionAsync(int frequencyKhz, List<int> mutedFrequencies);
     Task StopTransmissionAsync(int frequencyKhz);
@@ -44,6 +45,8 @@ public interface IOpenFreqService : IDisposable
     
     void EnableFrequency(int frequencyKhz);
     void DisableFrequency(int frequencyKhz);
+    
+    void SetSquelch(int frequencyKhz, bool isSquelchClosed);
     
     public enum OpenFreqStatus
     {

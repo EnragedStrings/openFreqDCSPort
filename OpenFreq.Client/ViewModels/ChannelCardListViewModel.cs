@@ -34,7 +34,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
     private readonly SettingsViewModel _settings;
 
-    private readonly string BMS_GROUP_NAME = "BMS Channels";
+    private const string BmsGroupName = "BMS Channels";
     public ChannelCardGroupViewModel? FalconChannelGroup { get; private set; }
 
     private readonly Lock _channelImportLock = new();
@@ -67,8 +67,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         // Subscribe to BMS Frequency update messages
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
             OnConnectionParametersChanged;
-        _falconRadioSharedMemoryService.FrequencyChanged += OnFrequencyChanged;
-        _falconRadioSharedMemoryService.PttChanged += OnPttChanged;
+        _falconRadioSharedMemoryService.FrequencyChanged += OnBmsFrequencyChanged;
+        _falconRadioSharedMemoryService.PttChanged += OnBmsPttChanged;
         _falconRadioSharedMemoryService.PowerChanged += OnRadioPowerChanged;
         _falconRadioSharedMemoryService.VolumeChanged += OnRadioVolumeChanged;
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
@@ -88,12 +88,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             (r, m) => _openFreqService.SetAudioChannel(m.FrequencyKhz, m.AudioChannel));
     }
 
-    private void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
+    private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
     {
         // Clean up in case the SHMEM has disconnected (BMS likely crashed)
         if (_settings.ConnectionMode != IOpenFreqService.Mode.BMS || e.NewState == ServiceState.Connected ||
             FalconChannelGroup == null) return;
-        DeleteChannelGroup(FalconChannelGroup);
+        await DeleteChannelGroup(FalconChannelGroup);
         FalconChannelGroup = null;
     }
 
@@ -117,11 +117,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 try
                 {
                     await ImportBmsRadioChannels();
-                    _logger.LogDebug("BMS channels imported, joining...");
-                    if (FalconChannelGroup != null)
-                    {
-                        await FalconChannelGroup.JoinAllChannelsAsync();
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -151,11 +146,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         _logger.LogDebug($"VOLUME {e.OldVolume} -> {e.NewVolume}");
 
-        const float dxMin = 1000f;   // loudest position
-        const float dxMax = 10000f;  // mute position
+        const float dxMin = 1000f; // loudest position
+        const float dxMax = 10000f; // mute position
 
-        const float dbMin = -80f;    // silence
-        const float dbMax = 6f;      // 2x boost
+        const float dbMin = -80f; // silence
+        const float dbMax = 6f; // 2x boost
 
         // Clamp input
         var clampedDx = Math.Clamp(e.NewVolume, dxMin, dxMax);
@@ -172,7 +167,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         // Prevent denormals / tiny noise
         if (gain < 0.00001f)
             gain = 0f;
-        
+
         var channels = FalconChannelGroup?.Channels.Where(c => c.BmsRadioType == e.RadioType).ToList();
         if (channels == null) return;
         foreach (var channel in channels)
@@ -192,17 +187,26 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         var channels = FalconChannelGroup.Channels.Where(c => c.BmsRadioType == e.RadioType).ToList();
         foreach (var channel in channels)
         {
-            channel.IsEnabled = e.NewPower;
+            // Skip 9999 - it's BMS's parking frequency and should never be joined
+            if (channel.FrequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+                continue;
+                
+            // Trigger Join/Leave
+            if (!e.NewPower && channel.ConnectionStatus == Channel.ChannelConnectionStatus.Connected ||
+                e.NewPower && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Connected)
+            {
+                channel.ToggleJoinLeave();
+            }
         }
     }
 
-    private void OnConnectionParametersChanged(object? sender,
+    private async void OnConnectionParametersChanged(object? sender,
         ConnectionParametersChangedEventArgs e)
     {
         if (e.NewParameters.TerminateClient)
         {
             if (FalconChannelGroup == null) return;
-            DeleteChannelGroup(FalconChannelGroup);
+            await DeleteChannelGroup(FalconChannelGroup);
             FalconChannelGroup = null;
         }
     }
@@ -228,7 +232,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             {
                 if (FalconChannelGroup == null)
                 {
-                    FalconChannelGroup = CreateChannelGroup(BMS_GROUP_NAME, RadioStationPresets.Fighter,
+                    FalconChannelGroup = CreateChannelGroup(BmsGroupName, RadioStationPresets.Fighter,
                         RadioStationData.RadioStationType.BMS);
                 }
                 else
@@ -246,9 +250,18 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                         var channel = FalconChannelGroup.CreateChannel(falconChannel.Frequency,
                             "BMS Channel " + type,
                             false, type);
-                        var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(type)?.IsOn ?? false;
-                        channel.IsEnabled = channelIsPowerOn;
+                        channel.IsEditable = false;
 
+                        var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(type)?.IsOn ?? false;
+                        _logger.LogDebug($"CHANNEL {channel.FrequencyKhz}: {channelIsPowerOn}");
+                        if (channelIsPowerOn)
+                        {
+                            channel.Join();
+                        }
+                        else
+                        {
+                            channel.Leave();
+                        }
 
                         // set hotkeys and AudioChannel from Settings
                         switch (type)
@@ -262,7 +275,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                             case RadioType.GUARD:
-                                channel.PttHotKey = KeyCode.VcF2;
+                                channel.PttHotKey = KeyCode.VcF3;
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                         }
@@ -272,7 +285,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         });
     }
 
-    private void OnPttChanged(object? sender, RadioPttChangedEventArgs e)
+    private void OnBmsPttChanged(object? sender, RadioPttChangedEventArgs e)
     {
         if (FalconChannelGroup == null)
         {
@@ -281,7 +294,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
 
         var channel = FalconChannelGroup.Channels.FirstOrDefault(c => c.BmsRadioType == e.RadioType);
-        if (channel == null || channel.Status == Channel.ChannelStatus.Disconnected) return;
+        if (channel == null || channel.ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected) return;
         switch (e)
         {
             // mute all incoming transmissions from this group which have the same channel type
@@ -296,7 +309,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnFrequencyChanged(object? sender, RadioFrequencyChangedEventArgs e)
+    private void OnBmsFrequencyChanged(object? sender, RadioFrequencyChangedEventArgs e)
     {
         if (FalconChannelGroup == null)
         {
@@ -306,32 +319,79 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
 
         _logger.LogDebug(
-            $"FalconRadioSharedMemoryServiceOnFrequencyChanged: {e.OldFrequencyKhz} -> {e.NewFrequencyKhz}");
+            $"OnBmsFrequencyChanged: {e.OldFrequencyKhz} -> {e.NewFrequencyKhz}");
 
 
-        // make sure we set the power correctly
-        var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.IsOn ?? false;
-        if (FalconChannelGroup.ChangeChannelFrequency(e.OldFrequencyKhz, e.NewFrequencyKhz, channelIsPowerOn))
-        {
-            // we still need to join all other channels in case we can resolve a previous double-join (e.g. with switching to GRD)
-            FalconChannelGroup.JoinAllChannelsAsync().Wait(100);
-            return;
-        }
 
         lock (_channelImportLock)
         {
+            // make sure we set the power correctly
+            var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.IsOn ?? false;
+
+            // Try to change an existing frequency - this should be the case in 99% of the time
+            if (FalconChannelGroup.ChangeChannelFrequency(e.OldFrequencyKhz, e.NewFrequencyKhz, channelIsPowerOn))
+            {
+                // Explicitly join the channel that was just updated if it's powered on
+                // 9999 is BMS's "radio off" parking frequency - never join it
+                var updatedChannel = FalconChannelGroup.Channels.FirstOrDefault(c => c.FrequencyKhz == e.NewFrequencyKhz);
+                if (updatedChannel != null && channelIsPowerOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+                {
+                    _logger.LogDebug($"Explicitly joining updated channel: {e.NewFrequencyKhz}");
+                    updatedChannel.Join();
+                }
+                
+                // Still make sure to join all channels - e.g. when switching back from guard mode
+                foreach (var type in Enum.GetValues<RadioType>())
+                {
+                    var falconChannel = _falconRadioSharedMemoryService.GetRadioChannel(type);
+                    if (falconChannel is not { IsOn: true }) continue;
+                    if (falconChannel.Frequency == 9999) continue; // Skip parking frequency
+
+                    foreach (var channel in FalconChannelGroup.Channels)
+                    {
+                        if (channel.FrequencyKhz == falconChannel.Frequency && channel.FrequencyKhz != e.NewFrequencyKhz)
+                        {
+                            _logger.LogDebug($"Loop joining channel: {channel.FrequencyKhz}");
+                            channel.Join();
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        // Fallback - for some reason there is no channel on the old frequency, create a new one
+        lock (_channelImportLock)
+        {
+            _logger.LogWarning("OnBmsFrequencyChanged for an unknown frequency : {NewFrequencyKhz}", e.NewFrequencyKhz);
+            var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.IsOn ?? false;
+
             var newChannel = Dispatcher.UIThread.InvokeAsync(() =>
             {
                 var channel = FalconChannelGroup.CreateChannel(
                     e.NewFrequencyKhz,
-                    BMS_GROUP_NAME,
+                    BmsGroupName,
                     false);
 
-                channel.IsEnabled = channelIsPowerOn;
+                // Only join if the radio is powered on AND it's not the 9999 parking frequency
+                if (channelIsPowerOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+                {
+                    channel.Join();
+                }
+                else
+                {
+                    channel.Leave();
+                }
+
                 return channel;
             }).GetAwaiter().GetResult();
-            JoinFrequencyAsync(newChannel.FrequencyKhz, FalconChannelGroup.RadioStationData, newChannel.IsEnabled)
-                .Wait(TimeSpan.FromMilliseconds(500));
+            
+            // Only call JoinFrequencyAsync if the radio is powered on and not 9999
+            if (channelIsPowerOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+            {
+                JoinFrequencyAsync(newChannel.FrequencyKhz, FalconChannelGroup.RadioStationData)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+            }
 
             switch (e.RadioType)
             {
@@ -377,13 +437,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public async Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData, bool isEnabled)
+    public async Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData)
     {
         if (!_openFreqService.IsAuthenticated) return;
 
         try
         {
-            await _openFreqService.JoinFrequencyAsync(frequencyKhz, radioStationData, isEnabled);
+            await _openFreqService.JoinFrequencyAsync(frequencyKhz, radioStationData);
         }
         catch (Exception ex)
         {
@@ -435,10 +495,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     }
 
 
-    public void DeleteChannelGroup(ChannelCardGroupViewModel channelGroup)
+    public async Task DeleteChannelGroup(ChannelCardGroupViewModel channelGroup)
     {
-        channelGroup.LeaveAllChannelsAsync().Wait(100);
-        Dispatcher.UIThread.InvokeAsync(() =>
+        await channelGroup.LeaveAllChannelsAsync();
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
             AllChannelGroups.Remove(channelGroup);
             channelGroup.Dispose();
@@ -456,15 +516,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 cancelText: "Cancel",
                 confirmText: "Delete"))
         {
-            DeleteChannelGroup(channelCardGroupViewModel);
+            await DeleteChannelGroup(channelCardGroupViewModel);
         }
     }
 
     public void Dispose()
     {
         _falconRadioSharedMemoryService.ConnectionParametersChanged -= OnConnectionParametersChanged;
-        _falconRadioSharedMemoryService.FrequencyChanged -= OnFrequencyChanged;
-        _falconRadioSharedMemoryService.PttChanged -= OnPttChanged;
+        _falconRadioSharedMemoryService.FrequencyChanged -= OnBmsFrequencyChanged;
+        _falconRadioSharedMemoryService.PttChanged -= OnBmsPttChanged;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _settings.PropertyChanged -= OnSettingsChanged;
     }

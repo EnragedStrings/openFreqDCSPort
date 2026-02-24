@@ -449,7 +449,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             {
                 Settings = Settings.GetSettings(),
                 ChannelGroups = ChannelList.ChannelGroups
-                    .Where(cg => cg != ChannelList.FalconChannelGroup)
+                    .Where(cg => !cg.Equals(ChannelList.FalconChannelGroup))
                     .Select(cg =>
                     {
                         return new ChannelGroupData
@@ -464,7 +464,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                                 Name = c.Name,
                                 FrequencyKhz = c.FrequencyKhz,
                                 HotkeyCode = c.PttHotKey.ToString(),
-                                Enabled = c.IsEnabled
                             }).ToList()
                         };
                     }).ToList()

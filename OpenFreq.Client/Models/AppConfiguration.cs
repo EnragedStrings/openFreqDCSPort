@@ -32,5 +32,4 @@ public class ChannelData
     public string? Name { get; set; }
     public int FrequencyKhz { get; set; }
     public string HotkeyCode { get; set; } = "VcUndefined";
-    public bool Enabled { get; set; }
 }

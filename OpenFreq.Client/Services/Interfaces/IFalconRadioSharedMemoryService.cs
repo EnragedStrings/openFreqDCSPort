@@ -34,4 +34,7 @@ public interface IFalconRadioSharedMemoryService : IDisposable, ILifecycleServic
 
     // Connection parameter changes
     event EventHandler<ConnectionParametersChangedEventArgs>? ConnectionParametersChanged;
+    
+    // Constant
+    public const int BmsRadioOffFrequency = 9999;
 }

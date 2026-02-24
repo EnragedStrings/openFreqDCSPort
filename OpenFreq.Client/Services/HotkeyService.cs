@@ -178,6 +178,7 @@ public class HotkeyService : IHotkeyService
 
     private void OnKeyReleased(object? sender, KeyboardHookEventArgs e)
     {
+        if (_paused) return;
         _pressedKeys.Remove(e.Data.KeyCode);
 
         if (_pttBindings.TryGetValue(e.Data.KeyCode, out var pttBinding))

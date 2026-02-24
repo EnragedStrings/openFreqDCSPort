@@ -205,7 +205,7 @@ public class OpenFreqRtcClient : IDisposable
 
         if (!_frequencyTransmissionState.ContainsKey(frequencyKhz))
         {
-            throw new InvalidOperationException($"Not joined to frequency {frequencyKhz}");
+            throw new InvalidOperationException($"Not joined on frequency {frequencyKhz}");
         }
         
         _frequencyTransmissionState[frequencyKhz] = true;
@@ -242,7 +242,7 @@ public class OpenFreqRtcClient : IDisposable
             frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, new Position(), false, true)]
         );
         
-        _logger.LogInformation("Sent end marker for frequency {Frequency/1000d:F3}", frequencyKhz);
+        _logger.LogInformation("Sent end marker for frequency {Frequency:F3}", frequencyKhz/1000d);
 
         _frequencyTransmissionState[frequencyKhz] = false;
         _frequencyFirstPacketSent.Remove(frequencyKhz); // Clean up tracking state

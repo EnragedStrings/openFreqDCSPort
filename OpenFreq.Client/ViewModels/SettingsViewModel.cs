@@ -54,7 +54,7 @@ public partial class SettingsViewModel : ViewModelBase
 
     [ObservableProperty] public partial string TacviewServerPassword { get; set; } = string.Empty;
 
-    [ObservableProperty] public partial string HeightmapPath { get; set; } = string.Empty;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsReadyToConnect))] public partial string HeightmapPath { get; set; } = string.Empty;
 
     [ObservableProperty] public partial string InputDeviceName { get; set; } = string.Empty;
 

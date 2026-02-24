@@ -7,20 +7,20 @@ using OpenFreqClient.Models;
 
 namespace OpenFreqClient.Converters;
 
-public class ChannelStatusToColorConverter: IValueConverter
+public class ChannelTransmissionStatusToColorConverter: IValueConverter
 {
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is not Channel.ChannelConnectionStatus status) return new SolidColorBrush(Color.FromRgb(60, 60, 60));
+        if (value is not Channel.ChannelTransmissionStatus status) return Brushes.Transparent;
         var app = Application.Current;
         if (app?.Resources == null)
             return GetFallbackBrush(status);
             
         return status switch
         {
-            Channel.ChannelConnectionStatus.Disconnected => GetThemeColor(app, "ChannelStatusDisconnectedBrush"),
-            Channel.ChannelConnectionStatus.Connected => GetThemeColor(app, "ChannelStatusConnectedBrush"),
-            _ => Brushes.Gray
+            Channel.ChannelTransmissionStatus.Receiving => GetThemeColor(app, "ChannelStatusReceivingBrush"),
+            Channel.ChannelTransmissionStatus.Transmitting => GetThemeColor(app, "ChannelStatusTransmittingBrush"),
+            _ => Brushes.Transparent
         };
 
     }
@@ -34,13 +34,13 @@ public class ChannelStatusToColorConverter: IValueConverter
         return null;
     }
 
-    private static IBrush GetFallbackBrush(Channel.ChannelConnectionStatus connectionStatus)
+    private static IBrush GetFallbackBrush(Channel.ChannelTransmissionStatus status)
     {
-        return connectionStatus switch
+        return status switch
         {
-            Channel.ChannelConnectionStatus.Disconnected => Brushes.Gray,
-            Channel.ChannelConnectionStatus.Connected => Brushes.DarkGray,
-            _ => Brushes.Gray
+            Channel.ChannelTransmissionStatus.Receiving => new SolidColorBrush(Color.FromRgb(76, 175, 80)),
+            Channel.ChannelTransmissionStatus.Transmitting => new SolidColorBrush(Color.FromRgb(244, 67, 54)),
+            _ => new SolidColorBrush(Color.FromRgb(60, 60, 60))
         };
     }
     

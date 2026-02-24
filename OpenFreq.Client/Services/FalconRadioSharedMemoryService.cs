@@ -539,8 +539,9 @@ public class FalconRadioSharedMemoryService : IFalconRadioSharedMemoryService
 
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "TryReadRadioData Error: {ex.message}", ex.Message);
             return false;
         }
     }

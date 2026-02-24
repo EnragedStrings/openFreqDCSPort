@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
@@ -64,10 +65,18 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     // We cant use a sane frequency->type mapping because BMS likes to set lobby frequencies, e.g. 1.234 MHz
     public RadioType? BmsRadioType { get; set; }
 
-    [ObservableProperty] public partial float SignalStrength { get; set; }
+    [ObservableProperty] public partial double SignalStrengthPercent { get; set; }
+    [ObservableProperty] public partial double SignalStrengthDbm { get; set; }
 
-    [ObservableProperty] public partial Channel.ChannelStatus Status { get; set; } = Channel.ChannelStatus.Disconnected;
-    [ObservableProperty] public partial bool IsEditing { get; set; } = true;
+    [ObservableProperty]
+    public partial Channel.ChannelConnectionStatus ConnectionStatus { get; set; } =
+        Channel.ChannelConnectionStatus.Disconnected;
+    
+    [ObservableProperty] 
+    public partial Channel.ChannelTransmissionStatus TransmissionStatus { get; set; } = Channel.ChannelTransmissionStatus.Idle;
+
+    [ObservableProperty]
+    public partial bool IsEditing { get; set; }
 
     [ObservableProperty] private bool _channelWasChanged;
 
@@ -79,28 +88,24 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public bool HasPttHotkey => PttHotKey != KeyCode.VcUndefined;
 
 
-    [ObservableProperty]
-    public partial bool IsCapturingPttHotkey { get; set; }
-    
+    [ObservableProperty] public partial bool IsCapturingPttHotkey { get; set; }
+
     public string HotkeyDisplay => GetKeyDisplayName(PttHotKey);
 
     // Reference to the data of the RadioStationGroup
     [ObservableProperty] public partial RadioStationData RadioStationData { get; set; }
 
-    [ObservableProperty] public partial bool IsEnabled { get; set; }
+    [ObservableProperty] public partial bool IsEditable { get; set; }
 
     [ObservableProperty]
     public partial RadioPlayback.AudioChannel AudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
 
+    [ObservableProperty] public partial bool IsSquelchEnabled { get; set; } = true;
+
     // Store original values when entering edit mode
     private int _originalFrequencyKhz;
     private KeyCode _originalBinding;
-
-    partial void OnIsEnabledChanged(bool value)
-    {
-        WeakReferenceMessenger.Default.Send(new ChannelEnabledDisabledMessage(channelId: Id,
-            frequencyKhz: FrequencyKhz, enabled: value));
-    }
+    
 
     [RelayCommand]
     public void BmsLobby1Clicked()
@@ -121,14 +126,19 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     }
 
 
-    public ChannelCardViewModel(IHotkeyService hotkeyService, RadioStationData radioStationData,
-        ChannelCardGroupViewModel parentChannelCardGroupViewModel, SettingsViewModel settings, bool isEnabled = true, RadioType? bmsRadioType = null)
+    public ChannelCardViewModel(IHotkeyService hotkeyService, string name, int frequencyKhz, bool isInEditMode,
+        RadioStationData radioStationData,
+        ChannelCardGroupViewModel parentChannelCardGroupViewModel, SettingsViewModel settings, bool isEditable = true,
+        RadioType? bmsRadioType = null)
     {
+        Name = name;
+        FrequencyKhz = frequencyKhz;
+        IsEditing = isInEditMode;
         _hotkeyService = hotkeyService;
         RadioStationData = radioStationData;
         _parentChannelCardGroupViewModel = parentChannelCardGroupViewModel;
         Settings = settings;
-        IsEnabled = isEnabled;
+        IsEditable = isEditable;
         BmsRadioType = bmsRadioType;
 
         WeakReferenceMessenger.Default.Register<SignalStrengthTracker.SignalStrengthUpdateMessage>(this,
@@ -136,24 +146,10 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
             {
                 if (FrequencyKhz == m.FrequencyKhz)
                 {
-                    SignalStrength = m.Strength;
+                    SignalStrengthPercent = m.StrengthPercent;
+                    SignalStrengthDbm = m.SnrDb;
                 }
             });
-    }
-
-    public ChannelCardViewModel(IHotkeyService hotkeyService, Channel channel, RadioStationData radioStationData,
-        ChannelCardGroupViewModel parentChannelCardGroupViewModel, SettingsViewModel settings, RadioType? bmsRadioType = null)
-    {
-        _hotkeyService = hotkeyService;
-        IsEnabled = channel.Enabled;
-        BmsRadioType = bmsRadioType;
-        RadioStationData = radioStationData;
-        _parentChannelCardGroupViewModel = parentChannelCardGroupViewModel;
-        Settings = settings;
-        FrequencyKhz = channel.FrequencyKhz;
-        Name = channel.Name;
-        RxDb = channel.RxDb;
-        Status = channel.Status;
     }
 
     [RelayCommand]
@@ -172,11 +168,9 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
                 Id,
                 _originalFrequencyKhz,
                 FrequencyKhz,
-                Status,
-                _originalBinding,
-                PttHotKey,
-                IsEnabled,
-                AudioChannel
+                ConnectionStatus,
+                AudioChannel,
+                _parentChannelCardGroupViewModel.IsBmsGroup
             );
 
             WeakReferenceMessenger.Default.Send(message);
@@ -251,17 +245,26 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
     public void StartTransmission()
     {
-        if (Status == Channel.ChannelStatus.Disconnected)
+        if (ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected)
             return;
-
+        
+        // Don't allow "click" transmissions in BMS 3d mode - rather use the comms switch
+        if (Settings is { ModeIsGci: false, Is3dMode: true })
+            return;
+        
         var mutedFrequencies = _parentChannelCardGroupViewModel.GetAllFrequenciesOfChannelGroup(Type);
         mutedFrequencies.Remove(FrequencyKhz);
-        WeakReferenceMessenger.Default.Send(new StartTransmissionMessage(Id, FrequencyKhz, RadioStationData, mutedFrequencies));
+        WeakReferenceMessenger.Default.Send(new StartTransmissionMessage(Id, FrequencyKhz, RadioStationData,
+            mutedFrequencies));
     }
 
     public void StopTransmission()
     {
-        if (Status == Channel.ChannelStatus.Disconnected)
+        if (ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected)
+            return;
+        
+        // Don't allow "click" transmissions in BMS 3d mode - rather use the comms switch
+        if (Settings is { ModeIsGci: false, Is3dMode: true })
             return;
 
         WeakReferenceMessenger.Default.Send(new StopTransmissionMessage(Id, FrequencyKhz));
@@ -270,6 +273,33 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     partial void OnAudioChannelChanged(RadioPlayback.AudioChannel value)
     {
         WeakReferenceMessenger.Default.Send(new ChannelAudioChannelUpdateMessage(Id, FrequencyKhz, value));
+    }
+
+    [RelayCommand]
+    public void ToggleJoinLeave()
+    {
+        WeakReferenceMessenger.Default.Send(new ChannelJoinLeaveRequestedMessage(Id, FrequencyKhz,
+            ConnectionStatus != Channel.ChannelConnectionStatus.Connected, RadioStationData));
+    }
+
+    public void Join()
+    {
+        WeakReferenceMessenger.Default.Send(new ChannelJoinLeaveRequestedMessage(Id, FrequencyKhz,
+            true, RadioStationData));
+    }
+
+    public void Leave()
+    {
+        WeakReferenceMessenger.Default.Send(new ChannelJoinLeaveRequestedMessage(Id, FrequencyKhz,
+            false, RadioStationData));
+    }
+
+    [RelayCommand]
+    public void ToggleSquelch()
+    {
+        IsSquelchEnabled = !IsSquelchEnabled;
+        WeakReferenceMessenger.Default.Send(new SquelchEnabledDisabledMessage(channelId: Id,
+            frequencyKhz: FrequencyKhz, squelchEnabled: IsSquelchEnabled));
     }
 
     public void Dispose()
@@ -285,36 +315,43 @@ public class ChannelUpdatedMessage(
     Guid channelId,
     int oldFrequencyKhz,
     int newFrequencyKhz,
-    Channel.ChannelStatus oldStatus,
-    KeyCode oldBinding,
-    KeyCode newBinding,
-    bool isEnabled,
-    RadioPlayback.AudioChannel currentAudioChannel)
+    Channel.ChannelConnectionStatus oldConnectionStatus,
+    RadioPlayback.AudioChannel currentAudioChannel,
+    bool isBmsChannel)
 {
     public Guid ChannelId { get; } = channelId;
     public int OldFrequencyKhz { get; } = oldFrequencyKhz;
     public int NewFrequencyKhz { get; } = newFrequencyKhz;
-    public Channel.ChannelStatus OldStatus { get; } = oldStatus;
-
-    public KeyCode OldBinding { get; } = oldBinding;
-    public KeyCode NewBinding { get; } = newBinding;
-
-    public bool IsEnabled { get; } = isEnabled;
+    public Channel.ChannelConnectionStatus OldConnectionStatus { get; } = oldConnectionStatus;
+    public bool IsBmsChannel { get; } = isBmsChannel;
 
     public RadioPlayback.AudioChannel CurrentAudioChannel { get; } = currentAudioChannel;
 
-    public bool NeedsReconnect => OldFrequencyKhz != NewFrequencyKhz;
-    public bool BindingChanged => OldBinding != NewBinding;
+    public bool NeedsReconnect => !IsBmsChannel &&
+                                  OldFrequencyKhz != NewFrequencyKhz &&
+                                  OldConnectionStatus == Channel.ChannelConnectionStatus.Connected;
 }
 
-public class ChannelEnabledDisabledMessage(
+public class ChannelJoinLeaveRequestedMessage(
     Guid channelId,
     int frequencyKhz,
-    bool enabled)
+    bool join,
+    RadioStationData radioStationData)
 {
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
-    public bool Enabled { get; } = enabled;
+    public bool Join { get; } = join;
+    public RadioStationData RadioStationData { get; } = radioStationData;
+}
+
+public class SquelchEnabledDisabledMessage(
+    Guid channelId,
+    int frequencyKhz,
+    bool squelchEnabled)
+{
+    public Guid ChannelId { get; } = channelId;
+    public int FrequencyKhz { get; } = frequencyKhz;
+    public bool SquelchEnabled { get; } = squelchEnabled;
 }
 
 public class StartTransmissionMessage(

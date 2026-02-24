@@ -292,6 +292,7 @@ public class RtpAudioReceiver : IDisposable
                         frequencies.Add(new FrequencyTransmission(
                             khz: freq.Khz,
                             txPowerWatts: freq.TxPowerWatts,
+                            ppm: freq.Ppm,
                             position: freq.Position,
                             in3d: freq.In3d,
                             beginMarker: false,

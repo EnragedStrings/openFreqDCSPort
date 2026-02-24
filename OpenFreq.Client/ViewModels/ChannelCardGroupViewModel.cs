@@ -76,7 +76,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         RadioStationData = new RadioStationData
         {
             Type = radioStationType,
-            Preset = preset
+            Preset = preset,
+            Ppm = preset.GetRandomPpm()
         };
         _openFreqService = openFreqService;
         _hotkeyService = hotkeyService;

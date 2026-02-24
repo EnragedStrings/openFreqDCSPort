@@ -32,16 +32,20 @@ public class FrequencyTransmission
     
     [JsonPropertyName("in3d")]
     public bool In3d { get; set; }
+    
+    [JsonPropertyName("ppm")]
+    public double Ppm { get; set; }
 
     public FrequencyTransmission()
     {
     }
 
-    public FrequencyTransmission(int khz, double txPowerWatts, Position? position, bool in3d, bool beginMarker = false,
+    public FrequencyTransmission(int khz, double txPowerWatts, double ppm, Position? position, bool in3d, bool beginMarker = false,
         bool endMarker = false)
     {
         Khz = khz;
         TxPowerWatts = txPowerWatts;
+        Ppm = ppm;
         BeginMarker = beginMarker;
         EndMarker = endMarker;
         Position = position;

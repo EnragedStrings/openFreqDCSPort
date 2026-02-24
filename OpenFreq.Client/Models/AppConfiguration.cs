@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using OpenFreq.Client.Models;
 using OpenFreq.Common;
@@ -23,7 +24,8 @@ public class ChannelGroupData
     public RadioStationData RadioStationData { get; set; } = new()
     {
         Preset = RadioStationPresets.AWACS,
-        Position = new Position(0, 0, 0)
+        Position = new Position(0, 0, 0),
+        Ppm = RadioStationPresets.AWACS.GetRandomPpm()
     };
 }
 

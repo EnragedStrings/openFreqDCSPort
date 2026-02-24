@@ -562,7 +562,7 @@ public class OpenFreqService : IOpenFreqService
             Marshal.Copy(buffer, audioData, 0, length);
 
             // Send to ALL active frequencies
-            var frequenciesData = new List<(int frequencyKhz, double txPowerWatts, Position? position)>();
+            var frequenciesData = new List<(int frequencyKhz, double txPowerWatts, double ppm, Position? position)>();
 
             // List of frequencies that got disabled in the meantime
             var disabledFrequencies = new List<int>();
@@ -588,16 +588,12 @@ public class OpenFreqService : IOpenFreqService
                 if (RadioStationPreset.IsVHF(frequencyKhz))
                 {
                     frequenciesData.Add((frequencyKhz,
-                        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData)
-                            ? tunedFrequencyData.RadioStation.Preset.TxPower_VHF_W
-                            : 0, position));
+                            radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm, position));
                 }
                 else
                 {
                     frequenciesData.Add((frequencyKhz,
-                        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData)
-                            ? tunedFrequencyData.RadioStation.Preset.TxPower_UHF_W
-                            : 0, position));
+                        radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm, position));
                 }
             }
 
@@ -850,11 +846,12 @@ public class OpenFreqService : IOpenFreqService
         var receiverSensitivityDb = RadioStationPreset.IsVHF(frequencyTransmission.Khz)
             ? receiverData.RadioStation.Preset.RxSensitivity_VHF_dBm
             : receiverData.RadioStation.Preset.RxSensitivity_UHF_dBm;
-
+        
         var audioParams = _audioSim.CalculateAudioParams(
             frequencyTransmission.Position.X, frequencyTransmission.Position.Y, frequencyTransmission.Position.Z,
             ownPosition.X, ownPosition.Y, ownPosition.Z,
-            frequencyTransmission.Khz, frequencyTransmission.TxPowerWatts, receiverSensitivityDb);
+            frequencyTransmission.Khz, (float) receiverData.RadioStation.Ppm,
+            frequencyTransmission.TxPowerWatts, receiverSensitivityDb);
 
         // Update cache
         _audioParamsCache[cacheKey] = new AudioParamsCacheEntry

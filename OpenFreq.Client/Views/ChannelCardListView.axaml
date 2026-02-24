@@ -254,7 +254,7 @@
                                           IsVisible="{Binding RadioStationData.Preset, Converter={x:Static ObjectConverters.IsNotNull}}"
                                           IsExpanded="False">
                                     <Grid ColumnDefinitions="*,*"
-                                          RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                                          RowDefinitions="Auto,Auto,Auto,Auto,Auto, Auto"
                                           ColumnSpacing="12"
                                           RowSpacing="8"
                                           Margin="8">
@@ -285,6 +285,16 @@
                                         <TextBlock Grid.Row="4" Grid.Column="1"
                                                    Text="{Binding RadioStationData.Preset.RxSensitivity_UHF_dBm, StringFormat='{}{0:F1} dBm'}"
                                                    Classes="Body2" />
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Min / Max Frequency Drift"
+                                                   Classes="Caption" />
+                                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBlock
+                                                   Text="{Binding RadioStationData.Preset.MinPpm, StringFormat='{}{0:F1} PPM / '}"
+                                                   Classes="Body2" />
+                                            <TextBlock
+                                                Text="{Binding RadioStationData.Preset.MaxPpm, StringFormat='{}{0:F1} PPM'}"
+                                                Classes="Body2" />
+                                            </StackPanel>
                                     </Grid>
                                 </Expander>
                             </StackPanel>

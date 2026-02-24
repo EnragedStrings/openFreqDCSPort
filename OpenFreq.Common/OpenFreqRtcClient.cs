@@ -239,7 +239,7 @@ public class OpenFreqRtcClient : IDisposable
         _rtpSender?.SendAudio(
             audioData: silence,
             clientId: clientId,
-            frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, new Position(), false, true)]
+            frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, 0, new Position(), false, true)]
         );
         
         _logger.LogInformation("Sent end marker for frequency {Frequency:F3}", frequencyKhz/1000d);
@@ -252,7 +252,7 @@ public class OpenFreqRtcClient : IDisposable
     }
 
 
-    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, Position? position)> frequencies, bool in3d)
+    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Position? position)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -261,6 +261,7 @@ public class OpenFreqRtcClient : IDisposable
             frequencyTransmissions.Add(new FrequencyTransmission(
                 khz: freq.frequencyKhz,
                 txPowerWatts: freq.txPowerWatts, 
+                ppm: freq.ppm,
                 position: freq.position,
                 in3d: in3d,
                 beginMarker: needsBeginMarker,

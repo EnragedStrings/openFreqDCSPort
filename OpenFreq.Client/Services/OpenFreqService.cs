@@ -850,7 +850,7 @@ public class OpenFreqService : IOpenFreqService
         var audioParams = _audioSim.CalculateAudioParams(
             frequencyTransmission.Position.X, frequencyTransmission.Position.Y, frequencyTransmission.Position.Z,
             ownPosition.X, ownPosition.Y, ownPosition.Z,
-            frequencyTransmission.Khz, (float) receiverData.RadioStation.Ppm,
+            frequencyTransmission.Khz, (float) frequencyTransmission.Ppm,
             frequencyTransmission.TxPowerWatts, receiverSensitivityDb);
 
         // Update cache

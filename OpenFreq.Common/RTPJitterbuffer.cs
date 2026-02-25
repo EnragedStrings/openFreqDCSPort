@@ -45,7 +45,7 @@ public class RtpJitterBuffer
     private int _packetsDuplicate;
     private int _packetsPlayed;
         
-    public RtpJitterBuffer(ILogger<RtpJitterBuffer> logger, int sampleRate = 48000, int maxBufferPackets = 50)
+    public RtpJitterBuffer(ILogger<RtpJitterBuffer> logger, int sampleRate = OpenFreqRtcClient.SAMPLE_RATE, int maxBufferPackets = 200)
     {
         _logger = logger;
         _sampleRate = sampleRate;

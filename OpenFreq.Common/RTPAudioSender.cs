@@ -17,10 +17,10 @@ namespace OpenFreq.Common;
 public class RtpAudioSender : IDisposable
 {
     private readonly ILogger<RtpAudioSender> _logger;
-    private const int OPUS_FRAME_SIZE = 960; // 20ms at 48kHz
+    private const int OPUS_FRAME_SIZE = OpenFreqRtcClient.OPUS_SAMPLES_PER_FRAME;
 
     private readonly byte[]
-        _audioBuffer = new byte[OPUS_FRAME_SIZE * 2 * OpenFreqRtcClient.CHANNELS]; // *2 for 16-bit, *channels
+        _audioBuffer = new byte[OPUS_FRAME_SIZE * 2 * OpenFreqRtcClient.CHANNELS]; // x2 for 16-bit, channels
 
     private int _bufferPosition = 0;
 

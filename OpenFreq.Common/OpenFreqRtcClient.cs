@@ -5,13 +5,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Signaling;
+using OpenFreqAudio;
 
 namespace OpenFreq.Common;
 
 public class OpenFreqRtcClient : IDisposable
 {
     // Audio configuration constants
-    public const int SAMPLE_RATE = 16000;
+    public const int SAMPLE_RATE = OpenFreqAudio.RadioPlayback.SampleRate;
     public const int CHANNELS = 1;
     public const int FRAME_SIZE_MS = 20;
     public const int OPUS_SAMPLES_PER_FRAME = SAMPLE_RATE / (1000 / FRAME_SIZE_MS) * CHANNELS;

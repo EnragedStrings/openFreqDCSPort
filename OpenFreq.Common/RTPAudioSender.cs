@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -59,7 +60,7 @@ public class RtpAudioSender : IDisposable
 
     // Statistics
     private int _packetsSent = 0;
-    private DateTime _startTime = DateTime.UtcNow;
+    private readonly long _startTimeTicks = Stopwatch.GetTimestamp();
 
     /// <summary>
     /// Create RTP audio sender
@@ -293,7 +294,7 @@ public class RtpAudioSender : IDisposable
     /// </summary>
     public (int packetsSent, TimeSpan uptime, double packetsPerSecond) GetStatistics()
     {
-        var uptime = DateTime.UtcNow - _startTime;
+        var uptime = Stopwatch.GetElapsedTime(_startTimeTicks);
         var pps = uptime.TotalSeconds > 0 ? _packetsSent / uptime.TotalSeconds : 0;
         return (_packetsSent, uptime, pps);
     }

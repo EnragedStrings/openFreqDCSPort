@@ -264,16 +264,8 @@ public class RtpAudioSender : IDisposable
 
             var metadataJson = JsonSerializer.Serialize(metadata, OpenFreqJsonContext.Default.AudioPacketMetadata);
             var metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
-            var metadataLength = (ushort)metadataBytes.Length;
 
-            // Build payload: [2 bytes length][metadata JSON][audio data]
-            var payload = new byte[2 + metadataLength + encodedAudio.Length];
-            payload[0] = (byte)(metadataLength >> 8);
-            payload[1] = (byte)(metadataLength & 0xFF);
-            Array.Copy(metadataBytes, 0, payload, 2, metadataLength);
-            Array.Copy(encodedAudio, 0, payload, 2 + metadataLength, encodedAudio.Length);
-
-            // Build RTP packet
+            // Build RTP packet — metadata in header extension, payload is pure audio
             var rtpPacket = new RtpPacket
             {
                 Version = 2,
@@ -281,7 +273,9 @@ public class RtpAudioSender : IDisposable
                 SequenceNumber = queuedValue.SequenceNumber,
                 Timestamp = queuedValue.Timestamp,
                 Ssrc = _ssrc,
-                Payload = payload
+                ExtensionProfile = RtpPacket.OpenFreqProfile,
+                ExtensionData = metadataBytes,
+                Payload = encodedAudio
             };
             
             // Send the packet

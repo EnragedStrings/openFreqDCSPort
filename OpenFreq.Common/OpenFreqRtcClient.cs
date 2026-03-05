@@ -5,14 +5,13 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Signaling;
-using OpenFreqAudio;
 
 namespace OpenFreq.Common;
 
 public class OpenFreqRtcClient : IDisposable
 {
     // Audio configuration constants
-    public const int SAMPLE_RATE = OpenFreqAudio.RadioPlayback.SampleRate;
+    public const int SAMPLE_RATE = 16000;
     public const int CHANNELS = 1;
     public const int FRAME_SIZE_MS = 20;
     public const int OPUS_SAMPLES_PER_FRAME = SAMPLE_RATE / (1000 / FRAME_SIZE_MS) * CHANNELS;
@@ -240,7 +239,7 @@ public class OpenFreqRtcClient : IDisposable
         _rtpSender?.SendAudio(
             audioData: silence,
             clientId: clientId,
-            frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, 0, new Position(), false, true)]
+            frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, 0, new Vector3(), null, false, true)]
         );
         
         _logger.LogInformation("Sent end marker for frequency {Frequency:F3}", frequencyKhz/1000d);
@@ -253,7 +252,7 @@ public class OpenFreqRtcClient : IDisposable
     }
 
 
-    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Position? position)> frequencies, bool in3d)
+    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -264,6 +263,7 @@ public class OpenFreqRtcClient : IDisposable
                 txPowerWatts: freq.txPowerWatts, 
                 ppm: freq.ppm,
                 position: freq.position,
+                velocity: freq.velocity,
                 in3d: in3d,
                 beginMarker: needsBeginMarker,
                 endMarker: false

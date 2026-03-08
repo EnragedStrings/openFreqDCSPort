@@ -91,7 +91,10 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial bool IsCapturingPttHotkey { get; set; }
 
     public string HotkeyDisplay => GetKeyDisplayName(PttHotKey);
-
+    
+    [ObservableProperty]
+    public partial KeyCode SquelchHotKey { get; set; } = KeyCode.VcUndefined;
+    
     // Reference to the data of the RadioStationGroup
     [ObservableProperty] public partial RadioStationData RadioStationData { get; set; }
 
@@ -213,6 +216,24 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (newValue != KeyCode.VcUndefined)
         {
             _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.Ptt, newValue, Id);
+        }
+    }
+    
+    partial void OnSquelchHotKeyChanging(KeyCode oldValue, KeyCode newValue)
+    {
+        // Unregister old binding
+        if (oldValue != KeyCode.VcUndefined)
+        {
+            _hotkeyService.UnregisterHotkey(IHotkeyService.HotkeyType.SquelchToggle, oldValue, Id);
+        }
+    }
+
+    partial void OnSquelchHotKeyChanged(KeyCode oldValue, KeyCode newValue)
+    {
+        // Register new binding
+        if (newValue != KeyCode.VcUndefined)
+        {
+            _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.SquelchToggle, newValue, Id);
         }
     }
 

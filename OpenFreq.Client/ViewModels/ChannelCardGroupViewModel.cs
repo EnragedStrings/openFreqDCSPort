@@ -21,6 +21,7 @@ using OpenFreqClient.Models;
 using OpenFreqClient.Services;
 using OpenFreqClient.Services.Interfaces;
 using OpenFreqClient.Views;
+using SharpHook.Data;
 
 namespace OpenFreqClient.ViewModels;
 
@@ -261,13 +262,24 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
             foreach (var channelId in e.ChannelIds)
             {
                 var channel = Channels.FirstOrDefault(c => c.Id == channelId);
-                if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
-                    !channel.IsEditing)
+
+                if (e.Type == IHotkeyService.HotkeyType.Ptt)
                 {
-                    // mute all channels of the same channel type in this group when transmitting
-                    var mutedFrequencies = GetAllFrequenciesOfChannelGroup(channel.Type);
-                    mutedFrequencies.Remove(channel.FrequencyKhz);
-                    await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, mutedFrequencies);
+                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
+                        !channel.IsEditing)
+                    {
+                        // mute all channels of the same channel type in this group when transmitting
+                        var mutedFrequencies = GetAllFrequenciesOfChannelGroup(channel.Type);
+                        mutedFrequencies.Remove(channel.FrequencyKhz);
+                        await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, mutedFrequencies);
+                    }
+                }
+                else if (e.Type == IHotkeyService.HotkeyType.SquelchToggle)
+                {
+                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected && Settings.Is3dMode)
+                    {
+                        channel.ToggleSquelch();
+                    }
                 }
             }
         }
@@ -636,5 +648,27 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     public override int GetHashCode()
     {
         return Id.GetHashCode();
+    }
+
+    public void UpdateVhfHotkey(KeyCode capturedKey)
+    {
+        foreach (var channel in Channels)
+        {
+            if (channel.BmsRadioType == RadioType.VHF)
+            {
+                channel.SquelchHotKey = capturedKey;
+            }
+        }
+    }
+    
+    public void UpdateUhfHotkey(KeyCode capturedKey)
+    {
+        foreach (var channel in Channels)
+        {
+            if (channel.BmsRadioType is RadioType.UHF or RadioType.GUARD)
+            {
+                channel.SquelchHotKey = capturedKey;
+            }
+        }
     }
 }

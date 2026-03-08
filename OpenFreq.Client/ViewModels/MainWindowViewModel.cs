@@ -370,6 +370,49 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             ShowError("Lost connection to server");
         }
     }
+    
+     
+    [RelayCommand]
+    private async Task BeginCaptureUhfSquelchHotkeyAsync()
+    {
+        IsCapturingHotkey = true;
+        try
+        {
+            var capturedKey = await _hotkeyService.CaptureNextKeyAsync();
+            Settings.BmsUhfSquelchHotkey = capturedKey;
+            ChannelList.FalconChannelGroup?.UpdateUhfHotkey(capturedKey);
+        }
+        catch (OperationCanceledException)
+        {
+            // Capture was cancelled
+        }
+        finally
+        {
+            IsCapturingHotkey = false;
+        }
+    }
+    
+    [RelayCommand]
+    private async Task BeginCaptureVhfSquelchHotkeyAsync()
+    {
+        IsCapturingHotkey = true;
+        try
+        {
+            var capturedKey = await _hotkeyService.CaptureNextKeyAsync();
+            Settings.BmsVhfSquelchHotkey = capturedKey;
+            ChannelList.FalconChannelGroup?.UpdateVhfHotkey(capturedKey);
+        }
+        catch (OperationCanceledException)
+        {
+            // Capture was cancelled
+        }
+        finally
+        {
+            IsCapturingHotkey = false;
+        }
+    }
+
+    public bool IsCapturingHotkey { get; set; }
 
     private void OnStatusMessageReceived(object? sender, string message)
     {
@@ -405,6 +448,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             Settings.InputDeviceName = config.Settings.InputDeviceName;
             Settings.OutputDeviceName = config.Settings.OutputDeviceName;
             Settings.HeightmapPath = config.Settings.HeightmapPath;
+
+            if (Enum.TryParse<KeyCode>(config.Settings.BmsSquelchVhfHotkeyCode, out var vhfSquelchHotkey))
+            {
+                Settings.BmsVhfSquelchHotkey = vhfSquelchHotkey;
+            }
+            
+            if (Enum.TryParse<KeyCode>(config.Settings.BmsSquelchUhfHotkeyCode, out var uhfSquelchHotkey))
+            {
+                Settings.BmsUhfSquelchHotkey = uhfSquelchHotkey;
+            }
 
             // Load audio settings
             Settings.LoadFromSettings(config.Settings);

@@ -216,11 +216,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _logger.LogDebug($"FalconSharedMemoryServiceOnFlyingStateChanged: {e.OldFlyingState} -> {e.NewFlyingState}");
         if (!e.OldFlyingState && e.NewFlyingState)
         {
-            _hotkeyService.Pause();
+            _hotkeyService.PausePttKeys();
         }
         else if (e.OldFlyingState && !e.NewFlyingState)
         {
-            _hotkeyService.Resume();
+            _hotkeyService.ResumePttKeys();
         }
     }
 
@@ -268,14 +268,17 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                         {
                             case RadioType.VHF:
                                 channel.PttHotKey = KeyCode.VcF1;
+                                channel.SquelchHotKey = _settings.BmsVhfSquelchHotkey;
                                 channel.AudioChannel = _settings.BmsVhfAudioChannel;
                                 break;
                             case RadioType.UHF:
                                 channel.PttHotKey = KeyCode.VcF2;
+                                channel.SquelchHotKey = _settings.BmsUhfSquelchHotkey;
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                             case RadioType.GUARD:
                                 channel.PttHotKey = KeyCode.VcF3;
+                                channel.SquelchHotKey = _settings.BmsUhfSquelchHotkey;
                                 channel.AudioChannel = _settings.BmsUhfAudioChannel;
                                 break;
                         }

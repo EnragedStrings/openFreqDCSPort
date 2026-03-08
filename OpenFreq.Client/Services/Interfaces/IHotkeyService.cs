@@ -15,12 +15,13 @@ public interface IHotkeyService : IDisposable, ILifecycleService
     event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed;
     event EventHandler<HotkeyReleasedEventArgs>? HotkeyReleased;
     
-    void Pause();
-    void Resume();
+    void PausePttKeys();
+    void ResumePttKeys();
     
     // Binding management
     void RegisterHotkey(HotkeyType type, KeyCode key, Guid channelId);
     void UnregisterHotkey(HotkeyType type, KeyCode key, Guid channelId);
+    void UnregisterHotkeys(HotkeyType type);
     
     // Capture
     Task<KeyCode> CaptureNextKeyAsync(CancellationToken cancellationToken = default);

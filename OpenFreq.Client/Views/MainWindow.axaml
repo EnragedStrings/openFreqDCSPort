@@ -173,6 +173,60 @@
                                             SelectedChannel="{Binding Settings.BmsVhfAudioChannel}" />
                                     </StackPanel>
                                 </controls:Card>
+                                
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="Waveform"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="BMS Squelch Hotkeys" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        
+                                        <TextBlock Text="UHF Squelch Toggle" Classes="InputLabel" />
+                                        <Button 
+                                            Command="{Binding BeginCaptureUhfSquelchHotkeyCommand}"
+                                            BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="6,4"
+                                            Margin="0,0,0,12"
+                                            Classes="Flat">
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                   Width="18" Height="18" />
+                                            <TextBlock Text="{Binding Settings.BmsUhfSquelchHotkeyDisplay}"
+                                                       Classes="Body2"
+                                                       FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"
+
+                                                       FontFamily="Consolas,Courier New,monospace" />
+                                        </StackPanel>
+                                    </Button>
+                                        
+                                        <TextBlock Text="VHF Squelch Toggle" Classes="InputLabel" />
+                                        <Button 
+                                            Command="{Binding BeginCaptureVhfSquelchHotkeyCommand}"
+                                            BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="6,4"
+                                            Margin="0,0,0,12"
+                                            Classes="Flat">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                       Width="18" Height="18" />
+                                                <TextBlock Text="{Binding Settings.BmsVhfSquelchHotkeyDisplay}"
+                                                           Classes="Body2"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"
+
+                                                           FontFamily="Consolas,Courier New,monospace" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </controls:Card>
                             </StackPanel>
 
                             <!-- GCI Mode Settings -->

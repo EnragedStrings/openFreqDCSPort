@@ -15,7 +15,7 @@ public class HotkeyService : IHotkeyService
     private TaskPoolGlobalHook? _hook;
     private CancellationTokenSource? _cts;
     private Task? _hookTask;
-    private bool _paused;
+    private bool _pttPaused;
 
     private readonly Dictionary<KeyCode, List<Guid>> _pttBindings = new();
     private readonly Dictionary<KeyCode, List<Guid>> _squelchToggleBindings = new();
@@ -69,14 +69,14 @@ public class HotkeyService : IHotkeyService
         _pressedKeys.Clear();
     }
 
-    public void Pause()
-    {
-        _paused = true;
+    public void PausePttKeys()
+    { 
+        _pttPaused = true;
     }
 
-    public void Resume()
+    public void ResumePttKeys()
     {
-        _paused = false;
+        _pttPaused = false;
     }
 
     public void RegisterHotkey(IHotkeyService.HotkeyType type, KeyCode key, Guid channelId)
@@ -118,6 +118,17 @@ public class HotkeyService : IHotkeyService
         }
     }
 
+    public void UnregisterHotkeys(IHotkeyService.HotkeyType type)
+    {
+        var bindings = type switch
+        {
+            IHotkeyService.HotkeyType.Ptt => _pttBindings,
+            IHotkeyService.HotkeyType.SquelchToggle => _squelchToggleBindings,
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+        };
+        bindings.Clear();
+    }
+
     public async Task<KeyCode> CaptureNextKeyAsync(CancellationToken cancellationToken = default)
     {
         var tcs = new TaskCompletionSource<KeyCode>();
@@ -157,8 +168,6 @@ public class HotkeyService : IHotkeyService
 
     private void OnKeyPressed(object? sender, KeyboardHookEventArgs e)
     {
-        if (_paused) return;
-        
         if (_pressedKeys.Contains(e.Data.KeyCode))
             return; // Already pressed
 
@@ -167,7 +176,8 @@ public class HotkeyService : IHotkeyService
         // We allow for arbitrary double binds, so just fire every valid event
         if (_pttBindings.TryGetValue(e.Data.KeyCode, out var pttBindingsList))
         {
-            HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBindingsList));
+            if (!_pttPaused)
+                HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBindingsList));
         }
         
         if (_squelchToggleBindings.TryGetValue(e.Data.KeyCode, out var squelchBindingsList))
@@ -178,12 +188,12 @@ public class HotkeyService : IHotkeyService
 
     private void OnKeyReleased(object? sender, KeyboardHookEventArgs e)
     {
-        if (_paused) return;
         _pressedKeys.Remove(e.Data.KeyCode);
 
         if (_pttBindings.TryGetValue(e.Data.KeyCode, out var pttBinding))
         {
-            HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBinding));
+            if (!_pttPaused)
+             HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(IHotkeyService.HotkeyType.Ptt, pttBinding));
         }
 
         if (_squelchToggleBindings.TryGetValue(e.Data.KeyCode, out var squelchBinding))

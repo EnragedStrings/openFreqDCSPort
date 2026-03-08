@@ -21,6 +21,9 @@ public class OpenFreqSettings
     public RadioPlayback.AudioChannel BmsUhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
     public RadioPlayback.AudioChannel BmsVhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
     
+    public string BmsSquelchUhfHotkeyCode { get; set; } = "VcUndefined";
+    public string BmsSquelchVhfHotkeyCode { get; set; } = "VcUndefined";
+    
     // Window Position & Size
     public int? Left { get; set; }
     public int? Top { get; set; }

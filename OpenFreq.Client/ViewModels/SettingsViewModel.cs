@@ -1,12 +1,14 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using FalconBmsDataService.Models;
 using FalconBmsDataService.Services;
 using FalconRadioService.Services;
@@ -54,7 +56,9 @@ public partial class SettingsViewModel : ViewModelBase
 
     [ObservableProperty] public partial string TacviewServerPassword { get; set; } = string.Empty;
 
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsReadyToConnect))] public partial string HeightmapPath { get; set; } = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsReadyToConnect))]
+    public partial string HeightmapPath { get; set; } = string.Empty;
 
     [ObservableProperty] public partial string InputDeviceName { get; set; } = string.Empty;
 
@@ -65,6 +69,7 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
     private readonly IAcmiClientService _acmiClientService;
     private readonly IOpenFreqService _openFreqService;
+    private readonly IHotkeyService _hotkeyService;
 
     // Window size & position
     private int _left, _top, _width, _height, _windowState;
@@ -83,15 +88,26 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty]
     public partial RadioPlayback.AudioChannel BmsVhfAudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
 
-    [ObservableProperty] 
+    [ObservableProperty][NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
     public partial KeyCode BmsUhfSquelchHotkey { get; set; } = KeyCode.VcUndefined;
-    
-    [ObservableProperty]
+
+    [ObservableProperty][NotifyPropertyChangedFor(nameof(BmsVhfSquelchHotkeyDisplay))]
     public partial KeyCode BmsVhfSquelchHotkey { get; set; } = KeyCode.VcUndefined;
-    
+
+    public string BmsUhfSquelchHotkeyDisplay =>
+        BmsUhfSquelchHotkey == KeyCode.VcUndefined
+            ? "None"
+            : BmsUhfSquelchHotkey.ToString().Replace("Vc", "");
+
+    public string BmsVhfSquelchHotkeyDisplay =>
+        BmsVhfSquelchHotkey == KeyCode.VcUndefined
+            ? "None"
+            : BmsVhfSquelchHotkey.ToString().Replace("Vc", "");
+
+
     // This is displayed in the Top Bar but shared throughout the app
-    [ObservableProperty] public partial bool Is3dMode { get; set; }
-    
+        [ObservableProperty] public partial bool Is3dMode { get; set; }
+
     partial void OnIs3dModeChanged(bool value)
     {
         _openFreqService.Apply3dAudioEffects = value;
@@ -110,6 +126,7 @@ public partial class SettingsViewModel : ViewModelBase
             case IOpenFreqService.Mode.GCI:
                 _falconSharedMemoryService.Stop();
                 _falconRadioSharedMemoryService.Stop();
+                _hotkeyService.UnregisterHotkeys(IHotkeyService.HotkeyType.SquelchToggle);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(value), value, null);
@@ -118,13 +135,14 @@ public partial class SettingsViewModel : ViewModelBase
 
     public SettingsViewModel(IAudioService audioService, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
         IFalconSharedMemoryService falconSharedMemoryService, IAcmiClientService acmiClientService,
-        IOpenFreqService openFreqService)
+        IOpenFreqService openFreqService, IHotkeyService hotkeyService)
     {
         _audioService = audioService;
         _falconSharedMemoryService = falconSharedMemoryService;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
         _acmiClientService = acmiClientService;
         _openFreqService = openFreqService;
+        _hotkeyService = hotkeyService;
         InitializeAudioDevices();
     }
 
@@ -366,7 +384,9 @@ public partial class SettingsViewModel : ViewModelBase
             HeightmapPath = HeightmapPath,
             SelectedTheater = SelectedTheater,
             BmsUhfChannel = BmsUhfAudioChannel,
-            BmsVhfChannel =  BmsVhfAudioChannel,
+            BmsVhfChannel = BmsVhfAudioChannel,
+            BmsSquelchUhfHotkeyCode = BmsUhfSquelchHotkey.ToString(),
+            BmsSquelchVhfHotkeyCode = BmsVhfSquelchHotkey.ToString(),
             Left = _left,
             Top = _top,
             Width = _width,

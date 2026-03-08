@@ -229,7 +229,7 @@ public partial class SettingsViewModel : ViewModelBase
 
     partial void OnBmsVhfAudioChannelChanged(RadioPlayback.AudioChannel value)
     {
-        var vhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.UHF);
+        var vhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.VHF);
         if (vhfChannel != null)
         {
             _openFreqService.SetAudioChannel(vhfChannel.Frequency, value);

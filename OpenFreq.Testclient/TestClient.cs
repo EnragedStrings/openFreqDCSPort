@@ -14,6 +14,7 @@ using System.Runtime.InteropServices;
 using ManagedBass;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
+using OpenFreqAudio;
 using ErrorEventArgs = OpenFreq.Common.ErrorEventArgs;
 
 namespace OpenFreq.TestClient;
@@ -315,10 +316,10 @@ public class TestClientWrapper : IDisposable
                 }
 
                 // Send complete frame to all transmitting frequencies
-                var transmitData = new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity)>();
+                var transmitData = new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, AmbientNoiseType ambientNoiseType)>();
                 foreach (var frequency in _isTransmitting.Keys)
                 {
-                    transmitData.Add((frequency, 50, 0, new Vector3(), null));
+                    transmitData.Add((frequency, 50, 0, new Vector3(), null, AmbientNoiseType.None));
                 }
                 _client.SendAudio(frameData, transmitData, false);
             }

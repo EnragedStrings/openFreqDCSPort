@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using OpenFreqAudio;
 
 namespace OpenFreq.Common;
 
@@ -38,13 +39,16 @@ public class FrequencyTransmission
     
     [JsonPropertyName("ppm")]
     public double Ppm { get; set; }
+    
+    [JsonPropertyName("ambient")]
+    public AmbientNoiseType AmbientNoiseType { get; set; }
 
     public FrequencyTransmission()
     {
     }
 
     public FrequencyTransmission(int khz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, bool in3d, bool beginMarker = false,
-        bool endMarker = false)
+        bool endMarker = false, AmbientNoiseType ambientNoiseType = AmbientNoiseType.None)
     {
         Khz = khz;
         TxPowerWatts = txPowerWatts;
@@ -54,6 +58,7 @@ public class FrequencyTransmission
         Position = position;
         Velocity = velocity;
         In3d = in3d;
+        AmbientNoiseType = ambientNoiseType;
     }
 
     public override string ToString()

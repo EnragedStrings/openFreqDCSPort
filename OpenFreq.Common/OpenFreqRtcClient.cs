@@ -5,13 +5,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Signaling;
+using OpenFreqAudio;
 
 namespace OpenFreq.Common;
 
 public class OpenFreqRtcClient : IDisposable
 {
     // Audio configuration constants
-    public const int SAMPLE_RATE = 8000;
+    public const int SAMPLE_RATE = RadioPlayback.SampleRate;
     public const int CHANNELS = 1;
     public const int FRAME_SIZE_MS = 20;
     public const int OPUS_SAMPLES_PER_FRAME = SAMPLE_RATE / (1000 / FRAME_SIZE_MS) * CHANNELS;
@@ -252,7 +253,7 @@ public class OpenFreqRtcClient : IDisposable
     }
 
 
-    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity)> frequencies, bool in3d)
+    public void SendAudio(byte[] pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, AmbientNoiseType ambientNoiseType)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -264,6 +265,7 @@ public class OpenFreqRtcClient : IDisposable
                 ppm: freq.ppm,
                 position: freq.position,
                 velocity: freq.velocity,
+                ambientNoiseType: freq.ambientNoiseType,
                 in3d: in3d,
                 beginMarker: needsBeginMarker,
                 endMarker: false

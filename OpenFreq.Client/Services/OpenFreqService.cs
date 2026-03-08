@@ -564,7 +564,7 @@ public class OpenFreqService : IOpenFreqService
 
             // Send to ALL active frequencies
             var frequenciesData =
-                new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity)>();
+                new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, AmbientNoiseType ambientNoiseType)>();
 
             // List of frequencies that got disabled in the meantime
             var disabledFrequencies = new List<int>();
@@ -592,13 +592,13 @@ public class OpenFreqService : IOpenFreqService
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity));
+                        position, velocity, radioStationData.RadioStation.Preset.AmbientNoiseType));
                 }
                 else
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity));
+                        position, velocity, radioStationData.RadioStation.Preset.AmbientNoiseType));
                 }
             }
 
@@ -865,16 +865,18 @@ public class OpenFreqService : IOpenFreqService
                 }
             }
 
+            var ambientNoiseType = Apply3dAudioEffects ? frequencyTransmission.AmbientNoiseType : AmbientNoiseType.None;
+            
             // Update signal strength tracking for 3D audio
             if (Apply3dAudioEffects)
             {
                 _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
             }
-
+            
             // Push audio data immediately
             _playbackService?.PushAudioData(streamId, e.AudioData,
                 frequencyTransmission.BeginMarker,
-                frequencyTransmission.EndMarker);
+                frequencyTransmission.EndMarker, ambientNoiseType);
         }
     }
 

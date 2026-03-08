@@ -296,6 +296,7 @@ public class RtpAudioReceiver : IDisposable
                             position: freq.Position,
                             velocity: freq.Velocity,
                             in3d: freq.In3d,
+                            ambientNoiseType: freq.AmbientNoiseType,
                             beginMarker: false,
                             endMarker: false
                         ));

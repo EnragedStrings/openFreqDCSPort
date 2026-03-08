@@ -91,13 +91,13 @@ public class RtpAudioSender : IDisposable
         {
             try
             {
-                #pragma warning disable CS0618 // Do not use the factory - it does not work with Linux
+#pragma warning disable CS0618 // Do not use the factory - it does not work with Linux
                 _opusEncoder = new OpusEncoder(
                     OpenFreqRtcClient.SAMPLE_RATE,
                     OpenFreqRtcClient.CHANNELS,
                     OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY
                 );
-                #pragma warning restore CS0618 // Type or member is obsolete
+#pragma warning restore CS0618 // Type or member is obsolete
             }
             catch (OpusException ex)
             {
@@ -113,7 +113,7 @@ public class RtpAudioSender : IDisposable
             }
             else
             {
-                _opusEncoder.Bitrate = 98000; 
+                _opusEncoder.Bitrate = 98000;
                 _opusEncoder.Complexity = 8;
                 _opusEncoder.SignalType = OpusSignal.OPUS_SIGNAL_MUSIC;
                 _opusEncoder.UseInbandFEC = true;
@@ -166,10 +166,11 @@ public class RtpAudioSender : IDisposable
                 if (_bufferPosition >= _audioBuffer.Length)
                 {
                     // First chunk uses original markers, subsequent chunks clear beginMarkers
-                    var markers = isFirstChunk 
-                        ? frequencyTransmissions 
-                        : frequencyTransmissions.Select(f => new FrequencyTransmission(f.Khz, f.TxPowerWatts, f.Ppm, f.Position, f.Velocity, false, f.EndMarker)).ToList();
-                
+                    var markers = isFirstChunk
+                        ? frequencyTransmissions
+                        : frequencyTransmissions.Select(f => new FrequencyTransmission(f.Khz, f.TxPowerWatts, f.Ppm,
+                            f.Position, f.Velocity, false, f.BeginMarker, f.EndMarker, f.AmbientNoiseType)).ToList();
+
                     QueueRawFrame(clientId, markers);
                     isFirstChunk = false;
                     _bufferPosition = 0;
@@ -184,7 +185,7 @@ public class RtpAudioSender : IDisposable
 
     private void QueueRawFrame(string clientId, List<FrequencyTransmission> frequencyTransmissions)
     {
-       // Copy the buffer data (must copy since _audioBuffer will be reused)
+        // Copy the buffer data (must copy since _audioBuffer will be reused)
         var pcmCopy = new byte[_audioBuffer.Length];
         Buffer.BlockCopy(_audioBuffer, 0, pcmCopy, 0, _audioBuffer.Length);
 
@@ -278,7 +279,7 @@ public class RtpAudioSender : IDisposable
                 ExtensionData = metadataBytes,
                 Payload = encodedAudio
             };
-            
+
             // Send the packet
             var rtpBytes = rtpPacket.ToBytes();
             _udpClient.Send(rtpBytes, rtpBytes.Length, _serverEndpoint);
@@ -308,7 +309,8 @@ public class RtpAudioSender : IDisposable
         _opusEncoder?.Dispose();
 
         var stats = GetStatistics();
-        _logger.LogInformation("Disposed. Sent {PacketsSent} packets over {UptimeSeconds:F1}s ({PacketsPerSecond:F1} pps)", 
+        _logger.LogInformation(
+            "Disposed. Sent {PacketsSent} packets over {UptimeSeconds:F1}s ({PacketsPerSecond:F1} pps)",
             stats.packetsSent, stats.uptime.TotalSeconds, stats.packetsPerSecond);
     }
 }

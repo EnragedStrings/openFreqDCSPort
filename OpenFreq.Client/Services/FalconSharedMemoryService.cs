@@ -452,6 +452,7 @@ public class FalconSharedMemoryService : IFalconSharedMemoryService
 
     public ServiceState State { get; }
     public FlightPosition? Position { get; }
+    public FlightVelocity? Velocity { get; }
     private FlightVelocity? _velocity;
     public string? TheaterTerrainDir { get; }
     public bool? IsFlying { get; }

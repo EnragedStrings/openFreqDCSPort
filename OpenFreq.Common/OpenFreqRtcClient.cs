@@ -27,6 +27,7 @@ public class OpenFreqRtcClient : IDisposable
     public event EventHandler<TransmissionStateEventArgs>? TransmissionStateChanged;
     public event EventHandler<PeerTransmissionEventArgs>? PeerTransmissionStateChanged;
     public event EventHandler<AudioDataEventArgs>? AudioDataReceived;
+    public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusUpdateReceived;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     private RtpAudioReceiver? _rtpReceiver;
@@ -39,10 +40,6 @@ public class OpenFreqRtcClient : IDisposable
     public readonly string ServerIp;
     private readonly string _password;
     private ClientWebSocket? _webSocket;
-    private string? _myPeerId;
-    private int _audioPort;
-    private bool _isConnected;
-    private bool _isAuthenticated;
     private CancellationTokenSource _cts = new();
     private readonly string clientId = Guid.NewGuid().ToString();
 
@@ -50,22 +47,28 @@ public class OpenFreqRtcClient : IDisposable
     private readonly Dictionary<int, bool> _frequencyTransmissionState = new();
     private readonly Dictionary<int, bool> _frequencyFirstPacketSent = new();
     private readonly Dictionary<int, HashSet<string>> _frequencyPeers = new();
-    
+
     private readonly ILogger<OpenFreqRtcClient> _logger;
     private readonly ILoggerFactory _loggerFactory;
 
     // Properties
-    public string? MyPeerId => _myPeerId;
-    public int AudioPort => _audioPort;
-    public bool IsConnected => _isConnected;
-    public bool IsAuthenticated => _isAuthenticated;
+    public string? MyPeerId { get; private set; }
 
-    public OpenFreqRtcClient(ILoggerFactory loggerFactory, string serverIp, string password)
+    public string? MyDisplayName { get; }
+
+    public int AudioPort { get; private set; }
+
+    public bool IsConnected { get; private set; }
+
+    public bool IsAuthenticated { get; private set; }
+
+    public OpenFreqRtcClient(ILoggerFactory loggerFactory, string serverIp, string password, string? myDisplayName)
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<OpenFreqRtcClient>();
         ServerIp = serverIp;
         _password = password;
+        MyDisplayName = myDisplayName;
     }
 
     /// <summary>
@@ -77,7 +80,7 @@ public class OpenFreqRtcClient : IDisposable
         {
             _cts.Dispose();
             _cts = new CancellationTokenSource();
-            
+
             // Connect WebSocket
             var ipPort = Util.ResolveAddress(ServerIp, DEFAULT_PORT);
 
@@ -98,25 +101,25 @@ public class OpenFreqRtcClient : IDisposable
             _ = Task.Run(ReceiveMessagesAsync, _cts.Token);
 
             // Authenticate
-            await SendMessageAsync(SignalingMessageFactory.CreateAuthenticate(_password));
+            await SendMessageAsync(SignalingMessageFactory.CreateAuthenticate(_password, MyDisplayName));
 
             // Wait for authentication response with timeout
             var startTime = DateTime.UtcNow;
-            while (!_isAuthenticated && (DateTime.UtcNow - startTime).TotalSeconds < 5)
+            while (!IsAuthenticated && (DateTime.UtcNow - startTime).TotalSeconds < 5)
             {
                 await Task.Delay(100, _cts.Token);
             }
 
-            if (!_isAuthenticated)
+            if (!IsAuthenticated)
             {
                 throw new TimeoutException("Authentication timeout");
             }
 
             // Create RTP sender
             _rtpSender = new RtpAudioSender(
-                logger:  _loggerFactory.CreateLogger<RtpAudioSender>(),
+                logger: _loggerFactory.CreateLogger<RtpAudioSender>(),
                 serverHost: ipPort.ipAddress,
-                serverPort: _audioPort,
+                serverPort: AudioPort,
                 clid: clientId,
                 opusEnabled: _opusCompressionEnabled
             );
@@ -131,14 +134,13 @@ public class OpenFreqRtcClient : IDisposable
             _rtpReceiver.AudioReceived += OnRtpAudioReceived;
             _rtpReceiver.ErrorOccurred += (_, error) => { _logger.LogError("RTP Error: {Error}", error); };
 
-            _isConnected = true;
+            IsConnected = true;
             OnConnectionStateChanged(ConnectionState.Connected);
-          
         }
         catch (Exception ex)
         {
-            _isConnected = false;
-            _isAuthenticated = false;
+            IsConnected = false;
+            IsConnected = false;
             OnConnectionStateChanged(ConnectionState.Disconnected);
             OnError($"Connection failed: {ex.Message}");
             throw;
@@ -162,7 +164,7 @@ public class OpenFreqRtcClient : IDisposable
     /// </summary>
     public async Task JoinFrequencyAsync(int frequencyKhz)
     {
-        if (!_isAuthenticated)
+        if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
@@ -182,7 +184,7 @@ public class OpenFreqRtcClient : IDisposable
     /// </summary>
     public async Task LeaveFrequencyAsync(int frequencyKhz)
     {
-        if (!_isAuthenticated)
+        if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
@@ -198,9 +200,9 @@ public class OpenFreqRtcClient : IDisposable
     /// <summary>
     /// Start transmitting on a frequency
     /// </summary>
-    public async Task StartTransmissionAsync(int frequencyKhz)
+    public async Task StartTransmissionAsync(int frequencyKhz, bool is3d)
     {
-        if (!_isAuthenticated)
+        if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
@@ -209,23 +211,23 @@ public class OpenFreqRtcClient : IDisposable
         {
             throw new InvalidOperationException($"Not joined on frequency {frequencyKhz}");
         }
-        
+
         _frequencyTransmissionState[frequencyKhz] = true;
         _frequencyFirstPacketSent[frequencyKhz] = false; // Mark that we need to send startMarker
-        
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true));
+
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d));
         OnTransmissionStateChanged(frequencyKhz, true);
 
         // Start heartbeat for this frequency
-        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz), _cts.Token);
+        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz, is3d), _cts.Token);
     }
 
     /// <summary>
     /// Stop transmitting on a frequency
     /// </summary>
-    public async Task StopTransmissionAsync(int frequencyKhz)
+    public async Task StopTransmissionAsync(int frequencyKhz, bool is3d)
     {
-        if (!_isAuthenticated)
+        if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
@@ -242,17 +244,29 @@ public class OpenFreqRtcClient : IDisposable
             audioData: silence,
             frequencyTransmissions: [new FrequencyTransmission(frequencyKhz, 0, 0, new Vector3(), null, false, true)]
         );
-        
-        _logger.LogInformation("Sent end marker for frequency {Frequency:F3}", frequencyKhz/1000d);
+
+        _logger.LogInformation("Sent end marker for frequency {Frequency:F3}", frequencyKhz / 1000d);
 
         _frequencyTransmissionState[frequencyKhz] = false;
         _frequencyFirstPacketSent.Remove(frequencyKhz); // Clean up tracking state
-        
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false));
+
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false, is3d));
         OnTransmissionStateChanged(frequencyKhz, false);
     }
 
-
+    /// <summary>
+    /// Sets the Display Name (=Nickname)
+    /// </summary>
+    public async Task SetDisplayNameAsync(string displayName)
+    {
+        if (!IsAuthenticated)
+        {
+            throw new InvalidOperationException("Not authenticated");
+        }
+        
+        await SendMessageAsync(SignalingMessageFactory.CreateSetDisplayName(displayName));
+    }
+    
     public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, AmbientNoiseType ambientNoiseType)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
@@ -261,7 +275,7 @@ public class OpenFreqRtcClient : IDisposable
             bool needsBeginMarker = _frequencyFirstPacketSent.TryGetValue(freq.frequencyKhz, out var sent) && !sent;
             frequencyTransmissions.Add(new FrequencyTransmission(
                 khz: freq.frequencyKhz,
-                txPowerWatts: freq.txPowerWatts, 
+                txPowerWatts: freq.txPowerWatts,
                 ppm: freq.ppm,
                 position: freq.position,
                 velocity: freq.velocity,
@@ -270,14 +284,14 @@ public class OpenFreqRtcClient : IDisposable
                 beginMarker: needsBeginMarker,
                 endMarker: false
             ));
-        
+
             if (needsBeginMarker)
                 _frequencyFirstPacketSent[freq.frequencyKhz] = true;
         }
         
         _rtpSender?.SendAudio(pcmData, frequencyTransmissions);
     }
-    
+
 
     /// <summary>
     /// Disconnect from the server
@@ -286,19 +300,19 @@ public class OpenFreqRtcClient : IDisposable
     {
         CleanupRtp();
         _cts.Cancel();
-        
+
         if (_webSocket?.State == WebSocketState.Open)
         {
             await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client disconnecting",
                 CancellationToken.None);
         }
 
-        _isConnected = false;
-        _isAuthenticated = false;
+        IsConnected = false;
+        IsAuthenticated = false;
         OnConnectionStateChanged(ConnectionState.Disconnected);
     }
 
-    private async Task TransmissionHeartbeatAsync(int frequencyKhz)
+    private async Task TransmissionHeartbeatAsync(int frequencyKhz, bool is3d)
     {
         while (!_cts.Token.IsCancellationRequested)
         {
@@ -307,7 +321,7 @@ public class OpenFreqRtcClient : IDisposable
                 break;
             }
 
-            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true));
+            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d));
             await Task.Delay(333, _cts.Token); // ~3 times per second
         }
     }
@@ -316,7 +330,7 @@ public class OpenFreqRtcClient : IDisposable
     {
         OnAudioDataReceived(e.Metadata.ClientId, e.AudioData, e.Metadata);
     }
-    
+
     private async Task ReceiveMessagesAsync()
     {
         if (_webSocket == null) return;
@@ -334,8 +348,8 @@ public class OpenFreqRtcClient : IDisposable
                 {
                     await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server closing",
                         CancellationToken.None);
-                    _isConnected = false;
-                    _isAuthenticated = false;
+                    IsConnected = false;
+                    IsAuthenticated = false;
                     OnConnectionStateChanged(ConnectionState.Disconnected);
                     break;
                 }
@@ -360,8 +374,8 @@ public class OpenFreqRtcClient : IDisposable
         catch (Exception ex)
         {
             OnError($"WebSocket error: {ex.Message}");
-            _isConnected = false;
-            _isAuthenticated = false;
+            IsConnected = false;
+            IsAuthenticated = false;
             OnConnectionStateChanged(ConnectionState.Disconnected);
         }
     }
@@ -379,13 +393,13 @@ public class OpenFreqRtcClient : IDisposable
                     var success = SignalingMessageFactory.DeserializePayload<SuccessMessage>(message.Payload);
                     if (success?.PeerId != null)
                     {
-                        _myPeerId = success.PeerId;
-                        _audioPort = success.AudioPort ?? 0;
-                        _isAuthenticated = true;
+                        MyPeerId = success.PeerId;
+                        AudioPort = success.AudioPort ?? 0;
+                        IsAuthenticated = true;
                         _opusCompressionEnabled = success.OpusCompressionEnabled;
                         _logger.LogDebug("Opus compression enabled: " + _opusCompressionEnabled);
                         OnConnectionStateChanged(ConnectionState.Authenticated);
-                        OnAuthenticated(_myPeerId, _audioPort);
+                        OnAuthenticated(MyPeerId, success.FrequenciesPeers, AudioPort);
                     }
 
                     break;
@@ -408,7 +422,7 @@ public class OpenFreqRtcClient : IDisposable
                             peers.Add(joined.PeerId);
                         }
 
-                        OnPeerJoined(joined.PeerId, joined.FrequencyKhz);
+                        OnPeerJoined(joined.PeerId, joined.PeerDisplayName, joined.FrequencyKhz);
                     }
 
                     break;
@@ -430,10 +444,11 @@ public class OpenFreqRtcClient : IDisposable
                 case SignalingMessageTypes.Transmission:
                     var transmission =
                         SignalingMessageFactory.DeserializePayload<TransmissionEventMessage>(message.Payload);
-                    if (transmission != null && transmission.PeerId != _myPeerId)
+                    if (transmission != null && transmission.PeerId != MyPeerId)
                     {
-                        OnPeerTransmissionStateChanged(transmission.PeerId, transmission.FrequencyKhz,
-                            transmission.Transmitting);
+                        OnPeerTransmissionStateChanged(transmission.PeerId, transmission.PeerDisplayName,
+                            transmission.FrequencyKhz,
+                            transmission.Transmitting, transmission.Is3d);
                     }
 
                     break;
@@ -442,8 +457,19 @@ public class OpenFreqRtcClient : IDisposable
                     var channelState = SignalingMessageFactory.DeserializePayload<ChannelStateMessage>(message.Payload);
                     if (channelState != null)
                     {
-                        _frequencyPeers[channelState.FrequencyKhz] = new HashSet<string>(channelState.Peers);
+                        _frequencyPeers[channelState.FrequencyKhz] =
+                            new HashSet<string>(channelState.Peers.Select(p => p.Id).ToList());
                         OnFrequencyJoined(channelState.FrequencyKhz, channelState.Peers);
+                    }
+
+                    break;
+
+                case SignalingMessageTypes.AllPeersStatus:
+                    var allPeersStatusMsg =
+                        SignalingMessageFactory.DeserializePayload<AllPeersStatusMessage>(message.Payload);
+                    if (allPeersStatusMsg != null)
+                    {
+                        OnAllPeersStatusReceived(allPeersStatusMsg.FrequenciesPeers);
                     }
 
                     break;
@@ -455,7 +481,8 @@ public class OpenFreqRtcClient : IDisposable
         }
     }
 
-    private async Task SendMessageAsync(SignalingMessage message)
+
+    public async Task SendMessageAsync(SignalingMessage message)
     {
         if (_webSocket?.State != WebSocketState.Open) return;
 
@@ -475,29 +502,35 @@ public class OpenFreqRtcClient : IDisposable
     private void OnConnectionStateChanged(ConnectionState state) =>
         ConnectionStateChanged?.Invoke(this, new ConnectionStateChangedEventArgs(state));
 
-    private void OnAuthenticated(string peerId, int audioPort) =>
-        Authenticated?.Invoke(this, new AuthenticationEventArgs(peerId, audioPort));
+    private void OnAuthenticated(string peerId, Dictionary<int, List<PeerData>> peers, int audioPort) =>
+        Authenticated?.Invoke(this, new AuthenticationEventArgs(peerId, peers, audioPort));
 
-    private void OnFrequencyJoined(int frequencyKhz, List<string> peers) =>
+    private void OnFrequencyJoined(int frequencyKhz, List<ChannelStateMessage.Peer> peers) =>
         FrequencyJoined?.Invoke(this, new FrequencyJoinedEventArgs(frequencyKhz, peers));
 
     private void OnFrequencyLeft(int frequencyKhz) =>
         FrequencyLeft?.Invoke(this, new FrequencyLeftEventArgs(frequencyKhz));
 
-    private void OnPeerJoined(string peerId, int frequencyKhz) =>
-        PeerJoined?.Invoke(this, new PeerEventArgs(peerId, frequencyKhz));
+    private void OnPeerJoined(string peerId, string peerDisplayName, int frequencyKhz) =>
+        PeerJoined?.Invoke(this, new PeerEventArgs(peerId, peerDisplayName, frequencyKhz));
 
     private void OnPeerLeft(string peerId, int frequencyKhz) =>
-        PeerLeft?.Invoke(this, new PeerEventArgs(peerId, frequencyKhz));
+        PeerLeft?.Invoke(this, new PeerEventArgs(peerId, null, frequencyKhz));
 
     private void OnTransmissionStateChanged(int frequencyKhz, bool isTransmitting) =>
         TransmissionStateChanged?.Invoke(this, new TransmissionStateEventArgs(frequencyKhz, isTransmitting));
 
-    private void OnPeerTransmissionStateChanged(string peerId, int frequencyKhz, bool isTransmitting) =>
-        PeerTransmissionStateChanged?.Invoke(this, new PeerTransmissionEventArgs(peerId, frequencyKhz, isTransmitting));
+    private void OnPeerTransmissionStateChanged(string peerId, string peerDisplayName, int frequencyKhz,
+        bool isTransmitting, bool is3d) =>
+        PeerTransmissionStateChanged?.Invoke(this,
+            new PeerTransmissionEventArgs(peerId, peerDisplayName, frequencyKhz, isTransmitting, is3d));
 
     private void OnAudioDataReceived(string peerId, byte[] audioData, AudioPacketMetadata metadata) =>
         AudioDataReceived?.Invoke(this, new AudioDataEventArgs(peerId, audioData, metadata));
+
+    private void OnAllPeersStatusReceived(Dictionary<int, List<PeerData>> allPeersStatus) =>
+        AllPeersStatusUpdateReceived?.Invoke(this, new AllPeersStatusEventArgs(allPeersStatus));
+
 
     private void OnError(string errorMessage) =>
         ErrorOccurred?.Invoke(this, new ErrorEventArgs(errorMessage));
@@ -535,17 +568,20 @@ public class AuthenticationEventArgs : EventArgs
 {
     public string PeerId { get; }
     public int AudioPort { get; }
+    
+    public Dictionary<int, List<PeerData>> Peers { get; }
 
-    public AuthenticationEventArgs(string peerId, int audioPort)
+    public AuthenticationEventArgs(string peerId, Dictionary<int, List<PeerData>> peers, int audioPort)
     {
         PeerId = peerId;
+        Peers = peers;
         AudioPort = audioPort;
     }
 }
 
-public class FrequencyJoinedEventArgs(int frequencyKhz, List<string> peers) : EventArgs
+public class FrequencyJoinedEventArgs(int frequencyKhz, List<ChannelStateMessage.Peer> peers) : EventArgs
 {
-    public List<string> Peers { get; } = peers;
+    public List<ChannelStateMessage.Peer> Peers { get; } = peers;
     public int FrequencyKhz { get; } = frequencyKhz;
 }
 
@@ -558,11 +594,14 @@ public class FrequencyLeftEventArgs : EventArgs
 public class PeerEventArgs : EventArgs
 {
     public string PeerId { get; }
+
+    public string? PeerDisplayName { get; }
     public int FrequencyKhz { get; }
 
-    public PeerEventArgs(string peerId, int frequencyKhz)
+    public PeerEventArgs(string peerId, string? peerDisplayName, int frequencyKhz)
     {
         PeerId = peerId;
+        PeerDisplayName = peerDisplayName;
         FrequencyKhz = frequencyKhz;
     }
 }
@@ -582,14 +621,19 @@ public class TransmissionStateEventArgs : EventArgs
 public class PeerTransmissionEventArgs : EventArgs
 {
     public string PeerId { get; }
+    public string PeerDisplayName { get; }
+
     public int FrequencyKhz { get; }
     public bool IsTransmitting { get; }
+    public bool Is3d { get; }
 
-    public PeerTransmissionEventArgs(string peerId, int frequencyKhz, bool isTransmitting)
+    public PeerTransmissionEventArgs(string peerId, string peerDisplayName, int frequencyKhz, bool isTransmitting, bool is3d)
     {
         PeerId = peerId;
+        PeerDisplayName = peerDisplayName;
         FrequencyKhz = frequencyKhz;
         IsTransmitting = isTransmitting;
+        Is3d =  is3d;
     }
 }
 
@@ -598,12 +642,22 @@ public class AudioDataEventArgs : EventArgs
     public string PeerId { get; }
     public byte[] AudioData { get; }
     public AudioPacketMetadata Metadata { get; }
-    
+
     public AudioDataEventArgs(string peerId, byte[] audioData, AudioPacketMetadata metadata)
     {
         PeerId = peerId;
         AudioData = audioData;
         Metadata = metadata;
+    }
+}
+
+public class AllPeersStatusEventArgs : EventArgs
+{
+    public Dictionary<int, List<PeerData>> AllPeers { get; }
+
+    public AllPeersStatusEventArgs(Dictionary<int, List<PeerData>> allPeers)
+    {
+        AllPeers = allPeers;
     }
 }
 

@@ -471,7 +471,7 @@ public class SignalingServer
 
     private async Task SetDisplayName(ClientSession session, SignalingMessage message)
     {
-        var setDisplayNameMsg = SignalingMessageFactory.DeserializePayload<AuthenticateMessage>(message.Payload);
+        var setDisplayNameMsg = SignalingMessageFactory.DeserializePayload<DisplayNameMessage>(message.Payload);
 
         if (setDisplayNameMsg == null)
         {
@@ -480,6 +480,7 @@ public class SignalingServer
         }
 
         session.DisplayName = setDisplayNameMsg.DisplayName;
+        _channelManager.UpdateDisplayName(session.Id, setDisplayNameMsg.DisplayName ?? "Unknown");
 
         if (_config.BroadcastPeerUpdates)
         {

@@ -269,8 +269,7 @@
                                         <!-- Display Name -->
                                         <TextBlock Text="Display Name" Classes="InputLabel" />
                                         <TextBox Watermark="Display Name"
-                                                 Text="{Binding Settings.DisplayName}"
-                                                 IsEnabled="{Binding !OpenFreqConnected}" />
+                                                 Text="{Binding Settings.DisplayName}"/>
                                     </StackPanel>
                                 </controls:Card>
 

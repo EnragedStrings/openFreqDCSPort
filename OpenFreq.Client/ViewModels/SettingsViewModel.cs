@@ -12,6 +12,7 @@ using CommunityToolkit.Mvvm.Input;
 using FalconBmsDataService.Models;
 using FalconBmsDataService.Services;
 using FalconRadioService.Services;
+using Microsoft.Extensions.Logging;
 using OpenFreq.Services.Acmi;
 using OpenFreqAudio;
 using OpenFreqClient.Models;
@@ -64,6 +65,7 @@ public partial class SettingsViewModel : ViewModelBase
 
     [ObservableProperty] public partial string OutputDeviceName { get; set; } = string.Empty;
 
+    private readonly ILogger<SettingsViewModel> _logger;
     private readonly IAudioService _audioService;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
@@ -133,10 +135,11 @@ public partial class SettingsViewModel : ViewModelBase
         }
     }
 
-    public SettingsViewModel(IAudioService audioService, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
+    public SettingsViewModel(ILogger<SettingsViewModel> logger, IAudioService audioService, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
         IFalconSharedMemoryService falconSharedMemoryService, IAcmiClientService acmiClientService,
         IOpenFreqService openFreqService, IHotkeyService hotkeyService)
     {
+        _logger = logger;
         _audioService = audioService;
         _falconSharedMemoryService = falconSharedMemoryService;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
@@ -162,6 +165,24 @@ public partial class SettingsViewModel : ViewModelBase
         _audioService.RecordingDevicesChanged += OnRecordingDevicesChanged;
     }
 
+    partial void OnDisplayNameChanged(string value)
+    {
+        if (ConnectionMode == IOpenFreqService.Mode.GCI && _openFreqService.IsAuthenticated)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _openFreqService.UpdateDisplayNameAsync(value);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Failed to update display name to {DisplayName}", value);
+                }
+            });
+        }
+    }
+    
     private void OnRecordingDevicesChanged(object? sender, DeviceChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(() =>

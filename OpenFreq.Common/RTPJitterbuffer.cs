@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Rtp;
 
@@ -159,19 +159,20 @@ public class RtpJitterBuffer
             {
                 var nextExpected = _nextExpectedSequence.Value;
                 var gap = RtpPacket.SequenceDifference(nextPacket.Key, nextExpected);
-                if (gap > 0)
+                switch (gap)
                 {
-                    // Skipped packets (loss)
-                    _packetsLost += gap;
-                    _logger.LogWarning("Packet loss: {Gap} packets (seq {ExpectedSeq} to {LastSeq})", 
-                        gap, nextExpected, nextPacket.Key - 1);
-                }
-                else
-                {
-                    // Late packet
-                    _packetsLate++;
-                    _logger.LogWarning("Late packet seq {SequenceNumber} (expected {ExpectedSequence})", 
-                        nextPacket.Key, nextExpected);
+                    case > 0:
+                        // Skipped packets (loss)
+                        _packetsLost += gap;
+                        _logger.LogWarning("Packet loss: {Gap} packets (seq {ExpectedSeq} to {LastSeq})", 
+                            gap, nextExpected, nextPacket.Key - 1);
+                        break;
+                    case < 0:
+                        // Late packet
+                        _packetsLate++;
+                        _logger.LogWarning("Late packet seq {SequenceNumber} (expected {ExpectedSequence})", 
+                            nextPacket.Key, nextExpected);
+                        break;
                 }
             }
 

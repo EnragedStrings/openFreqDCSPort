@@ -85,6 +85,14 @@ public class AudioStreamServer
         _udpClient = new UdpClient(_audioPort);
         _udpClient.DontFragment = true;
 
+        // According to MS KB263823, sending a UDP packet to a client that is no longer listening will cause a
+        // WSAECONNRESET (10054) for any further socket operations (even recv()). Disable SIO_UDP_CONNRESET  
+        if (OperatingSystem.IsWindows())
+        {
+            const int sioUdpConnReset = -1744830452;
+            _udpClient.Client.IOControl((IOControlCode)sioUdpConnReset, new byte[] { 0 }, null);
+        }
+
         // Start single receive loop for all clients
         _receiveTask = Task.Run(ReceiveAudioLoop);
 
@@ -126,14 +134,14 @@ public class AudioStreamServer
     /// </summary>
     private async Task ReceiveAudioLoop()
     {
-        try
+        while (!_cts.Token.IsCancellationRequested)
         {
-            while (!_cts.Token.IsCancellationRequested)
+            try
             {
                 var result = await _udpClient.ReceiveAsync(_cts.Token);
                 // We are actually stopping, bail out
                 if (_stopping) break;
-                
+
                 var remoteEndpoint = result.RemoteEndPoint;
 
                 // Check if we already know this endpoint
@@ -231,14 +239,22 @@ public class AudioStreamServer
                     ForwardAudioToChannel(frequency.Khz, clientId, rtpPacket, metadata, audioData);
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal shutdown
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in shared audio receive loop");
+
+            catch (SocketException ex)
+            {
+                // Just warn and continue - this will also be raised on error 10054 (host forcibly closed connection)
+                _logger.LogWarning(ex, "Socket error in audio receive loop");
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown
+                break;
+            }
+            catch (Exception ex)
+            {
+                // something has broken more fundamentally
+                _logger.LogError(ex, "Error in shared audio receive loop");
+            }
         }
     }
 
@@ -362,7 +378,7 @@ public class AudioStreamServer
 
     private void SendPacket(byte[] packet, IPEndPoint remoteEndPoint)
     {
-        if (_stopping) return;  
+        if (_stopping) return;
         try
         {
             // UdpClient is not thread-safe, so...

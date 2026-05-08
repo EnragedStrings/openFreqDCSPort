@@ -1,5 +1,4 @@
 using OpenFreq.Client.Models;
-using OpenFreqAudio;
 using OpenFreqClient.Services.Interfaces;
 
 namespace OpenFreqClient.Models;
@@ -19,8 +18,8 @@ public class OpenFreqSettings
     public string OutputDeviceName { get; set; } = "";
     public string SelectedTheater { get; set; } = "Korea KTO";
 
-    public RadioPlayback.AudioChannel BmsUhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
-    public RadioPlayback.AudioChannel BmsVhfChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    public int BmsUhfPan { get; set; } = 0;
+    public int BmsVhfPan { get; set; } = 0;
     
     public HotkeyBinding? BmsSquelchUhfHotkey { get; set; }
     public HotkeyBinding? BmsSquelchVhfHotkey { get; set; }

@@ -469,9 +469,9 @@ public class OpenFreqService : IOpenFreqService
         _playbackService?.SetFrequencyVolume(frequencyKhz, volumeValue);
     }
 
-    public void SetAudioChannel(int frequencyKhz, RadioPlayback.AudioChannel channel)
+    public void SetPan(int frequencyKhz, int pan)
     {
-        _playbackService?.SetFrequencyAudioChannel(frequencyKhz, channel);
+        _playbackService?.SetFrequencyPan(frequencyKhz, pan);
     }
 
     public void EnableFrequency(int frequencyKhz)

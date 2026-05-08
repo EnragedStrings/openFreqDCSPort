@@ -185,7 +185,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         {
             // For non-BMS channels, immediately join the new frequency
             await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, RadioStationData);
-            _openFreqService.SetAudioChannel(message.NewFrequencyKhz, message.CurrentAudioChannel);
+            _openFreqService.SetPan(message.NewFrequencyKhz, message.CurrentPan);
         }
         // For BMS channels, the join will be handled by OnBmsFrequencyChanged after checking power state
     }
@@ -328,7 +328,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         
         OnChannelUpdated(this,
             new ChannelUpdatedMessage(oldChannel.Id, oldFreqKhz, newFreqKhz, oldChannel.ConnectionStatus,
-                oldChannel.AudioChannel, true));
+                oldChannel.Pan, true));
         
         // Note: Join will be handled by OnBmsFrequencyChanged which explicitly joins for non-9999 frequencies
         
@@ -340,7 +340,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         foreach (var channel in Channels)
         {
             await _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, RadioStationData);
-            _openFreqService.SetAudioChannel(channel.FrequencyKhz, channel.AudioChannel);
+            _openFreqService.SetPan(channel.FrequencyKhz, channel.Pan);
         }
     }
 

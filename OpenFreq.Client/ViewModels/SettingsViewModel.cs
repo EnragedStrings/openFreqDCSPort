@@ -5,21 +5,17 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Input;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using FalconBmsDataService.Models;
 using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Models;
 using OpenFreq.Services.Acmi;
-using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services.Interfaces;
-using SharpHook.Data;
 
 namespace OpenFreqClient.ViewModels;
 
@@ -87,10 +83,10 @@ public partial class SettingsViewModel : ViewModelBase
                                     );
 
     [ObservableProperty]
-    public partial RadioPlayback.AudioChannel BmsUhfAudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    public partial int BmsUhfPan { get; set; } = 0;
 
     [ObservableProperty]
-    public partial RadioPlayback.AudioChannel BmsVhfAudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    public partial int BmsVhfPan { get; set; } = 0;
 
     [ObservableProperty][NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
     public partial HotkeyBinding? BmsUhfSquelchHotkey { get; set; }
@@ -175,7 +171,7 @@ public partial class SettingsViewModel : ViewModelBase
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Failed to update display name to {DisplayName}", value);
+                    _logger.LogError(ex, "Failed to update display name to {DisplayName}", value);
                 }
             });
         }
@@ -249,28 +245,23 @@ public partial class SettingsViewModel : ViewModelBase
         }
     }
 
-    partial void OnBmsUhfAudioChannelChanged(RadioPlayback.AudioChannel value)
+    partial void OnBmsUhfPanChanged(int value)
     {
+        if (_falconRadioSharedMemoryService.State != ServiceState.Connected) return;
         var uhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.UHF);
         var guardChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.GUARD);
         if (uhfChannel != null)
-        {
-            _openFreqService.SetAudioChannel(uhfChannel.Frequency, value);
-        }
-
+            _openFreqService.SetPan(uhfChannel.Frequency, value);
         if (guardChannel != null)
-        {
-            _openFreqService.SetAudioChannel(guardChannel.Frequency, value);
-        }
+            _openFreqService.SetPan(guardChannel.Frequency, value);
     }
 
-    partial void OnBmsVhfAudioChannelChanged(RadioPlayback.AudioChannel value)
+    partial void OnBmsVhfPanChanged(int value)
     {
+        if (_falconRadioSharedMemoryService.State != ServiceState.Connected) return;
         var vhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.VHF);
         if (vhfChannel != null)
-        {
-            _openFreqService.SetAudioChannel(vhfChannel.Frequency, value);
-        }
+            _openFreqService.SetPan(vhfChannel.Frequency, value);
     }
 
     public void LoadFromSettings(OpenFreqSettings settings)
@@ -281,8 +272,8 @@ public partial class SettingsViewModel : ViewModelBase
         TacviewServerAddress = settings.TacviewServerAddress;
         TacviewServerPassword = settings.TacviewServerPassword;
         SelectedTheater = settings.SelectedTheater;
-        BmsUhfAudioChannel = settings.BmsUhfChannel;
-        BmsVhfAudioChannel = settings.BmsVhfChannel;
+        BmsUhfPan = settings.BmsUhfPan;
+        BmsVhfPan = settings.BmsVhfPan;
 
         // Restore audio device selection
         InputDeviceName = settings.InputDeviceName;
@@ -403,8 +394,8 @@ public partial class SettingsViewModel : ViewModelBase
             OutputDeviceName = OutputDeviceName,
             HeightmapPath = HeightmapPath,
             SelectedTheater = SelectedTheater,
-            BmsUhfChannel = BmsUhfAudioChannel,
-            BmsVhfChannel = BmsVhfAudioChannel,
+            BmsUhfPan = BmsUhfPan,
+            BmsVhfPan = BmsVhfPan,
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
             Left = _left,

@@ -271,11 +271,11 @@
                 <StackPanel Grid.Row="3"
                             Spacing="6"
                             Margin="0,0,0,16">
-                    <TextBlock Text="Audio Channel"
+                    <TextBlock Text="Pan"
                                FontSize="12"
                                Opacity="0.7"
                                FontWeight="Medium" />
-                    <controls1:AudioChannelSelector SelectedChannel="{Binding AudioChannel}" />
+                    <controls1:AudioChannelSelector Pan="{Binding Pan}" />
                 </StackPanel>
 
                 <!-- Divider -->

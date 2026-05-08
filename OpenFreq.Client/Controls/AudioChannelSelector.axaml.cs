@@ -1,22 +1,21 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
-using OpenFreqAudio;
 
 namespace OpenFreq.Client.Controls;
 
 public partial class AudioChannelSelector : UserControl
 {
-    public static readonly StyledProperty<RadioPlayback.AudioChannel> SelectedChannelProperty =
-        AvaloniaProperty.Register<AudioChannelSelector, RadioPlayback.AudioChannel>(
-            nameof(SelectedChannel),
-            defaultValue: RadioPlayback.AudioChannel.Both,
+    public static readonly StyledProperty<int> PanProperty =
+        AvaloniaProperty.Register<AudioChannelSelector, int>(
+            nameof(Pan),
+            defaultValue: 0,
             defaultBindingMode: BindingMode.TwoWay);
 
-    public RadioPlayback.AudioChannel SelectedChannel
+    public int Pan
     {
-        get => GetValue(SelectedChannelProperty);
-        set => SetValue(SelectedChannelProperty, value);
+        get => GetValue(PanProperty);
+        set => SetValue(PanProperty, value);
     }
 
     public AudioChannelSelector()

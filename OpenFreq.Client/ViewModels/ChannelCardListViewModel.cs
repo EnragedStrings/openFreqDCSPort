@@ -85,8 +85,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             async (r, m) => await HandleStopTransmissionAsync(m));
         WeakReferenceMessenger.Default.Register<ChannelCardGroupViewModel.ChannelCardGroupDeleteRequestedMessage>(this,
             async (r, m) => await DeleteChannelGroup(m.ChannelCardGroupId));
-        WeakReferenceMessenger.Default.Register<ChannelAudioChannelUpdateMessage>(this,
-            (r, m) => _openFreqService.SetAudioChannel(m.FrequencyKhz, m.AudioChannel));
+        WeakReferenceMessenger.Default.Register<ChannelPanUpdateMessage>(this,
+            (r, m) => _openFreqService.SetPan(m.FrequencyKhz, m.Pan));
     }
 
     private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
@@ -264,23 +264,23 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                             channel.Leave();
                         }
 
-                        // set hotkeys and AudioChannel from Settings
+                        // set hotkeys and Pan from Settings
                         switch (type)
                         {
                             case RadioType.VHF:
                                 channel.PttHotKey = new KeyboardBinding(KeyCode.VcF1);
                                 channel.SquelchHotKey = _settings.BmsVhfSquelchHotkey;
-                                channel.AudioChannel = _settings.BmsVhfAudioChannel;
+                                channel.Pan = _settings.BmsVhfPan;
                                 break;
                             case RadioType.UHF:
                                 channel.PttHotKey = new KeyboardBinding(KeyCode.VcF2);
                                 channel.SquelchHotKey = _settings.BmsUhfSquelchHotkey;
-                                channel.AudioChannel = _settings.BmsUhfAudioChannel;
+                                channel.Pan = _settings.BmsUhfPan;
                                 break;
                             case RadioType.GUARD:
                                 channel.PttHotKey = new KeyboardBinding(KeyCode.VcF3);
                                 channel.SquelchHotKey = _settings.BmsUhfSquelchHotkey;
-                                channel.AudioChannel = _settings.BmsUhfAudioChannel;
+                                channel.Pan = _settings.BmsUhfPan;
                                 break;
                             default:
                                 _logger.LogWarning("Unknown radio type: " + type);
@@ -410,13 +410,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             switch (e.RadioType)
             {
                 case RadioType.UHF:
-                    newChannel.AudioChannel = _settings.BmsUhfAudioChannel;
+                    newChannel.Pan = _settings.BmsUhfPan;
                     break;
                 case RadioType.VHF:
-                    newChannel.AudioChannel = _settings.BmsVhfAudioChannel;
+                    newChannel.Pan = _settings.BmsVhfPan;
                     break;
                 case RadioType.GUARD:
-                    newChannel.AudioChannel = _settings.BmsUhfAudioChannel;
+                    newChannel.Pan = _settings.BmsUhfPan;
                     break;
             }
         }

@@ -165,12 +165,12 @@
 
                                         <TextBlock Text="UHF" Classes="InputLabel" />
                                         <controls1:AudioChannelSelector
-                                            SelectedChannel="{Binding Settings.BmsUhfAudioChannel}"
+                                            Pan="{Binding Settings.BmsUhfPan}"
                                             Margin="0,0,0,12" />
 
                                         <TextBlock Text="VHF" Classes="InputLabel" />
                                         <controls1:AudioChannelSelector
-                                            SelectedChannel="{Binding Settings.BmsVhfAudioChannel}" />
+                                            Pan="{Binding Settings.BmsVhfPan}" />
                                     </StackPanel>
                                 </controls:Card>
 

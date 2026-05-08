@@ -47,7 +47,7 @@ public interface IOpenFreqService : IDisposable
     Task UpdateDisplayNameAsync(string newDisplayName);
 
     void SetVolume(int frequencyKhz, float volumeValue);
-    void SetAudioChannel(int frequencyKhz, RadioPlayback.AudioChannel channel);
+    void SetPan(int frequencyKhz, int pan);
     
     void EnableFrequency(int frequencyKhz);
     void DisableFrequency(int frequencyKhz);

@@ -98,8 +98,9 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial bool IsEditable { get; set; }
 
+    /// <summary>Pan: -100 = full left, 0 = center, +100 = full right.</summary>
     [ObservableProperty]
-    public partial RadioPlayback.AudioChannel AudioChannel { get; set; } = RadioPlayback.AudioChannel.Both;
+    public partial int Pan { get; set; } = 0;
 
     [ObservableProperty] public partial bool IsSquelchEnabled { get; set; } = true;
 
@@ -173,7 +174,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
                 _originalFrequencyKhz,
                 FrequencyKhz,
                 ConnectionStatus,
-                AudioChannel,
+                Pan,
                 _parentChannelCardGroupViewModel.IsBmsGroup
             );
 
@@ -285,9 +286,9 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Send(new StopTransmissionMessage(Id, FrequencyKhz));
     }
 
-    partial void OnAudioChannelChanged(RadioPlayback.AudioChannel value)
+    partial void OnPanChanged(int value)
     {
-        WeakReferenceMessenger.Default.Send(new ChannelAudioChannelUpdateMessage(Id, FrequencyKhz, value));
+        WeakReferenceMessenger.Default.Send(new ChannelPanUpdateMessage(Id, FrequencyKhz, value));
     }
 
     [RelayCommand]
@@ -331,7 +332,7 @@ public class ChannelUpdatedMessage(
     int oldFrequencyKhz,
     int newFrequencyKhz,
     Channel.ChannelConnectionStatus oldConnectionStatus,
-    RadioPlayback.AudioChannel currentAudioChannel,
+    int currentPan,
     bool isBmsChannel)
 {
     public Guid ChannelId { get; } = channelId;
@@ -339,8 +340,7 @@ public class ChannelUpdatedMessage(
     public int NewFrequencyKhz { get; } = newFrequencyKhz;
     public Channel.ChannelConnectionStatus OldConnectionStatus { get; } = oldConnectionStatus;
     public bool IsBmsChannel { get; } = isBmsChannel;
-
-    public RadioPlayback.AudioChannel CurrentAudioChannel { get; } = currentAudioChannel;
+    public int CurrentPan { get; } = currentPan;
 
     public bool NeedsReconnect => !IsBmsChannel &&
                                   OldFrequencyKhz != NewFrequencyKhz &&
@@ -393,9 +393,9 @@ public class ChannelDeleteRequestedMessage(Guid channelId, int frequencyKhz)
     public int FrequencyKhz { get; } = frequencyKhz;
 }
 
-public class ChannelAudioChannelUpdateMessage(Guid channelId, int frequencyKhz, RadioPlayback.AudioChannel audioChannel)
+public class ChannelPanUpdateMessage(Guid channelId, int frequencyKhz, int pan)
 {
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
-    public RadioPlayback.AudioChannel AudioChannel { get; } = audioChannel;
+    public int Pan { get; } = pan;
 }

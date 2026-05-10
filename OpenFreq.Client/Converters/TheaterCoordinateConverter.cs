@@ -6,6 +6,8 @@ using DotSpatial.Projections;
 
 namespace OpenFreq.Utilities
 {
+    public record TheaterDefinition(string Name, string ProjString, double CenterLat, double CenterLon, string? HeightmapPath = null);
+
     public static partial class TheaterCoordinateConverter
     {
         private const int HEIGHTMAP_SIZE_M = 1024 * 1000;
@@ -54,7 +56,6 @@ namespace OpenFreq.Utilities
             public string ProjString { get; }
             private readonly ProjectionInfo _projectionInfo;
             private readonly ProjectionInfo _wgs84;
-            private double XOffsetM, YOffsetM;
             public (double x, double y) CenterProjected { get; private set; }
             
             // Pre-calculated corners in lat/lon (WGS84)
@@ -72,9 +73,6 @@ namespace OpenFreq.Utilities
                 
                 // Use the authoritative center from theater definition
                 CenterProjected = Transform(centerLat, centerLon);
-                XOffsetM = CenterProjected.x - (HEIGHTMAP_SIZE_M / 2);
-                YOffsetM = CenterProjected.y - (HEIGHTMAP_SIZE_M / 2);
-
                 
                 // Pre-calculate corners (in BMS position coordinate system)
                 var corners = new[]
@@ -209,6 +207,15 @@ namespace OpenFreq.Utilities
         /// Gets all available theater names.
         /// </summary>
         public static IEnumerable<string> GetAvailableTheaters() => Theaters.Keys;
+
+        /// <summary>
+        /// Registers a dynamically-detected theater (e.g., from BMS installation scan).
+        /// No-op if name is already registered.
+        /// </summary>
+        public static void RegisterTheater(TheaterDefinition theater)
+        {
+            Theaters.TryAdd(theater.Name, new Theater(theater.Name, theater.ProjString, theater.CenterLat, theater.CenterLon));
+        }
 
         // For UI bindings
         public static readonly IEnumerable<string> AllTheaters = ["Korea KTO", "Balkans", "HTO", "ITO"];

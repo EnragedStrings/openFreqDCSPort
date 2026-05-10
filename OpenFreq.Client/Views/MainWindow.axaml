@@ -300,7 +300,8 @@
                                         <!-- BMS auto-detection (Windows + BMS found) -->
                                         <StackPanel IsVisible="{Binding Settings.BmsInstallFound}">
                                             <TextBlock Text="BMS Theater" Classes="InputLabel" />
-                                            <ComboBox ItemsSource="{Binding Settings.BmsInstalledTheaters}"
+                                            <ComboBox ItemsSource="{Binding Settings.TheaterDefinitions}"
+
                                                       SelectedItem="{Binding Settings.SelectedBmsTheater}"
                                                       IsEnabled="{Binding !OpenFreqConnected}"
                                                       HorizontalAlignment="Stretch"

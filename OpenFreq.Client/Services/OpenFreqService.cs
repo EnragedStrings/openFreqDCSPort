@@ -826,8 +826,13 @@ public class OpenFreqService : IOpenFreqService
                 new PeerData(e.PeerId, e.PeerDisplayName,
                     e.IsTransmitting ? PeerData.PeerStatus.Transmitting : PeerData.PeerStatus.Receiving), e.Is3d));
 
+        // Own TX is authoritative: don't let peer state overwrite Transmitting in subscribers
         OnFrequencyTransmissionStatusChanged(e.FrequencyKhz,
-            e.IsTransmitting ? Channel.ChannelTransmissionStatus.Receiving : Channel.ChannelTransmissionStatus.Idle);
+            _activeTransmissionsAndMutedFrequencies.ContainsKey(e.FrequencyKhz)
+                ? Channel.ChannelTransmissionStatus.Transmitting
+                : e.IsTransmitting
+                    ? Channel.ChannelTransmissionStatus.Receiving
+                    : Channel.ChannelTransmissionStatus.Idle);
     }
 
     /// <summary>

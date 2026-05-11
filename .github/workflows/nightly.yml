@@ -16,8 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          ssh-key: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
+          submodules: false
+
+      - name: Configure SSH for submodule
+        env:
+          SSH_KEY: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/openfreqaudio_key
+          chmod 600 ~/.ssh/openfreqaudio_key
+          printf 'Host github.com\n  IdentityFile ~/.ssh/openfreqaudio_key\n  StrictHostKeyChecking no\n' >> ~/.ssh/config
+
+      - name: Fetch submodules
+        run: git submodule update --init --recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -50,8 +61,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          ssh-key: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
+          submodules: false
+
+      - name: Configure SSH for submodule
+        env:
+          SSH_KEY: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/openfreqaudio_key
+          chmod 600 ~/.ssh/openfreqaudio_key
+          printf 'Host github.com\n  IdentityFile ~/.ssh/openfreqaudio_key\n  StrictHostKeyChecking no\n' >> ~/.ssh/config
+
+      - name: Fetch submodules
+        run: git submodule update --init --recursive
 
       - uses: actions/setup-dotnet@v4
         with:

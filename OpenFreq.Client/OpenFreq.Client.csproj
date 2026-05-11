@@ -11,7 +11,7 @@
         <LangVersion>preview</LangVersion>
     </PropertyGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ($([MSBuild]::IsOSPlatform('Windows')) And '$(RuntimeIdentifier)' == '')">
         <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
     </PropertyGroup>
 

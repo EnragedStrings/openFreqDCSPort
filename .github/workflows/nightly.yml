@@ -47,7 +47,7 @@ jobs:
                 -p:DebugType=none -p:DebugSymbols=false \
                 -o "$OUTDIR"
               pushd "$OUTDIR"
-              zip -r "$GITHUB_WORKSPACE/OpenFreq-Server-${RID}-${SUFFIX}.zip" .
+              zip -r "$GITHUB_WORKSPACE/OpenFreq-Server-${RID}-${SUFFIX}.zip" . --exclude "*.pdb"
               popd
             done
           done

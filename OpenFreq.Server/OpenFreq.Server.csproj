@@ -32,4 +32,17 @@
     <ProjectReference Include="..\OpenFreq.Common\OpenFreq.Common.csproj" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(PublishTrimmed)' == 'true'">
+    <NoWarn>$(NoWarn);IL2026;IL2104;IL2035</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(PublishTrimmed)' == 'true'">
+    <TrimmerRootAssembly Include="Serilog" />
+    <TrimmerRootAssembly Include="Serilog.Extensions.Logging" />
+    <TrimmerRootAssembly Include="Serilog.Sinks.Console" />
+    <TrimmerRootAssembly Include="Serilog.Sinks.File" />
+    <TrimmerRootAssembly Include="Terminal.Gui" />
+    <TrimmerRootAssembly Include="System.Management" />
+  </ItemGroup>
+
 </Project>

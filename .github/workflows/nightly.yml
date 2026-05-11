@@ -86,7 +86,13 @@ jobs:
             for SC in true false; do
               SUFFIX=$([[ "$SC" == "true" ]] && echo "selfcontained" || echo "framework")
               OUTDIR="publish/OpenFreq-Client-${RID}-${SUFFIX}"
-              SC_FLAGS=$([[ "$SC" == "true" ]] && echo "-p:PublishSingleFile=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true" || echo "")
+              if [[ "$SC" == "true" && "$RID" == "win-x64" ]]; then
+                SC_FLAGS="-p:PublishSingleFile=true -p:PublishTrimmed=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true"
+              elif [[ "$SC" == "true" ]]; then
+                SC_FLAGS="-p:PublishTrimmed=true"
+              else
+                SC_FLAGS=""
+              fi
               dotnet publish OpenFreq.Client/OpenFreq.Client.csproj \
                 -c Release -r "$RID" --self-contained "$SC" \
                 $SC_FLAGS \
@@ -98,7 +104,7 @@ jobs:
                 cp libs/OpenFreqAudio/OpenFreqAudio/Assets/linux/*.so "$OUTDIR/"
               fi
               pushd "$OUTDIR"
-              zip -r "$GITHUB_WORKSPACE/OpenFreq-Client-${RID}-${SUFFIX}.zip" .
+              zip -r "$GITHUB_WORKSPACE/OpenFreq-Client-${RID}-${SUFFIX}.zip" . --exclude "*.pdb"
               popd
             done
           done

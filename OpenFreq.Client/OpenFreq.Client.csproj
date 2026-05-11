@@ -52,6 +52,10 @@
     </ItemGroup>
 
     <ItemGroup>
+      <TrimmerRootDescriptor Include="TrimmerRoots.xml" />
+    </ItemGroup>
+
+    <ItemGroup>
       <Reference Include="Microsoft.Extensions.DependencyInjection">
         <HintPath>..\..\..\.nuget\packages\microsoft.extensions.dependencyinjection\9.0.10\lib\net9.0\Microsoft.Extensions.DependencyInjection.dll</HintPath>
       </Reference>

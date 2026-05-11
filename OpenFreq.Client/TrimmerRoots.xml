@@ -1,0 +1,18 @@
+<linker>
+  <assembly fullname="OpenFreq.Client">
+    <!-- Falcon BMS shared memory — P/Invoke via kernel32, Marshal.ReadInt32/WriteInt32 -->
+    <type fullname="OpenFreq.Client.Services.FalconSharedMemoryService" preserve="all" />
+    <type fullname="OpenFreq.Client.Services.FalconRadioSharedMemoryService" preserve="all" />
+
+    <!-- Win32 P/Invoke wrappers + MEMORY_BASIC_INFORMATION struct -->
+    <type fullname="OpenFreq.Client.NativeMethods.Win32SharedMemory" preserve="all" />
+    <type fullname="OpenFreq.Client.NativeMethods.Win32SharedMemory/MEMORY_BASIC_INFORMATION" preserve="all" />
+    <type fullname="OpenFreq.Client.NativeMethods.Win32RadioMemory" preserve="all" />
+
+    <!-- Hotkey service — SharpHook + DirectInput P/Invoke on Windows -->
+    <type fullname="OpenFreqClient.Services.HotkeyService" preserve="all" />
+
+    <!-- IVC monitor — Windows process detection -->
+    <type fullname="OpenFreqClient.Services.IvcMonitorService" preserve="all" />
+  </assembly>
+</linker>

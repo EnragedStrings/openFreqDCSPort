@@ -7,72 +7,85 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
-  build:
+  build-server:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [Server, Client]
-        rid: [win-x64, linux-x64]
-        self_contained: ['true', 'false']
-
     steps:
-      - uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ssh-key: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Set names
-        id: names
+      - name: Publish all targets
         run: |
-          SUFFIX=$([[ "${{ matrix.self_contained }}" == "true" ]] && echo "selfcontained" || echo "framework")
-          ARTIFACT="OpenFreq-${{ matrix.project }}-${{ matrix.rid }}-${SUFFIX}"
-          echo "artifact=${ARTIFACT}" >> $GITHUB_OUTPUT
-          echo "publish_dir=publish/${ARTIFACT}" >> $GITHUB_OUTPUT
-
-      - name: Publish
-        run: |
-          dotnet publish OpenFreq.${{ matrix.project }}/OpenFreq.${{ matrix.project }}.csproj \
-            -c Release \
-            -r ${{ matrix.rid }} \
-            --self-contained ${{ matrix.self_contained }} \
-            -p:PublishSingleFile=true \
-            -p:DebugType=none \
-            -p:DebugSymbols=false \
-            -o ${{ steps.names.outputs.publish_dir }}
-
-      - name: Copy native libs
-        if: matrix.project == 'Client'
-        run: |
-          if [[ "${{ matrix.rid }}" == "win-x64" ]]; then
-            cp libs/OpenFreqAudio/OpenFreqAudio/Assets/windows/*.dll \
-               ${{ steps.names.outputs.publish_dir }}/
-          else
-            cp libs/OpenFreqAudio/OpenFreqAudio/Assets/linux/*.so \
-               ${{ steps.names.outputs.publish_dir }}/
-          fi
-
-      - name: Package
-        run: |
-          pushd ${{ steps.names.outputs.publish_dir }}
-          zip -r "$GITHUB_WORKSPACE/${{ steps.names.outputs.artifact }}.zip" .
-          popd
+          for RID in win-x64 linux-x64; do
+            for SC in true false; do
+              SUFFIX=$([[ "$SC" == "true" ]] && echo "selfcontained" || echo "framework")
+              OUTDIR="publish/OpenFreq-Server-${RID}-${SUFFIX}"
+              dotnet publish OpenFreq.Server/OpenFreq.Server.csproj \
+                -c Release -r "$RID" --self-contained "$SC" \
+                -p:PublishSingleFile=true \
+                -p:DebugType=none -p:DebugSymbols=false \
+                -o "$OUTDIR"
+              pushd "$OUTDIR"
+              zip -r "$GITHUB_WORKSPACE/OpenFreq-Server-${RID}-${SUFFIX}.zip" .
+              popd
+            done
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.names.outputs.artifact }}
-          path: ${{ steps.names.outputs.artifact }}.zip
+          name: server-builds
+          path: OpenFreq-Server-*.zip
+
+  build-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ssh-key: ${{ secrets.OPENFREQAUDIO_DEPLOY_KEY }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish all targets
+        run: |
+          for RID in win-x64 linux-x64; do
+            for SC in true false; do
+              SUFFIX=$([[ "$SC" == "true" ]] && echo "selfcontained" || echo "framework")
+              OUTDIR="publish/OpenFreq-Client-${RID}-${SUFFIX}"
+              dotnet publish OpenFreq.Client/OpenFreq.Client.csproj \
+                -c Release -r "$RID" --self-contained "$SC" \
+                -p:PublishSingleFile=true \
+                -p:DebugType=none -p:DebugSymbols=false \
+                -o "$OUTDIR"
+              if [[ "$RID" == "win-x64" ]]; then
+                cp libs/OpenFreqAudio/OpenFreqAudio/Assets/windows/*.dll "$OUTDIR/"
+              else
+                cp libs/OpenFreqAudio/OpenFreqAudio/Assets/linux/*.so "$OUTDIR/"
+              fi
+              pushd "$OUTDIR"
+              zip -r "$GITHUB_WORKSPACE/OpenFreq-Client-${RID}-${SUFFIX}.zip" .
+              popd
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-builds
+          path: OpenFreq-Client-*.zip
 
   release:
-    needs: build
+    needs: [build-server, build-client]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

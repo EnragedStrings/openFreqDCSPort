@@ -20,6 +20,20 @@
         <EmbeddedResource Include="Assets\airplane_icon.svg" />
     </ItemGroup>
 
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ($([MSBuild]::IsOSPlatform('Windows')) And '$(RuntimeIdentifier)' == '')">
+        <None Include="..\libs\OpenFreqAudio\OpenFreqAudio\Assets\windows\*.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>%(Filename)%(Extension)</Link>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ($([MSBuild]::IsOSPlatform('Linux')) And '$(RuntimeIdentifier)' == '')">
+        <None Include="..\libs\OpenFreqAudio\OpenFreqAudio\Assets\linux\*.so">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>%(Filename)%(Extension)</Link>
+        </None>
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="Avalonia" Version="12.0.2" />
         <PackageReference Include="Avalonia.Desktop" Version="12.0.2" />

@@ -40,9 +40,10 @@ jobs:
             for SC in true false; do
               SUFFIX=$([[ "$SC" == "true" ]] && echo "selfcontained" || echo "framework")
               OUTDIR="publish/OpenFreq-Server-${RID}-${SUFFIX}"
+              SC_FLAGS=$([[ "$SC" == "true" ]] && echo "-p:PublishSingleFile=true -p:PublishTrimmed=true" || echo "")
               dotnet publish OpenFreq.Server/OpenFreq.Server.csproj \
                 -c Release -r "$RID" --self-contained "$SC" \
-                -p:PublishSingleFile=true \
+                $SC_FLAGS \
                 -p:DebugType=none -p:DebugSymbols=false \
                 -o "$OUTDIR"
               pushd "$OUTDIR"
@@ -85,9 +86,10 @@ jobs:
             for SC in true false; do
               SUFFIX=$([[ "$SC" == "true" ]] && echo "selfcontained" || echo "framework")
               OUTDIR="publish/OpenFreq-Client-${RID}-${SUFFIX}"
+              SC_FLAGS=$([[ "$SC" == "true" ]] && echo "-p:PublishSingleFile=true -p:PublishTrimmed=true" || echo "")
               dotnet publish OpenFreq.Client/OpenFreq.Client.csproj \
                 -c Release -r "$RID" --self-contained "$SC" \
-                -p:PublishSingleFile=true \
+                $SC_FLAGS \
                 -p:DebugType=none -p:DebugSymbols=false \
                 -o "$OUTDIR"
               if [[ "$RID" == "win-x64" ]]; then

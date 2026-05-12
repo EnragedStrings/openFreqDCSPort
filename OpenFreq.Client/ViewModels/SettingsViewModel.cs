@@ -84,6 +84,8 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] public partial double SidetoneVolume { get; set; } = 0.4;
     [ObservableProperty] public partial bool IsDarkMode { get; set; }
 
+    public bool IsWindowsPlatform { get; } = OperatingSystem.IsWindows();
+
     private readonly ILogger<SettingsViewModel> _logger;
     private readonly IAudioService _audioService;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
@@ -324,7 +326,7 @@ public partial class SettingsViewModel : ViewModelBase
     {
         OpenFreqServerAddress = settings.OpenFreqServerAddress;
         OpenFreqPassword = settings.OpenFreqPassword;
-        ConnectionMode = settings.OwnPositionMode;
+        ConnectionMode = IsWindowsPlatform ? settings.OwnPositionMode : IOpenFreqService.Mode.GCI;
         TacviewServerAddress = settings.TacviewServerAddress;
         TacviewServerPassword = settings.TacviewServerPassword;
         SelectedTheater = settings.SelectedTheater;

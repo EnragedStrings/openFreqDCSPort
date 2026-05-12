@@ -116,8 +116,14 @@
                                                  Content="BMS"
                                                  FontWeight="Bold"
                                                  HorizontalAlignment="Stretch"
-                                                 HorizontalContentAlignment="Center"
-                                                 IsEnabled="{Binding !OpenFreqConnected}" />
+                                                 HorizontalContentAlignment="Center">
+                                        <RadioButton.IsEnabled>
+                                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                <Binding Path="Settings.IsWindowsPlatform" />
+                                                <Binding Path="OpenFreqConnected" Converter="{x:Static BoolConverters.Not}" />
+                                            </MultiBinding>
+                                        </RadioButton.IsEnabled>
+                                    </RadioButton>
                                     <RadioButton Grid.Column="1"
                                                  GroupName="OwnPositionMode"
                                                  IsChecked="{Binding Settings.ModeIsGci}"

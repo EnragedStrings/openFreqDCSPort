@@ -8,7 +8,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Client", "OpenFreq
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreq.Server", "OpenFreq.Server\OpenFreq.Server.csproj", "{828F0C8D-F50A-4B09-9851-29D2AE5E5EEF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreqAudio", "..\BMSAudioSim\OpenFreqAudio\OpenFreqAudio.csproj", "{483FE711-B66A-4C26-A55D-F5891BC9B71E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFreqAudio", "libs\OpenFreqAudio\OpenFreqAudio\OpenFreqAudio.csproj", "{483FE711-B66A-4C26-A55D-F5891BC9B71E}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

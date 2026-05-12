@@ -225,93 +225,72 @@
             <!-- ========================================== -->
             <!-- EDIT MODE (Expanded View) -->
             <!-- ========================================== -->
-            <Grid ColumnDefinitions="*"
-                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
-                  IsVisible="{Binding IsEditing}">
+            <StackPanel IsVisible="{Binding IsEditing}" Spacing="14">
 
-                <!-- Channel Details Section -->
-                <StackPanel Grid.Row="1"
-                            Spacing="12"
-                            Margin="0,0,0,16">
+                <!-- Channel Name — full width -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="CHANNEL NAME"
+                               Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1" />
+                    <TextBox Text="{Binding Name}"
+                             PlaceholderText="Channel name"
+                             Classes="Outline" />
+                </StackPanel>
 
-                    <!-- Name Input -->
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Channel Name"
-                                   FontSize="12"
-                                   Opacity="0.7"
-                                   FontWeight="Medium" />
-                        <TextBox Text="{Binding Name}"
-                                 PlaceholderText="Enter channel name"
-                                 Classes="Outline" />
-                    </StackPanel>
-
-                    <!-- Frequency Input -->
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Frequency"
-                                   FontSize="12"
-                                   Opacity="0.7"
-                                   FontWeight="Medium" />
-                        <TextBox Text="{Binding FrequencyMhzString}"
-                                 PlaceholderText="Enter frequency (MHz)"
+                <!-- Frequency + Pan — same row, labels top-aligned -->
+                <Grid ColumnDefinitions="*, Auto" ColumnSpacing="12">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Text="FREQUENCY"
+                                   Classes="Caption"
+                                   Opacity="0.55"
+                                   FontWeight="SemiBold"
+                                   LetterSpacing="1" />
+                        <TextBox x:Name="FrequencyInput"
+                                 Text="{Binding FrequencyMhzString}"
+                                 PlaceholderText="MHz"
                                  Classes="Outline">
                             <TextBox.KeyBindings>
                                 <KeyBinding Command="{Binding ToggleEditingCommand}" Gesture="Enter" />
                             </TextBox.KeyBindings>
                         </TextBox>
                     </StackPanel>
-                </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="4">
+                        <TextBlock Text="PAN"
+                                   Classes="Caption"
+                                   Opacity="0.55"
+                                   FontWeight="SemiBold"
+                                   LetterSpacing="1" />
+                        <controls1:AudioChannelSelector Pan="{Binding Pan}" />
+                    </StackPanel>
+                </Grid>
 
-                <!-- Divider -->
-                <Border Grid.Row="2"
-                        Height="1"
-                        Background="{DynamicResource MaterialDividerBrush}"
-                        Margin="0,0,0,16" />
-
-                <!-- Audio Channel Selector -->
-                <StackPanel Grid.Row="3"
-                            Spacing="6"
-                            Margin="0,0,0,16">
-                    <TextBlock Text="Pan"
-                               FontSize="12"
-                               Opacity="0.7"
-                               FontWeight="Medium" />
-                    <controls1:AudioChannelSelector Pan="{Binding Pan}" />
-                </StackPanel>
-
-                <!-- Divider -->
-                <Border Grid.Row="4"
-                        Height="1"
-                        Background="{DynamicResource MaterialDividerBrush}"
-                        Margin="0,0,0,16" />
-
-                <!-- Quick Frequency Presets -->
-                <StackPanel Grid.Row="5"
-                            Spacing="6"
-                            Margin="0,0,0,16">
-                    <TextBlock Text="Quick Presets"
-                               FontSize="12"
-                               Opacity="0.7"
-                               FontWeight="Medium" />
+                <!-- Quick Presets -->
+                <StackPanel Spacing="6">
+                    <TextBlock Text="QUICK PRESETS"
+                               Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1" />
                     <UniformGrid Rows="1" Columns="2">
                         <Button Content="BMS Lobby 1"
                                 Command="{Binding BmsLobby1ClickedCommand}"
                                 Classes="Outline"
-                                Height="36"
-                                Margin="0,0,6,0" />
+                                Height="34"
+                                Margin="0,0,4,0" />
                         <Button Content="BMS Lobby 2"
                                 Command="{Binding BmsLobby2ClickedCommand}"
                                 Classes="Outline"
-                                Height="36"
-                                Margin="6,0,0,0" />
+                                Height="34"
+                                Margin="4,0,0,0" />
                     </UniformGrid>
                 </StackPanel>
 
                 <!-- Action Buttons -->
-                <StackPanel Grid.Row="6"
-                            Orientation="Horizontal"
+                <StackPanel Orientation="Horizontal"
                             HorizontalAlignment="Right"
-                            Spacing="8"
-                            Margin="0,8,0,0">
+                            Spacing="4">
                     <Button Content="DELETE"
                             Command="{Binding DeleteChannelCommand}"
                             Classes="Flat"
@@ -324,7 +303,7 @@
                             Height="36"
                             Padding="16,0" />
                 </StackPanel>
-            </Grid>
+            </StackPanel>
         </Panel>
     </controls:Card>
 

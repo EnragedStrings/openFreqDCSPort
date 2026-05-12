@@ -1,5 +1,8 @@
+using System;
+using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Threading;
 using OpenFreqClient.ViewModels;
 
 namespace OpenFreqClient.Views;
@@ -9,6 +12,26 @@ public partial class ChannelCardView : UserControl
     public ChannelCardView()
     {
         InitializeComponent();
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (DataContext is ChannelCardViewModel vm)
+            vm.PropertyChanged += OnVmPropertyChanged;
+    }
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ChannelCardViewModel.IsEditing)
+            && DataContext is ChannelCardViewModel { IsEditing: true })
+        {
+            Dispatcher.UIThread.Post(() =>
+        {
+            FrequencyInput.Focus();
+            FrequencyInput.SelectAll();
+        }, DispatcherPriority.Loaded);
+        }
     }
 
     private void OnPttStart(object? sender, PointerPressedEventArgs e)

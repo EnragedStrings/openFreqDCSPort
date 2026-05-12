@@ -69,10 +69,35 @@
                             BorderBrush="{DynamicResource MaterialDividerBrush}"
                             BorderThickness="0,0,0,1">
                         <StackPanel>
-                            <TextBlock Text="Settings"
-                                       FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Margin="0,0,0,12" />
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                <TextBlock Grid.Column="0"
+                                           Text="Settings"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <!-- Theme toggle: light/dark -->
+                                <Border Grid.Column="1"
+                                        Background="{DynamicResource MaterialBackgroundBrush}"
+                                        CornerRadius="8"
+                                        Padding="2">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton GroupName="ThemeVariant"
+                                                     Theme="{StaticResource MaterialButtonlikeRadioButton}"
+                                                     IsChecked="{Binding !Settings.IsDarkMode}"
+                                                     Padding="6"
+                                                     ToolTip.Tip="Light mode">
+                                            <avalonia:MaterialIcon Kind="WeatherSunny" Width="18" Height="18" />
+                                        </RadioButton>
+                                        <RadioButton GroupName="ThemeVariant"
+                                                     Theme="{StaticResource MaterialButtonlikeRadioButton}"
+                                                     IsChecked="{Binding Settings.IsDarkMode}"
+                                                     Padding="6"
+                                                     ToolTip.Tip="Dark mode">
+                                            <avalonia:MaterialIcon Kind="WeatherNight" Width="18" Height="18" />
+                                        </RadioButton>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
 
                             <!-- Mode Toggle with Background -->
                             <Border Background="{DynamicResource MaterialBackgroundBrush}"
@@ -148,7 +173,24 @@
                                         <TextBlock Text="Output" Classes="InputLabel" />
                                         <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
                                                   SelectedIndex="{Binding Settings.PlaybackDeviceIndex}"
-                                                  HorizontalAlignment="Stretch" />
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,12" />
+
+                                        <CheckBox Content="Sidetone"
+                                                  IsChecked="{Binding Settings.SidetoneEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.SidetoneEnabled}">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.SidetoneVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.SidetoneVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                            <TextBlock Classes="InputLabel" Margin="0, 8, 0, 4" TextWrapping="Wrap" Text="Experimental feature:
+                                            Sidetone with software will always have higher latency than real hardware solutions." FontStyle="Italic" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </controls:Card>
 
@@ -411,7 +453,24 @@
                                         <TextBlock Text="Output" Classes="InputLabel" />
                                         <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
                                                   SelectedIndex="{Binding Settings.PlaybackDeviceIndex}"
-                                                  HorizontalAlignment="Stretch" />
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,12" />
+
+                                        <CheckBox Content="Sidetone"
+                                                  IsChecked="{Binding Settings.SidetoneEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.SidetoneEnabled}">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.SidetoneVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.SidetoneVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                            <TextBlock Classes="InputLabel" Margin="0, 8, 0, 4" TextWrapping="Wrap" Text="Experimental feature:
+                                            Sidetone with software will always have higher latency than real hardware solutions." FontStyle="Italic" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </controls:Card>
                             </StackPanel>

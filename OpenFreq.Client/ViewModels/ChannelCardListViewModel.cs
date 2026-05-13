@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using FalconBmsDataService.Models;
 using FalconBmsDataService.Services;
@@ -17,6 +18,7 @@ using NetTopologySuite.Index.Quadtree;
 using OpenFreq.Client.Models;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
+using OpenFreq.Utilities;
 using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services.Interfaces;
@@ -39,6 +41,17 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     public ChannelCardGroupViewModel? FalconChannelGroup { get; private set; }
 
     private readonly Lock _channelImportLock = new();
+
+    public SettingsViewModel Settings => _settings;
+
+    [ObservableProperty]
+    public partial ChannelCardGroupViewModel? SelectedGroup { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGroupPanelExpanded { get; set; } = true;
+
+    [RelayCommand]
+    private void ToggleGroupPanel() => IsGroupPanelExpanded = !IsGroupPanelExpanded;
 
     // This actually holds all of our ChannelGroups
     [ObservableProperty]
@@ -76,7 +89,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
-        AllChannelGroups?.CollectionChanged += (s, e) => OnPropertyChanged(nameof(ChannelGroups));
+        AllChannelGroups?.CollectionChanged += (s, e) =>
+        {
+            OnPropertyChanged(nameof(ChannelGroups));
+            if (SelectedGroup == null)
+                SelectedGroup = ChannelGroups.FirstOrDefault();
+        };
 
         // Subscribe to transmission messages
         WeakReferenceMessenger.Default.Register<StartTransmissionMessage>(this,
@@ -87,6 +105,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             async (r, m) => await DeleteChannelGroup(m.ChannelCardGroupId));
         WeakReferenceMessenger.Default.Register<ChannelPanUpdateMessage>(this,
             (r, m) => _openFreqService.SetPan(m.FrequencyKhz, m.Pan));
+        WeakReferenceMessenger.Default.Register<ChannelCardGroupViewModel.GroupSelectionRequestedMessage>(this,
+            (r, m) => SelectedGroup = ChannelGroups.FirstOrDefault(g => g.Id == m.GroupId));
     }
 
     private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
@@ -103,7 +123,48 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
         {
             OnPropertyChanged(nameof(ChannelGroups));
+            if (SelectedGroup == null || !ChannelGroups.Contains(SelectedGroup))
+                SelectedGroup = ChannelGroups.FirstOrDefault();
         }
+    }
+
+    [RelayCommand]
+    private void AddChannelGroup()
+    {
+        var (lat, lon) = TheaterCoordinateConverter.GetCenterLatLon(_settings.SelectedTheater);
+        var group = CreateChannelGroup(
+            new ChannelGroupData
+            {
+                Name = $"Channel Group #{AllChannelGroups.Count + 1}",
+                Latitude = lat,
+                Longitude = lon,
+                AltitudeFt = 30000
+            },
+            editMode: true);
+        SelectedGroup = group;
+    }
+
+    public void EnsureDefaultGciGroup()
+    {
+        if (!_settings.ModeIsGci || ChannelGroups.Any()) return;
+
+        var (lat, lon) = TheaterCoordinateConverter.GetCenterLatLon(_settings.SelectedTheater);
+        var group = CreateChannelGroup(
+            new ChannelGroupData
+            {
+                Name = "Default",
+                Latitude = lat,
+                Longitude = lon,
+                AltitudeFt = 30000
+            });
+
+        var lobby1 = group.CreateChannel(1234, "BMS Lobby 1", false);
+        lobby1.PttHotKey = new KeyboardBinding(KeyCode.VcF1);
+
+        var lobby2 = group.CreateChannel(339750, "BMS Lobby 2", false);
+        lobby2.PttHotKey = new KeyboardBinding(KeyCode.VcF2);
+
+        SelectedGroup = group;
     }
 
 
@@ -511,6 +572,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     public async Task DeleteChannelGroup(ChannelCardGroupViewModel channelGroup)
     {
+        if (SelectedGroup == channelGroup)
+            SelectedGroup = null;
         await channelGroup.LeaveAllChannelsAsync();
         await Dispatcher.UIThread.InvokeAsync(() =>
         {

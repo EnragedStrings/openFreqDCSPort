@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -30,7 +31,11 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     public Guid Id { get; } = Guid.NewGuid();
     public SettingsViewModel Settings { get; }
 
+
     [ObservableProperty] public partial string Name { get; set; }
+    [ObservableProperty] public partial IBrush AccentBrush { get; set; } = new SolidColorBrush(Color.Parse("#4CAF50"));
+
+    partial void OnNameChanged(string value) => AccentBrush = MaterialColorUtil.GetAccentBrush(value);
 
     [ObservableProperty] public partial bool EditMode { get; set; }
 
@@ -401,6 +406,15 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     public void ToggleEditing()
     {
         EditMode = !EditMode;
+    }
+
+    public record GroupSelectionRequestedMessage(Guid GroupId);
+
+    [RelayCommand]
+    public void EnterEditMode()
+    {
+        WeakReferenceMessenger.Default.Send(new GroupSelectionRequestedMessage(Id));
+        EditMode = true;
     }
 
     [RelayCommand]

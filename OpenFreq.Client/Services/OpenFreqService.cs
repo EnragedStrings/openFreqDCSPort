@@ -220,6 +220,7 @@ public class OpenFreqService : IOpenFreqService
         _logger.LogWarning("Created NEW RadioPlayback instance: {InstanceId}", _radioPlaybackInstanceId);
         _playbackService.Initialize();
         _playbackService.Apply3dEffects = Apply3dAudioEffects;
+        _playbackService.SidetoneEnabled = SidetoneEnabled;
         _playbackService.SidetoneVolume = (float)SidetoneVolume;
         _isInitialized = true;
 
@@ -450,7 +451,7 @@ public class OpenFreqService : IOpenFreqService
                 return;
             }
             _client.MarkTransmitStartTime();
-            if (_playbackService != null) _playbackService.SidetoneEnabled = true;
+            if (_playbackService != null) _playbackService.SidetoneEnabled = SidetoneEnabled;
             Bass.ChannelPlay(_recordHandle);
         }
 
@@ -480,7 +481,7 @@ public class OpenFreqService : IOpenFreqService
             _recordHandle = 0;
             if (_playbackService != null)
             {
-                _playbackService.SidetoneEnabled = false;
+                _playbackService.SidetoneEnabled = SidetoneEnabled;
                 _playbackService.ClearSidetone();
             }
         }

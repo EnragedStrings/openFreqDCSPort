@@ -75,6 +75,7 @@ public class OpenFreqService : IOpenFreqService
     private const float SquelchLevelOn = 1f;
 
 
+
     public OpenFreqService(IFalconSharedMemoryService falconSharedMemoryService,
         IFalconRadioSharedMemoryService falconRadioSharedMemoryService, ILogger<OpenFreqService> logger,
         ILoggerFactory loggerFactory, IAcmiClientService acmiClientService)
@@ -927,14 +928,27 @@ public class OpenFreqService : IOpenFreqService
 
                 if (!streamExists)
                 {
-                    _logger.LogDebug(
-                        $"Creating new stream: {streamId}, SR={OpenFreqRtcClient.SAMPLE_RATE}");
+                    _logger.LogWarning(
+                        "Lazy-creating stream {StreamId} on {FreqMhz:F3} MHz — PeerJoined arrived after audio",
+                        streamId, frequencyTransmission.Khz / 1000.0);
 
                     _playbackService?.StartPushStream(
                         streamId,
                         OpenFreqRtcClient.SAMPLE_RATE,
                         1,
                         audioParams);
+
+                    // Ensure frequency is tuned; StartPushStream does not set IsTuned.
+                    if (_tunedFrequencies.ContainsKey(frequencyTransmission.Khz))
+                    {
+                        _playbackService?.TuneFrequency(frequencyTransmission.Khz);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Lazy stream {StreamId}: frequency {FreqMhz:F3} MHz not in _tunedFrequencies — audio will be silenced by DSP",
+                            streamId, frequencyTransmission.Khz / 1000.0);
+                    }
                 }
                 else
                 {

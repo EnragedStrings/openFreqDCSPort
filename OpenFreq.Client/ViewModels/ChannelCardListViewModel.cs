@@ -411,6 +411,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 {
                     _logger.LogDebug($"Explicitly joining updated channel: {e.NewFrequencyKhz}");
                     updatedChannel.Join();
+                    _openFreqService.SetPan(e.NewFrequencyKhz, updatedChannel.Pan);
                 }
 
                 // Still make sure to join all channels - e.g. when switching back from guard mode

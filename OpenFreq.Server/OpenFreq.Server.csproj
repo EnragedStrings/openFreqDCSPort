@@ -39,4 +39,11 @@
     <TrimmerRootAssembly Include="System.Management" />
   </ItemGroup>
 
+  <Target Name="RemoveBassNativesFromPublish" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(Filename)' == 'bass' Or '%(Filename)' == 'bassmix' Or '%(Filename)' == 'libbass' Or '%(Filename)' == 'libbassmix'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

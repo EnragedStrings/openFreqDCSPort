@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,9 +18,10 @@ sealed class Program
     public static void Main(string[] args)
     {
         // Initialize Serilog for file logging
-        var logsDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+        var logsDirectory = Path.Combine(exeDir, "logs");
         Directory.CreateDirectory(logsDirectory);
-        
+
         var logFile = Path.Combine(logsDirectory, $"openfreq-client-{DateTime.Now:yyyy-MM-dd}.log");
 
 #if DEBUG
@@ -28,19 +29,19 @@ sealed class Program
             .MinimumLevel.Debug()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
             .MinimumLevel.Override("System", LogEventLevel.Warning)
-            
-            
+
+
             // OVERRIDES - Disables Debug Logs
             // --------------------------------
             // Outputs the Playback Buffer State
             .MinimumLevel.Override("OpenFreqAudio.RadioPlayback", LogEventLevel.Warning)
-            
+
             // Outputs the Physics Calculations
             .MinimumLevel.Override("OpenFreqAudio.FastPathAudioSim", LogEventLevel.Warning)
-            
+
             // Outputs the packet timings (playback queue)
             .MinimumLevel.Override("OpenFreq.Common.RtpAudioReceiver", LogEventLevel.Warning)
-            
+
             .Enrich.FromLogContext()
             .Enrich.WithProperty("Application", "OpenFreqClient")
             .WriteTo.File(
@@ -66,12 +67,12 @@ sealed class Program
                 shared: true)
             .CreateLogger();
 #endif
-        
+
         // Set up dependency injection
         var services = new ServiceCollection();
         services.AddOpenFreqServices();
         ServiceProvider = services.BuildServiceProvider();
-        
+
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
     }

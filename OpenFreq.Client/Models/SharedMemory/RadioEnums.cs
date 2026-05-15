@@ -4,9 +4,9 @@ namespace FalconBmsDataService.Models;
 
 public enum RadioType
 {
-    UHF = 0,
-    VHF = 1,
-    GUARD = 2
+    Radio1 = 0,  // BMS UHF
+    Radio2 = 1,  // BMS VHF
+    Guard = 2    // GUARD
 }
 
 public enum RadioDeviceType

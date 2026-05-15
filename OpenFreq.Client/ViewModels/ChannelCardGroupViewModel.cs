@@ -127,11 +127,11 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         if (!_openFreqService.IsAuthenticated) return;
         if (message.Join)
         {
-            await _openFreqService.JoinFrequencyAsync(message.FrequencyKhz, message.RadioStationData);
+            await _openFreqService.JoinFrequencyAsync(message.FrequencyKhz, message.ChannelId, message.RadioStationData);
         }
         else
         {
-            await _openFreqService.LeaveFrequencyAsync(message.FrequencyKhz);
+            await _openFreqService.LeaveFrequencyAsync(message.FrequencyKhz, message.ChannelId);
         }
     }
 
@@ -182,15 +182,15 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     private async void OnChannelUpdated(object recipient, ChannelUpdatedMessage message)
     {
         if (!_openFreqService.IsAuthenticated) return;
-        
+
         // Always leave the old frequency first
-        await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz);
-        
+        await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz, message.ChannelId);
+
         if (!message.IsBmsChannel)
         {
             // For non-BMS channels, immediately join the new frequency
-            await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, RadioStationData);
-            _openFreqService.SetPan(message.NewFrequencyKhz, message.CurrentPan);
+            await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, message.ChannelId, RadioStationData);
+            _openFreqService.SetPan(message.NewFrequencyKhz, message.ChannelId, message.CurrentPan);
         }
         // For BMS channels, the join will be handled by OnBmsFrequencyChanged after checking power state
     }
@@ -214,24 +214,23 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
     private void OnFrequencyConnectionStatusChanged(object? sender, FrequencyConnectionStatusEventArgs e)
     {
-        var channel = Channels.FirstOrDefault(c => c.FrequencyKhz == e.FrequencyKhz);
-        if (channel == null) return;
-        
-        // 9999 is BMS's "radio off" parking frequency - always keep it disconnected
-        if (e.FrequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+        // If a slotId is specified, update only that channel; otherwise update all channels on the frequency.
+        var targets = e.SlotId.HasValue
+            ? Channels.Where(c => c.Id == e.SlotId.Value)
+            : Channels.Where(c => c.FrequencyKhz == e.FrequencyKhz);
+
+        foreach (var channel in targets)
         {
-            channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
-        }
-        else
-        {
-            channel.ConnectionStatus = e.ConnectionStatus;
+            channel.ConnectionStatus = e.FrequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency
+                ? Channel.ChannelConnectionStatus.Disconnected
+                : e.ConnectionStatus;
         }
     }
-    
+
     private void OnFrequencyTransmissionStatusChanged(object? sender, FrequencyTransmissionStatusEventArgs e)
     {
-        var channel = Channels.FirstOrDefault(c => c.FrequencyKhz == e.FrequencyKhz);
-        channel?.TransmissionStatus = e.TransmissionStatus;
+        foreach (var channel in Channels.Where(c => c.FrequencyKhz == e.FrequencyKhz))
+            channel.TransmissionStatus = e.TransmissionStatus;
     }
     
     
@@ -256,7 +255,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
         if (_openFreqService.IsAuthenticated)
         {
-            _openFreqService.LeaveFrequencyAsync(message.FrequencyKhz);
+            _openFreqService.LeaveFrequencyAsync(message.FrequencyKhz, message.ChannelId);
         }
     }
 
@@ -276,7 +275,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
                         // mute all channels of the same channel type in this group when transmitting
                         var mutedFrequencies = GetAllFrequenciesOfChannelGroup(channel.Type);
                         mutedFrequencies.Remove(channel.FrequencyKhz);
-                        await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, mutedFrequencies);
+                        await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, channel.Id, mutedFrequencies);
                     }
                 }
                 else if (e.Type == IHotkeyService.HotkeyType.SquelchToggle)
@@ -344,8 +343,8 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         foreach (var channel in Channels)
         {
-            await _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, RadioStationData);
-            _openFreqService.SetPan(channel.FrequencyKhz, channel.Pan);
+            await _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, channel.Id, RadioStationData);
+            _openFreqService.SetPan(channel.FrequencyKhz, channel.Id, channel.Pan);
         }
     }
 
@@ -355,7 +354,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         {
             if (channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected)
             {
-                await _openFreqService.LeaveFrequencyAsync(channel.FrequencyKhz);
+                await _openFreqService.LeaveFrequencyAsync(channel.FrequencyKhz, channel.Id);
             }
         }
     }
@@ -674,7 +673,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         foreach (var channel in Channels)
         {
-            if (channel.BmsRadioType == RadioType.VHF)
+            if (channel.BmsRadioType == RadioType.Radio2)
             {
                 channel.SquelchHotKey = capturedKey;
             }
@@ -685,7 +684,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
     {
         foreach (var channel in Channels)
         {
-            if (channel.BmsRadioType is RadioType.UHF or RadioType.GUARD)
+            if (channel.BmsRadioType is RadioType.Radio1 or RadioType.Guard)
             {
                 channel.SquelchHotKey = capturedKey;
             }

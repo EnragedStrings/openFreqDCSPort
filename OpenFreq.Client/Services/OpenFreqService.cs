@@ -40,7 +40,17 @@ public class OpenFreqService : IOpenFreqService
         public bool IsEnabled { get; set; } = isEnabled;
     }
 
-    private readonly ConcurrentDictionary<int, TunedFrequencyData> _tunedFrequencies = new();
+    // Keyed by (frequencyKhz, slotId) so multiple radio sets can tune the same frequency independently.
+    private readonly ConcurrentDictionary<(int FreqKhz, Guid SlotId), TunedFrequencyData> _tunedSlots = new();
+
+    // Which slotId is currently TX-ing on each frequency (needed for own-position lookup during record).
+    private readonly ConcurrentDictionary<int, Guid> _activeTransmissionSlots = new();
+
+    private bool IsAnySlotTuned(int frequencyKhz) =>
+        _tunedSlots.Keys.Any(k => k.FreqKhz == frequencyKhz);
+
+    private TunedFrequencyData? GetAnyTunedSlot(int frequencyKhz) =>
+        _tunedSlots.FirstOrDefault(kvp => kvp.Key.FreqKhz == frequencyKhz).Value;
 
 
     private RadioPlayback? _playbackService;
@@ -340,20 +350,23 @@ public class OpenFreqService : IOpenFreqService
 
         await _client.DisconnectAsync();
         _activeTransmissionsAndMutedFrequencies.Clear();
-        _tunedFrequencies.Clear();
+        _activeTransmissionSlots.Clear();
+        _tunedSlots.Clear();
         OnStatusMessage("Disconnected from OpenFreq server");
         Status = IOpenFreqService.OpenFreqStatus.Disconnected;
     }
 
-    public bool IsFrequencyJoined(int frequencyKhz)
+    public bool IsFrequencyJoined(int frequencyKhz, Guid slotId)
     {
-        return _tunedFrequencies.ContainsKey(frequencyKhz);
+        return _tunedSlots.ContainsKey((frequencyKhz, slotId));
     }
 
     /// <summary>
-    /// Join a frequency channel
+    /// Join a frequency channel for a specific radio slot.
+    /// The signalling server is joined only on the first slot; subsequent slots on the same
+    /// frequency reuse the existing server connection.
     /// </summary>
-    public async Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData)
+    public async Task JoinFrequencyAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData)
     {
         if (_client == null || !_client.IsAuthenticated)
         {
@@ -367,27 +380,37 @@ public class OpenFreqService : IOpenFreqService
             return;
         }
 
-        if (_tunedFrequencies.ContainsKey(frequencyKhz))
+        if (_tunedSlots.ContainsKey((frequencyKhz, slotId)))
         {
-            _logger.LogWarning("Not joining frequency {FrequencyKhz}, client is already joined", frequencyKhz);
+            _logger.LogDebug("Not joining frequency {FrequencyKhz} slot {SlotId}, already joined", frequencyKhz, slotId);
             return;
         }
 
-        await _client.JoinFrequencyAsync(frequencyKhz);
-        OnStatusMessage($"Joined frequency {frequencyKhz / 1000.0:F3} MHz");
+        var isFirstSlot = !IsAnySlotTuned(frequencyKhz);
 
-        _tunedFrequencies.TryAdd(frequencyKhz, new TunedFrequencyData(radioStationData, true));
+        if (isFirstSlot)
+        {
+            await _client.JoinFrequencyAsync(frequencyKhz);
+            OnStatusMessage($"Joined frequency {frequencyKhz / 1000.0:F3} MHz");
+        }
+
+        _tunedSlots.TryAdd((frequencyKhz, slotId), new TunedFrequencyData(radioStationData, true));
         _signalStrengthTracker.SetSquelchState(frequencyKhz, false);
-        _playbackService?.TuneFrequency(frequencyKhz);
+        _playbackService?.TuneFrequency(frequencyKhz, slotId);
 
-        // TODO
-        //_playbackService.SetSquelchLevel(frequencyKhz, 0.1f);
+        if (!isFirstSlot)
+        {
+            // Frequency already active on server — synthesise the connected event for this slot only.
+            OnFrequencyConnectionStatusChanged(frequencyKhz, Channel.ChannelConnectionStatus.Connected, [], slotId);
+            OnStatusMessage($"Tuned frequency {frequencyKhz / 1000.0:F3} MHz (additional slot)");
+        }
     }
 
     /// <summary>
-    /// Leave a frequency channel
+    /// Leave a frequency channel for a specific radio slot.
+    /// The signalling server is left only when the last slot leaves.
     /// </summary>
-    public async Task LeaveFrequencyAsync(int frequencyKhz)
+    public async Task LeaveFrequencyAsync(int frequencyKhz, Guid slotId)
     {
         if (_client == null || !_client.IsAuthenticated)
         {
@@ -395,35 +418,46 @@ public class OpenFreqService : IOpenFreqService
             return;
         }
 
-        // Stop transmission if active
-        await StopTransmissionAsync(frequencyKhz);
+        // Stop transmission if this slot owns the active TX on this frequency.
+        if (_activeTransmissionSlots.TryGetValue(frequencyKhz, out var txSlotId) && txSlotId == slotId)
+        {
+            await StopTransmissionAsync(frequencyKhz);
+        }
 
-        _tunedFrequencies.Remove(frequencyKhz, out _);
-        _signalStrengthTracker.RemoveFrequency(frequencyKhz);
+        // Disconnect this slot immediately (before server leave so UI updates promptly).
+        OnFrequencyConnectionStatusChanged(frequencyKhz, Channel.ChannelConnectionStatus.Disconnected, [], slotId);
 
-        await _client.LeaveFrequencyAsync(frequencyKhz);
-        OnStatusMessage($"Left frequency {frequencyKhz / 1000.0:F3} MHz");
+        _tunedSlots.TryRemove((frequencyKhz, slotId), out _);
+        _playbackService?.UntuneFrequency(frequencyKhz, slotId);
+
+        if (!IsAnySlotTuned(frequencyKhz))
+        {
+            _signalStrengthTracker.RemoveFrequency(frequencyKhz);
+            await _client.LeaveFrequencyAsync(frequencyKhz);
+            OnStatusMessage($"Left frequency {frequencyKhz / 1000.0:F3} MHz");
+        }
     }
 
     /// <summary>
-    /// Start transmitting on a frequency
+    /// Start transmitting on a frequency from a specific radio slot.
     /// </summary>
-    public async Task StartTransmissionAsync(int frequencyKhz, List<int> mutedFrequencies)
+    public async Task StartTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies)
     {
         if (_client == null || _playbackService == null)
         {
             throw new InvalidOperationException("Service not initialized");
         }
 
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
         if (!tunedFrequencyData?.IsEnabled ?? false)
         {
             _logger.LogWarning("Trying to start transmission on disabled frequency {FrequencyKhz}", frequencyKhz);
             return;
         }
 
-        // Add to active transmissions
+        // Add to active transmissions (TX is per-frequency; only one TX per frequency at a time)
         _activeTransmissionsAndMutedFrequencies.TryAdd(frequencyKhz, mutedFrequencies);
+        _activeTransmissionSlots[frequencyKhz] = slotId;
         _playbackService.AddTransmittingFrequencies(mutedFrequencies);
 
         // Mute the noise
@@ -469,6 +503,7 @@ public class OpenFreqService : IOpenFreqService
 
         // Remove from active transmissions
         _activeTransmissionsAndMutedFrequencies.TryRemove(frequencyKhz, out var mutedFrequencies);
+        _activeTransmissionSlots.TryRemove(frequencyKhz, out _);
         if (mutedFrequencies != null)
         {
             _playbackService?.RemoveTransmittingFrequencies(mutedFrequencies);
@@ -497,37 +532,43 @@ public class OpenFreqService : IOpenFreqService
         await _client.SetDisplayNameAsync(newDisplayName);
     }
 
-    public void SetVolume(int frequencyKhz, float volumeValue)
+    public void SetVolume(int frequencyKhz, Guid slotId, float volumeValue)
     {
-        _playbackService?.SetFrequencyVolume(frequencyKhz, volumeValue);
+        _playbackService?.SetFrequencyVolume(frequencyKhz, slotId, volumeValue);
     }
 
-    public void SetPan(int frequencyKhz, int pan)
+    public void SetPan(int frequencyKhz, Guid slotId, int pan)
     {
-        _playbackService?.SetFrequencyPan(frequencyKhz, pan);
+        _playbackService?.SetFrequencyPan(frequencyKhz, slotId, pan);
     }
 
-    public void EnableFrequency(int frequencyKhz)
+    public void EnableFrequency(int frequencyKhz, Guid slotId)
     {
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
-        tunedFrequencyData?.IsEnabled = true;
-        _playbackService?.TuneFrequency(frequencyKhz);
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
+        if (tunedFrequencyData == null) return;
+        tunedFrequencyData.IsEnabled = true;
+        _playbackService?.TuneFrequency(frequencyKhz, slotId);
         OnStatusMessage($"{frequencyKhz / 1000d:F3} enabled");
     }
 
-    public void DisableFrequency(int frequencyKhz)
+    public void DisableFrequency(int frequencyKhz, Guid slotId)
     {
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
-        tunedFrequencyData?.IsEnabled = false;
-        StopTransmissionAsync(frequencyKhz).Wait(50);
-        _playbackService?.UntuneFrequency(frequencyKhz);
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
+        if (tunedFrequencyData == null) return;
+        tunedFrequencyData.IsEnabled = false;
+        // Only stop TX if this slot owns it and no other enabled slot remains.
+        if (_activeTransmissionSlots.TryGetValue(frequencyKhz, out var txSlot) && txSlot == slotId &&
+            !_tunedSlots.Any(k => k.Key.FreqKhz == frequencyKhz && k.Value.IsEnabled))
+        {
+            StopTransmissionAsync(frequencyKhz).Wait(50);
+        }
+        _playbackService?.UntuneFrequency(frequencyKhz, slotId);
         OnStatusMessage($"{frequencyKhz / 1000d:F3} disabled");
     }
 
     public void SetSquelch(int frequencyKhz, bool isSquelchClosed)
     {
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
-        if (tunedFrequencyData == null) return;
+        if (GetAnyTunedSlot(frequencyKhz) == null) return;
 
         _signalStrengthTracker.SetSquelchState(frequencyKhz, !isSquelchClosed);
         _playbackService?.SetSquelchLevel(frequencyKhz, isSquelchClosed ? SquelchLevelOn : SquelchLevelOff);
@@ -636,7 +677,8 @@ public class OpenFreqService : IOpenFreqService
             foreach (var transmission in _activeTransmissionsAndMutedFrequencies)
             {
                 var frequencyKhz = transmission.Key;
-                _tunedFrequencies.TryGetValue(frequencyKhz, out var radioStationData);
+                _activeTransmissionSlots.TryGetValue(frequencyKhz, out var txSlotId);
+                _tunedSlots.TryGetValue((frequencyKhz, txSlotId), out var radioStationData);
                 if (radioStationData == null)
                 {
                     _logger.LogError($"Frequency {frequencyKhz} has no RadioStationData");
@@ -650,8 +692,8 @@ public class OpenFreqService : IOpenFreqService
                     continue;
                 }
 
-                var position = GetOwnPosition(frequencyKhz) ?? new Vector3(0, 0, 0);
-                var velocity = GetOwnVelocity(frequencyKhz);
+                var position = GetOwnPosition(frequencyKhz, txSlotId) ?? new Vector3(0, 0, 0);
+                var velocity = GetOwnVelocity(frequencyKhz, txSlotId);
 
                 if (RadioStationPreset.IsVHF(frequencyKhz))
                 {
@@ -684,9 +726,9 @@ public class OpenFreqService : IOpenFreqService
         return true;
     }
 
-    private Vector3? GetOwnPosition(int frequencyKhz)
+    private Vector3? GetOwnPosition(int frequencyKhz, Guid slotId)
     {
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
         if (tunedFrequencyData == null)
         {
             return null;
@@ -721,9 +763,9 @@ public class OpenFreqService : IOpenFreqService
         }
     }
 
-    private Vector3? GetOwnVelocity(int frequencyKhz)
+    private Vector3? GetOwnVelocity(int frequencyKhz, Guid slotId)
     {
-        _tunedFrequencies.TryGetValue(frequencyKhz, out var tunedFrequencyData);
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
         if (tunedFrequencyData == null)
         {
             return null;
@@ -779,7 +821,8 @@ public class OpenFreqService : IOpenFreqService
 
         if (e.State == ConnectionState.Disconnected)
         {
-            _tunedFrequencies.Clear();
+            _tunedSlots.Clear();
+            _activeTransmissionSlots.Clear();
         }
 
         ConnectionStateChanged?.Invoke(this, e.State);
@@ -794,20 +837,19 @@ public class OpenFreqService : IOpenFreqService
     private void OnClientFrequencyJoined(object? sender, FrequencyJoinedEventArgs e)
     {
         FrequencyJoined?.Invoke(this, e);
-        _playbackService?.TuneFrequency(e.FrequencyKhz);
         foreach (var peer in e.Peers)
         {
             CreateAudioStreamForPeer(e.FrequencyKhz, peer.Id);
         }
 
+        // Update all slots tuned to this frequency to Connected.
         OnFrequencyConnectionStatusChanged(e.FrequencyKhz, Channel.ChannelConnectionStatus.Connected, e.Peers);
     }
 
     private void OnClientFrequencyLeft(object? sender, FrequencyLeftEventArgs e)
     {
-        _playbackService?.UntuneFrequency(e.FrequencyKhz);
-        _signalStrengthTracker.RemoveFrequency(e.FrequencyKhz);
-        OnFrequencyConnectionStatusChanged(e.FrequencyKhz, Channel.ChannelConnectionStatus.Disconnected, []);
+        // Per-slot disconnection and playback untune are handled in LeaveFrequencyAsync.
+        // Nothing extra needed here.
     }
 
     private void OnClientPeerJoined(object? sender, PeerEventArgs e)
@@ -938,15 +980,11 @@ public class OpenFreqService : IOpenFreqService
                         1,
                         audioParams);
 
-                    // Ensure frequency is tuned; StartPushStream does not set IsTuned.
-                    if (_tunedFrequencies.ContainsKey(frequencyTransmission.Khz))
-                    {
-                        _playbackService?.TuneFrequency(frequencyTransmission.Khz);
-                    }
-                    else
+                    // TuneFrequency is called per-slot in JoinFrequencyAsync; no action needed here.
+                    if (!IsAnySlotTuned(frequencyTransmission.Khz))
                     {
                         _logger.LogWarning(
-                            "Lazy stream {StreamId}: frequency {FreqMhz:F3} MHz not in _tunedFrequencies — audio will be silenced by DSP",
+                            "Lazy stream {StreamId}: frequency {FreqMhz:F3} MHz not tuned on any slot — audio will be silenced by DSP",
                             streamId, frequencyTransmission.Khz / 1000.0);
                     }
                 }
@@ -972,8 +1010,11 @@ public class OpenFreqService : IOpenFreqService
 
     private AudioParams CalculateAudioParamsSync(FrequencyTransmission frequencyTransmission, string peerId)
     {
-        var ownPosition = GetOwnPosition(frequencyTransmission.Khz);
-        var ownVelocity = GetOwnVelocity(frequencyTransmission.Khz);
+        // All slots on the same frequency share the same RadioStationData (position/velocity).
+        // Pick any tuned slot's key for position lookup.
+        var anySlotKey = _tunedSlots.Keys.FirstOrDefault(k => k.FreqKhz == frequencyTransmission.Khz);
+        var ownPosition = anySlotKey != default ? GetOwnPosition(anySlotKey.FreqKhz, anySlotKey.SlotId) : null;
+        var ownVelocity = anySlotKey != default ? GetOwnVelocity(anySlotKey.FreqKhz, anySlotKey.SlotId) : null;
 
         if (frequencyTransmission.Position == null || ownPosition == null || _audioSim == null)
         {
@@ -990,8 +1031,8 @@ public class OpenFreqService : IOpenFreqService
             return cached.Params;
         }
 
-        // Calculate
-        _tunedFrequencies.TryGetValue(frequencyTransmission.Khz, out var receiverData);
+        // Calculate — all slots on the same freq share the same RadioStationData, so any slot's data is fine.
+        var receiverData = GetAnyTunedSlot(frequencyTransmission.Khz);
         if (receiverData == null)
         {
             return FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Khz);
@@ -1062,11 +1103,11 @@ public class OpenFreqService : IOpenFreqService
         StatusMessageReceived?.Invoke(this, message);
 
     private void OnFrequencyConnectionStatusChanged(int frequencyKhz, Channel.ChannelConnectionStatus connectionStatus,
-        List<ChannelStateMessage.Peer> peers)
+        List<ChannelStateMessage.Peer> peers, Guid? slotId = null)
     {
         _logger.LogDebug("Frequency {FrequencyKhz}: {Status}", frequencyKhz, connectionStatus);
         FrequencyConnectionStatusChanged?.Invoke(this,
-            new FrequencyConnectionStatusEventArgs(frequencyKhz, connectionStatus, peers));
+            new FrequencyConnectionStatusEventArgs(frequencyKhz, connectionStatus, peers, slotId));
     }
 
     private void OnFrequencyTransmissionStatusChanged(int frequencyKhz,
@@ -1125,12 +1166,15 @@ public class OpenFreqService : IOpenFreqService
 public class FrequencyConnectionStatusEventArgs(
     int frequencyKhz,
     Channel.ChannelConnectionStatus connectionStatus,
-    List<ChannelStateMessage.Peer> peers)
+    List<ChannelStateMessage.Peer> peers,
+    Guid? slotId = null)
     : EventArgs
 {
     public int FrequencyKhz { get; } = frequencyKhz;
     public Channel.ChannelConnectionStatus ConnectionStatus { get; } = connectionStatus;
     public List<ChannelStateMessage.Peer> Peers = peers;
+    /// <summary>When set, only the channel with this Id should be updated; null means all channels on the frequency.</summary>
+    public Guid? SlotId { get; } = slotId;
 }
 
 public class FrequencyTransmissionStatusEventArgs(

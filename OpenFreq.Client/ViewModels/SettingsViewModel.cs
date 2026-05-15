@@ -106,10 +106,10 @@ public partial class SettingsViewModel : ViewModelBase
                                     );
 
     [ObservableProperty]
-    public partial int BmsUhfPan { get; set; } = 0;
+    public partial int BmsRadio1Pan { get; set; } = 0;
 
     [ObservableProperty]
-    public partial int BmsVhfPan { get; set; } = 0;
+    public partial int BmsRadio2Pan { get; set; } = 0;
 
     [ObservableProperty][NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
     public partial HotkeyBinding? BmsUhfSquelchHotkey { get; set; }
@@ -303,24 +303,9 @@ public partial class SettingsViewModel : ViewModelBase
         }
     }
 
-    partial void OnBmsUhfPanChanged(int value)
-    {
-        if (_falconRadioSharedMemoryService.State != ServiceState.Connected) return;
-        var uhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.UHF);
-        var guardChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.GUARD);
-        if (uhfChannel != null)
-            _openFreqService.SetPan(uhfChannel.Frequency, value);
-        if (guardChannel != null)
-            _openFreqService.SetPan(guardChannel.Frequency, value);
-    }
+    partial void OnBmsRadio1PanChanged(int value) { }
 
-    partial void OnBmsVhfPanChanged(int value)
-    {
-        if (_falconRadioSharedMemoryService.State != ServiceState.Connected) return;
-        var vhfChannel = _falconRadioSharedMemoryService.GetRadioChannel(RadioType.VHF);
-        if (vhfChannel != null)
-            _openFreqService.SetPan(vhfChannel.Frequency, value);
-    }
+    partial void OnBmsRadio2PanChanged(int value) { }
 
     public void LoadFromSettings(OpenFreqSettings settings)
     {
@@ -330,8 +315,8 @@ public partial class SettingsViewModel : ViewModelBase
         TacviewServerAddress = settings.TacviewServerAddress;
         TacviewServerPassword = settings.TacviewServerPassword;
         SelectedTheater = settings.SelectedTheater;
-        BmsUhfPan = settings.BmsUhfPan;
-        BmsVhfPan = settings.BmsVhfPan;
+        BmsRadio1Pan = settings.BmsRadio1Pan;
+        BmsRadio2Pan = settings.BmsRadio2Pan;
         SidetoneEnabled = settings.SidetoneEnabled;
         SidetoneVolume = settings.SidetoneVolume;
         if (settings.DarkMode.HasValue)
@@ -478,8 +463,8 @@ public partial class SettingsViewModel : ViewModelBase
             OutputDeviceName = OutputDeviceName,
             HeightmapPath = HeightmapPath,
             SelectedTheater = SelectedTheater,
-            BmsUhfPan = BmsUhfPan,
-            BmsVhfPan = BmsVhfPan,
+            BmsRadio1Pan = BmsRadio1Pan,
+            BmsRadio2Pan = BmsRadio2Pan,
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
             SidetoneEnabled = SidetoneEnabled,

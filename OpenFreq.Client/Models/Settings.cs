@@ -18,8 +18,8 @@ public class OpenFreqSettings
     public string OutputDeviceName { get; set; } = "";
     public string SelectedTheater { get; set; } = "Korea KTO";
 
-    public int BmsUhfPan { get; set; } // 0 == center
-    public int BmsVhfPan { get; set; }
+    public int BmsRadio1Pan { get; set; } // 0 == center
+    public int BmsRadio2Pan { get; set; }
     
     public HotkeyBinding? BmsSquelchUhfHotkey { get; set; }
     public HotkeyBinding? BmsSquelchVhfHotkey { get; set; }

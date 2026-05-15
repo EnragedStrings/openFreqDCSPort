@@ -41,18 +41,18 @@ public interface IOpenFreqService : IDisposable
     Task Initialize(OpenFreqClient.Models.OpenFreqSettings settings, int recordingDeviceIndex, int playbackDeviceIndex);
     Task ConnectAsync();
     Task DisconnectAsync();
-    bool IsFrequencyJoined(int frequencyKhz);
-    Task JoinFrequencyAsync(int frequencyKhz, RadioStationData radioStationData);
-    Task LeaveFrequencyAsync(int frequencyKhz);
-    Task StartTransmissionAsync(int frequencyKhz, List<int> mutedFrequencies);
+    bool IsFrequencyJoined(int frequencyKhz, Guid slotId);
+    Task JoinFrequencyAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData);
+    Task LeaveFrequencyAsync(int frequencyKhz, Guid slotId);
+    Task StartTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies);
     Task StopTransmissionAsync(int frequencyKhz);
     Task UpdateDisplayNameAsync(string newDisplayName);
 
-    void SetVolume(int frequencyKhz, float volumeValue);
-    void SetPan(int frequencyKhz, int pan);
-    
-    void EnableFrequency(int frequencyKhz);
-    void DisableFrequency(int frequencyKhz);
+    void SetVolume(int frequencyKhz, Guid slotId, float volumeValue);
+    void SetPan(int frequencyKhz, Guid slotId, int pan);
+
+    void EnableFrequency(int frequencyKhz, Guid slotId);
+    void DisableFrequency(int frequencyKhz, Guid slotId);
     
     void SetSquelch(int frequencyKhz, bool isSquelchClosed);
     

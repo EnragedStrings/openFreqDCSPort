@@ -209,14 +209,14 @@
                                             <TextBlock Text="BMS Audio Channels" Classes="SectionHeader" Margin="0" />
                                         </StackPanel>
 
-                                        <TextBlock Text="UHF" Classes="InputLabel" />
+                                        <TextBlock Text="Radio 1 (UHF / PRI)" Classes="InputLabel" />
                                         <controls1:AudioChannelSelector
-                                            Pan="{Binding Settings.BmsUhfPan}"
+                                            Pan="{Binding Settings.BmsRadio1Pan}"
                                             Margin="0,0,0,12" />
 
-                                        <TextBlock Text="VHF" Classes="InputLabel" />
+                                        <TextBlock Text="Radio 2 (VHF / AUX)" Classes="InputLabel" />
                                         <controls1:AudioChannelSelector
-                                            Pan="{Binding Settings.BmsVhfPan}" />
+                                            Pan="{Binding Settings.BmsRadio2Pan}" />
                                     </StackPanel>
                                 </controls:Card>
 
@@ -230,7 +230,7 @@
                                             <TextBlock Text="BMS Squelch Hotkeys" Classes="SectionHeader" Margin="0" />
                                         </StackPanel>
 
-                                        <TextBlock Text="UHF Squelch Toggle" Classes="InputLabel" />
+                                        <TextBlock Text="Radio 1 Squelch Toggle" Classes="InputLabel" />
                                         <Button
                                             Command="{Binding BeginCaptureUhfSquelchHotkeyCommand}"
                                             BorderBrush="{DynamicResource MaterialDividerBrush}"
@@ -253,7 +253,7 @@
                                             </StackPanel>
                                         </Button>
 
-                                        <TextBlock Text="VHF Squelch Toggle" Classes="InputLabel" />
+                                        <TextBlock Text="Radio 2 Squelch Toggle" Classes="InputLabel" />
                                         <Button
                                             Command="{Binding BeginCaptureVhfSquelchHotkeyCommand}"
                                             BorderBrush="{DynamicResource MaterialDividerBrush}"

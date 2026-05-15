@@ -54,7 +54,7 @@ public interface IOpenFreqService : IDisposable
     void EnableFrequency(int frequencyKhz, Guid slotId);
     void DisableFrequency(int frequencyKhz, Guid slotId);
     
-    void SetSquelch(int frequencyKhz, bool isSquelchClosed);
+    void SetSquelch(int frequencyKhz, Guid slotId, bool isSquelchClosed);
     
     public enum OpenFreqStatus
     {

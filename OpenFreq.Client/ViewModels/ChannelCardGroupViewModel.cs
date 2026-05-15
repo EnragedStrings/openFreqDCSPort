@@ -237,7 +237,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
 
     private void OnSquelchEnabledDisabled(object recipient, SquelchEnabledDisabledMessage message)
     {
-        _openFreqService.SetSquelch(message.FrequencyKhz, message.SquelchEnabled);
+        _openFreqService.SetSquelch(message.FrequencyKhz, message.ChannelId, message.SquelchEnabled);
     }
 
     private void OnChannelDeleteRequested(object recipient, ChannelDeleteRequestedMessage message)

@@ -566,12 +566,10 @@ public class OpenFreqService : IOpenFreqService
         OnStatusMessage($"{frequencyKhz / 1000d:F3} disabled");
     }
 
-    public void SetSquelch(int frequencyKhz, bool isSquelchClosed)
+    public void SetSquelch(int frequencyKhz, Guid slotId, bool isSquelchClosed)
     {
-        if (GetAnyTunedSlot(frequencyKhz) == null) return;
-
         _signalStrengthTracker.SetSquelchState(frequencyKhz, !isSquelchClosed);
-        _playbackService?.SetSquelchLevel(frequencyKhz, isSquelchClosed ? SquelchLevelOn : SquelchLevelOff);
+        _playbackService?.SetSquelchLevel(frequencyKhz, slotId, isSquelchClosed ? 1f : 0f);
     }
 
     public void SetOwnPositionMode(IOpenFreqService.Mode newMode)

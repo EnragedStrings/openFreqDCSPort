@@ -130,6 +130,7 @@ public partial class SettingsViewModel : ViewModelBase
     partial void OnIs3dModeChanged(bool value)
     {
         _openFreqService.Apply3dAudioEffects = value;
+        _ = _openFreqService.NotifyModeAsync(value);
     }
 
     partial void OnConnectionModeChanged(IOpenFreqService.Mode value)
@@ -143,6 +144,7 @@ public partial class SettingsViewModel : ViewModelBase
                 _acmiClientService.Stop();
                 break;
             case IOpenFreqService.Mode.GCI:
+                Is3dMode = false;
                 _falconSharedMemoryService.Stop();
                 _falconRadioSharedMemoryService.Stop();
                 _hotkeyService.UnregisterHotkeys(IHotkeyService.HotkeyType.SquelchToggle);

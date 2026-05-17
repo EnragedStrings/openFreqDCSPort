@@ -350,7 +350,7 @@ public class SignalingServer
             return;
         }
 
-        _channelManager.JoinChannel(joinMsg.FrequencyKhz, session.Id, session.DisplayName ?? "Unnamed");
+        _channelManager.JoinChannel(joinMsg.FrequencyKhz, session.Id, session.DisplayName ?? "Unnamed", session.Is3d);
 
         session.CurrentFrequencies.TryAdd(joinMsg.FrequencyKhz, ClientSession.FrequencyClientStatus.Receiving);
 
@@ -479,6 +479,7 @@ public class SignalingServer
         var modeMsg = SignalingMessageFactory.DeserializePayload<ModeUpdateMessage>(message.Payload);
         if (modeMsg == null) return;
 
+        session.Is3d = modeMsg.Is3d;
         foreach (var frequencyKhz in session.CurrentFrequencies.Keys)
             _channelManager.UpdateIs3d(frequencyKhz, session.Id, modeMsg.Is3d);
 

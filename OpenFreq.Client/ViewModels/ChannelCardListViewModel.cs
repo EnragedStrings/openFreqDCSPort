@@ -212,11 +212,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnRadioVolumeChanged(object? sender, RadioVolumeChangedEventArgs e)
     {
-        if (FalconChannelGroup == null)
-        {
-            _logger.LogError("Attempting to change volume on null FalconChannelGroup");
-            return;
-        }
+        if (_settings.ModeIsGci || FalconChannelGroup == null) return;
 
         _logger.LogDebug($"VOLUME {e.OldVolume} -> {e.NewVolume}");
 
@@ -252,11 +248,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnRadioPowerChanged(object? sender, RadioPowerChangedEventArgs e)
     {
-        if (FalconChannelGroup == null)
-        {
-            _logger.LogError("Attempting to change power on null FalconChannelGroup");
-            return;
-        }
+        if (_settings.ModeIsGci || FalconChannelGroup == null) return;
 
         var channels = FalconChannelGroup.Channels.Where(c => c.BmsRadioType == e.RadioType).ToList();
         foreach (var channel in channels)
@@ -277,11 +269,41 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private async void OnConnectionParametersChanged(object? sender,
         ConnectionParametersChangedEventArgs e)
     {
-        if (e.NewParameters.TerminateClient)
+        // Delete the BMS channel group on both TerminateClient and plain MP disconnect (ReadyToTransmit → false).
+        if (e.NewParameters.TerminateClient || (e.OldParameters.ReadyToTransmit && !e.NewParameters.ReadyToTransmit))
         {
-            if (FalconChannelGroup == null) return;
-            await DeleteChannelGroup(FalconChannelGroup);
-            FalconChannelGroup = null;
+            if (FalconChannelGroup != null)
+            {
+                await DeleteChannelGroup(FalconChannelGroup);
+                FalconChannelGroup = null;
+            }
+            return;
+        }
+
+        // Re-sync channel power states when BMS signals it's ready (radios may have been
+        // off during AttemptingToConnect and only enabled once ReadyToTransmit is set).
+        if (!e.OldParameters.ReadyToTransmit && e.NewParameters.ReadyToTransmit)
+        {
+            SyncBmsChannelPowerStates();
+        }
+    }
+
+    private void SyncBmsChannelPowerStates()
+    {
+        if (FalconChannelGroup == null) return;
+        foreach (var type in Enum.GetValues<RadioType>())
+        {
+            var radioChannel = _falconRadioSharedMemoryService.GetRadioChannel(type);
+            if (radioChannel == null) continue;
+            var isPowerOn = radioChannel.IsOn &&
+                            radioChannel.Frequency != IFalconRadioSharedMemoryService.BmsRadioOffFrequency;
+            foreach (var channel in FalconChannelGroup.Channels.Where(c => c.BmsRadioType == type).ToList())
+            {
+                if (channel.FrequencyKhz == IFalconRadioSharedMemoryService.BmsRadioOffFrequency) continue;
+                var isConnected = channel.ConnectionStatus == Channel.ChannelConnectionStatus.Connected;
+                if (isPowerOn != isConnected)
+                    channel.ToggleJoinLeave();
+            }
         }
     }
 
@@ -402,6 +424,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnBmsFrequencyChanged(object? sender, RadioFrequencyChangedEventArgs e)
     {
+        if (_settings.ModeIsGci) return;
         if (FalconChannelGroup == null)
         {
             _logger.LogWarning("Unclean state: _falconChannelGroup is null, reimporting");

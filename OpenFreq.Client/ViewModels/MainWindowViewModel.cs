@@ -402,8 +402,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             _ = DisconnectAsync().Wait(TimeSpan.FromMilliseconds(500));
         }
 
-        // Nickname changed - this is usually triggered AFTER a successful connection
-        if (e.OldParameters.Nickname != e.NewParameters.Nickname && e.NewParameters.ReadyToTransmit)
+        // Update display name when ReadyToTransmit becomes true or nickname changes mid-session.
+        // Always fire on ReadyToTransmit transition because mPlayerMap[0] (LogbookName) is only
+        // populated once in-game, and the cached OldNickname may equal NewNickname on reconnect.
+        if (e.NewParameters.ReadyToTransmit &&
+            (!e.OldParameters.ReadyToTransmit || e.OldParameters.Nickname != e.NewParameters.Nickname))
         {
             _openFreqService.UpdateDisplayNameAsync(e.NewParameters.Nickname);
         }

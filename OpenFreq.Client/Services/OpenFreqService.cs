@@ -189,7 +189,7 @@ public class OpenFreqService : IOpenFreqService
 
         var myDisplayName =
             settings.OwnPositionMode == IOpenFreqService.Mode.BMS
-                ? _falconRadioSharedMemoryService.LogbookName
+                ? (_falconRadioSharedMemoryService.LogbookName ?? settings.DisplayName)
                 : settings.DisplayName;
 
         // Create client with server settings
@@ -836,6 +836,10 @@ public class OpenFreqService : IOpenFreqService
     {
         OnStatusMessage($"Authenticated - Peer ID: {e.PeerId}, Audio Port: {e.AudioPort}");
         OnAllPeersStatusUpdateReceived(sender, new AllPeersStatusEventArgs(e.Peers));
+        // Push current mode to server immediately so it knows our Is3d state before
+        // we join any channels — prevents the AllPeersStatus broadcast on join from
+        // showing us in the wrong lobby/game section.
+        _ = _client?.SendModeUpdateAsync(Apply3dAudioEffects);
     }
 
     private void OnClientFrequencyJoined(object? sender, FrequencyJoinedEventArgs e)

@@ -13,10 +13,10 @@ public class FrequencyChannelManager
     /// <summary>
     /// Join a channel with initial peer data
     /// </summary>
-    public bool JoinChannel(int frequencyKhz, string clientId, string displayName)
+    public bool JoinChannel(int frequencyKhz, string clientId, string displayName, bool is3d = false)
     {
         var channelPeers = _channels.GetOrAdd(frequencyKhz, _ => new ConcurrentDictionary<string, PeerData>());
-        var peerData = new PeerData(clientId, displayName, PeerData.PeerStatus.Receiving);
+        var peerData = new PeerData(clientId, displayName, PeerData.PeerStatus.Receiving, is3d);
         return channelPeers.TryAdd(clientId, peerData);
     }
 

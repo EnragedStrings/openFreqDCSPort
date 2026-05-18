@@ -143,7 +143,10 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         if (e.Status == AcmiConnectionStatus.Connected)
         {
             IsAcmiConnected = true;
-            await UpdateTacviewCallsigns(_callsignUpdateCts?.Token ?? CancellationToken.None);
+            CancellationToken token;
+            try { token = _callsignUpdateCts?.Token ?? CancellationToken.None; }
+            catch (ObjectDisposedException) { return; }
+            await UpdateTacviewCallsigns(token);
         }
         else
         {
@@ -387,6 +390,7 @@ public partial class ChannelCardGroupViewModel : ViewModelBase, IDisposable
         _openFreqService.FrequencyConnectionStatusChanged -= OnFrequencyConnectionStatusChanged;
         _openFreqService.FrequencyTransmissionStatusChanged -= OnFrequencyTransmissionStatusChanged;
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
+        _acmiClientService.ConnectionStatusChanged -= OnAcmiConnectionStatusChanged;
 
         _callsignUpdateCts?.Cancel();
         _callsignUpdateCts?.Dispose();

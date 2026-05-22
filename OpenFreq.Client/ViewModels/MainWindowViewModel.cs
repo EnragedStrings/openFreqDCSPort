@@ -7,6 +7,9 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -50,8 +53,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     [ObservableProperty] public partial SettingsViewModel Settings { get; set; }
 
-    [ObservableProperty] public partial ObservableCollection<ChannelFrequencyPeerViewModel> LobbyPeerList { get; set; } = [];
-    [ObservableProperty] public partial ObservableCollection<ChannelFrequencyPeerViewModel> GamePeerList { get; set; } = [];
+    [ObservableProperty]
+    public partial ObservableCollection<ChannelFrequencyPeerViewModel> LobbyPeerList { get; set; } = [];
+
+    [ObservableProperty]
+    public partial ObservableCollection<ChannelFrequencyPeerViewModel> GamePeerList { get; set; } = [];
 
     public bool HasLobbyPeers => LobbyPeerList.Count > 0;
     public bool HasGamePeers => GamePeerList.Count > 0;
@@ -188,8 +194,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         // Sync _peerModes from the authoritative server snapshot so late-joining
         // clients get the correct lobby/game section for all existing peers.
         foreach (var (frequency, peers) in e.AllPeers)
-            foreach (var peer in peers)
-                _peerModes[(peer.Id, frequency)] = peer.Is3d;
+        foreach (var peer in peers)
+            _peerModes[(peer.Id, frequency)] = peer.Is3d;
         Dispatcher.UIThread.Post(RebuildPeerLists);
     }
 
@@ -215,9 +221,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             }
 
             if (lobbyPeers.Count > 0)
-                newLobby.Add(new ChannelFrequencyPeerViewModel(frequency, lobbyPeers, JoinFrequencyFromPeerList, false, !is3dMode && !IsFrequencyAlreadyConnected(frequency)));
+                newLobby.Add(new ChannelFrequencyPeerViewModel(frequency, lobbyPeers, JoinFrequencyFromPeerList, false,
+                    !is3dMode && !IsFrequencyAlreadyConnected(frequency)));
             if (gamePeers.Count > 0)
-                newGame.Add(new ChannelFrequencyPeerViewModel(frequency, gamePeers, JoinFrequencyFromPeerList, true, is3dMode && !IsFrequencyAlreadyConnected(frequency)));
+                newGame.Add(new ChannelFrequencyPeerViewModel(frequency, gamePeers, JoinFrequencyFromPeerList, true,
+                    is3dMode && !IsFrequencyAlreadyConnected(frequency)));
         }
 
         LobbyPeerList.Clear();
@@ -615,6 +623,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             PeerId = _openFreqService.PeerId ?? "";
             ClearError();
             SettingsDrawerOpened = false;
+            
+            if (Settings is { ModeIsGci: false, MinimizeOnConnect: true })
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var window = ((IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!)
+                        .MainWindow!;
+                    window.WindowState = WindowState.Minimized;
+                });
+            }
         }
         else if (state == ConnectionState.Disconnected)
         {
@@ -626,6 +644,15 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (!HasError)
                 ShowError("Lost connection to server");
             SettingsDrawerOpened = true;
+            
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var window = ((IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!)
+                        .MainWindow!;
+                    if (window.WindowState == WindowState.Minimized)
+                        window.WindowState = WindowState.Normal;
+                });
+            
         }
     }
 
@@ -726,7 +753,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                          .SelectMany(f => f.Peers)
                          .Where(p => p.Id == e.PeerData.Id))
             {
-                peer.IsTransmitting = (Settings.Is3dMode == e.Is3d) && e.PeerData.Status == PeerData.PeerStatus.Transmitting;
+                peer.IsTransmitting = (Settings.Is3dMode == e.Is3d) &&
+                                      e.PeerData.Status == PeerData.PeerStatus.Transmitting;
             }
         });
     }

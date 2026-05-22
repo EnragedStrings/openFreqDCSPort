@@ -434,10 +434,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
 
         // Update display name when ReadyToTransmit becomes true or nickname changes mid-session.
+        // Use LogbookName as fallback if Nickname is empty (same priority order as AttemptingToConnect).
+        // Never fall through to Settings.DisplayName — in BMS mode that is the GCI name.
         if (e.NewParameters.ReadyToTransmit &&
             (!e.OldParameters.ReadyToTransmit || e.OldParameters.Nickname != e.NewParameters.Nickname))
         {
-            _openFreqService.UpdateDisplayNameAsync(e.NewParameters.Nickname);
+            var name = !string.IsNullOrEmpty(e.NewParameters.Nickname)
+                ? e.NewParameters.Nickname
+                : _falconRadioSharedMemoryService.LogbookName;
+            if (!string.IsNullOrEmpty(name))
+                _openFreqService.UpdateDisplayNameAsync(name);
         }
     }
 

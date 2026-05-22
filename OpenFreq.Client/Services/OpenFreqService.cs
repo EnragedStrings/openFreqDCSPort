@@ -190,10 +190,13 @@ public class OpenFreqService : IOpenFreqService
         // In BMS mode: use Nickname from connection params (= LogBook.Callsign(), set by BMS
         // before AttemptToConnect fires). LogbookName is from the Telemetry struct which is
         // initialised to "Wot Pilot?!" and only written after ClientReady() — too late.
+        // NEVER fall back to settings.DisplayName in BMS mode — that is the manually-entered
+        // GCI name. If Nickname is unavailable (ConnectionParameters reset between RCC close
+        // and next poll), connect with an empty placeholder; UpdateDisplayNameAsync() will
+        // push the real callsign immediately after authentication.
         var myDisplayName =
             settings.OwnPositionMode == IOpenFreqService.Mode.BMS
-                ? (_falconRadioSharedMemoryService.ConnectionParameters?.Nickname
-                   ?? settings.DisplayName)
+                ? (_falconRadioSharedMemoryService.ConnectionParameters?.Nickname ?? string.Empty)
                 : settings.DisplayName;
 
         // Create client with server settings

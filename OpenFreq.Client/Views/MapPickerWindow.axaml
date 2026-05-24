@@ -89,7 +89,17 @@
                     <TextBlock Foreground="White" 
                                IsVisible="{Binding IsTrackingMode}">
                         <Run Text="Alt: "/>
-                        <Run Text="{Binding Altitude, StringFormat='{}{0:F0}ft'}"/>
+                        <Run Text="{Binding AltitudeFt, StringFormat='{}{0:F0}ft'}"/>
+                    </TextBlock>
+                    <TextBlock Foreground="White" 
+                               IsVisible="{Binding IsTrackingMode}">
+                        <Run Text="TAS: "/>
+                        <Run Text="{Binding SpeedKts, StringFormat='{}{0:F0}kts'}"/>
+                    </TextBlock>
+                    <TextBlock Foreground="White" 
+                               IsVisible="{Binding IsTrackingMode}">
+                        <Run Text="Mach: "/>
+                        <Run Text="{Binding SpeedMach, StringFormat='{}{0:F1}m'}"/>
                     </TextBlock>
                 </StackPanel>
             </Border>

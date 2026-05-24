@@ -320,6 +320,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         {
             _hotkeyService.UnregisterHotkey(IHotkeyService.HotkeyType.Ptt, PttHotKey, Id);
         }
+        WeakReferenceMessenger.Default.Unregister<SignalStrengthTracker.SignalStrengthUpdateMessage>(this);
     }
 }
 

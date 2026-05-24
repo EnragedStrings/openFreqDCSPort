@@ -196,7 +196,8 @@
                                                 Theme="{StaticResource MaterialFlatButton}" Classes="primary"
                                                 Command="{Binding TrackSelectedAircraftCommand}"
                                                 ToolTip.Tip="Track on map"
-                                                Width="40" Height="40">
+                                                Width="40" Height="40"
+                                                IsEnabled="{Binding SelectedTacviewCallsign, Converter={x:Static ObjectConverters.IsNotNull} }">
                                             <avalonia:MaterialIcon Kind="Map" Width="20" Height="20" />
                                         </Button>
                                     </Grid>

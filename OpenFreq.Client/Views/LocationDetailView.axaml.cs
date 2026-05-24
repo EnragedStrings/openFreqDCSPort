@@ -8,6 +8,8 @@ namespace OpenFreqClient.Views;
 
 public partial class LocationDetailView : UserControl
 {
+    private LocationViewModel? _trackedVm;
+
     public LocationDetailView()
     {
         InitializeComponent();
@@ -16,8 +18,11 @@ public partial class LocationDetailView : UserControl
     protected override void OnDataContextChanged(EventArgs e)
     {
         base.OnDataContextChanged(e);
-        if (DataContext is LocationViewModel vm)
-            vm.PropertyChanged += OnVmPropertyChanged;
+        if (_trackedVm != null)
+            _trackedVm.PropertyChanged -= OnVmPropertyChanged;
+        _trackedVm = DataContext as LocationViewModel;
+        if (_trackedVm != null)
+            _trackedVm.PropertyChanged += OnVmPropertyChanged;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)

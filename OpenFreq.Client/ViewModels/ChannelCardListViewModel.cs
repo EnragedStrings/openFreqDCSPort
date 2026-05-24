@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading;
@@ -57,6 +58,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     public partial ObservableCollection<LocationViewModel> AllLocations { get; private set; } = [];
 
+    // Single global ACMI callsign list shared across all LocationViewModels
+    public ObservableCollection<LocationViewModel.TacviewAircraftItem> GlobalTacviewCallsigns { get; } = [];
+    private CancellationTokenSource? _callsignUpdateCts;
+
     // Collection used to display filtered locations (BMS or GCI mode)
     public IEnumerable<LocationViewModel> Locations =>
         _settings.ConnectionMode == IOpenFreqService.Mode.BMS
@@ -89,12 +94,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
-        AllLocations?.CollectionChanged += (s, e) =>
-        {
-            OnPropertyChanged(nameof(Locations));
-            if (SelectedLocation == null)
-                SelectedLocation = Locations.FirstOrDefault();
-        };
+        _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChangedForCallsigns;
+
+        // Sync initial ACMI state in case already connected before this VM was created
+        if (_acmiClientService.Status == AcmiConnectionStatus.Connected)
+            StartCallsignPolling();
+
+        AllLocations.CollectionChanged += OnAllLocationsChanged;
 
         // Subscribe to transmission messages
         WeakReferenceMessenger.Default.Register<StartTransmissionMessage>(this,
@@ -138,6 +144,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                          .Where(c => c.BmsRadioType == RadioType.Radio2))
                 ch.Pan = _settings.BmsRadio2Pan;
         }
+    }
+
+    private void OnAllLocationsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(Locations));
+        if (SelectedLocation == null)
+            SelectedLocation = Locations.FirstOrDefault();
     }
 
     [RelayCommand]
@@ -613,13 +626,83 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void OnAcmiConnectionStatusChangedForCallsigns(object? sender, AcmiConnectionEventArgs e)
+    {
+        if (e.Status == AcmiConnectionStatus.Connected)
+            StartCallsignPolling();
+        else
+            StopCallsignPolling();
+    }
+
+    private void StartCallsignPolling()
+    {
+        StopCallsignPolling();
+        _callsignUpdateCts = new CancellationTokenSource();
+        _ = PollCallsignsAsync(_callsignUpdateCts.Token);
+    }
+
+    private void StopCallsignPolling()
+    {
+        _callsignUpdateCts?.Cancel();
+        _callsignUpdateCts?.Dispose();
+        _callsignUpdateCts = null;
+        Dispatcher.UIThread.Post(() => GlobalTacviewCallsigns.Clear());
+    }
+
+    private async Task PollCallsignsAsync(CancellationToken cancellationToken)
+    {
+        while (_acmiClientService.Status == AcmiConnectionStatus.Connected
+               && !cancellationToken.IsCancellationRequested)
+        {
+            var currentAircraft = _acmiClientService.GetAllAircraft()
+                .Select(ac => new LocationViewModel.TacviewAircraftItem(ac.CallSign, ac.ObjectId))
+                .ToList();
+
+            var currentIds = currentAircraft.Select(a => a.ObjectId).ToHashSet();
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                // Remove stale
+                for (int i = GlobalTacviewCallsigns.Count - 1; i >= 0; i--)
+                {
+                    if (!currentIds.Contains(GlobalTacviewCallsigns[i].ObjectId))
+                        GlobalTacviewCallsigns.RemoveAt(i);
+                }
+
+                // Add new
+                var existingIds = GlobalTacviewCallsigns.Select(a => a.ObjectId).ToHashSet();
+                foreach (var aircraft in currentAircraft)
+                {
+                    if (aircraft.CallSign == string.Empty || existingIds.Contains(aircraft.ObjectId))
+                        continue;
+
+                    // Insert in sorted position by CallSign
+                    var insertAt = 0;
+                    while (insertAt < GlobalTacviewCallsigns.Count
+                           && string.Compare(GlobalTacviewCallsigns[insertAt].CallSign,
+                               aircraft.CallSign, StringComparison.OrdinalIgnoreCase) <= 0)
+                        insertAt++;
+                    GlobalTacviewCallsigns.Insert(insertAt, aircraft);
+                }
+            });
+
+            try
+            {
+                await Task.Delay(1000, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+    }
+
     public LocationViewModel CreateLocation(string name, RadioStationPreset preset,
         RadioStationData.RadioStationType radioStationType,
         bool editMode = false)
     {
         var location = new LocationViewModel(_openFreqService, _hotkeyService, _acmiClientService,
-            _settings, name,
-            preset, radioStationType, editMode: editMode);
+            _settings, name, preset, radioStationType, GlobalTacviewCallsigns, editMode: editMode);
         AllLocations.Add(location);
         return location;
     }
@@ -628,8 +711,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     {
         var location = new LocationViewModel(_openFreqService, _hotkeyService, _acmiClientService,
             _settings, locationData.Name, locationData.RadioStationData.Preset,
-            locationData.RadioStationData.Type, locationData.Latitude, locationData.Longitude,
-            locationData.AltitudeFt, editMode);
+            locationData.RadioStationData.Type, GlobalTacviewCallsigns,
+            locationData.Latitude, locationData.Longitude, locationData.AltitudeFt, editMode);
         AllLocations.Add(location);
         return location;
     }
@@ -667,7 +750,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconRadioSharedMemoryService.ConnectionParametersChanged -= OnConnectionParametersChanged;
         _falconRadioSharedMemoryService.FrequencyChanged -= OnBmsFrequencyChanged;
         _falconRadioSharedMemoryService.PttChanged -= OnBmsPttChanged;
+        _falconRadioSharedMemoryService.PowerChanged -= OnRadioPowerChanged;
+        _falconRadioSharedMemoryService.VolumeChanged -= OnRadioVolumeChanged;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
+        _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
+        _openFreqService.ConnectionStateChanged -= OnOpenFreqConnectionStateChanged;
+        AllLocations.CollectionChanged -= OnAllLocationsChanged;
         _settings.PropertyChanged -= OnSettingsChanged;
+        _acmiClientService.ConnectionStatusChanged -= OnAcmiConnectionStatusChangedForCallsigns;
+        _callsignUpdateCts?.Cancel();
+        _callsignUpdateCts?.Dispose();
     }
 }

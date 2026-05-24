@@ -1300,6 +1300,7 @@ public class OpenFreqService : IOpenFreqService
             _client.TransmissionStateChanged -= OnClientTransmissionStatusChanged;
             _client.PeerTransmissionStateChanged -= OnClientPeerTransmissionStatusChanged;
             _client.AudioDataReceived -= OnClientAudioDataReceived;
+            _client.AllPeersStatusUpdateReceived -= OnAllPeersStatusUpdateReceived;
             _client.ErrorOccurred -= OnClientErrorOccurred;
 
             _client.Dispose();

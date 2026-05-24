@@ -22,7 +22,7 @@ using OpenFreqClient.Services.Interfaces;
 
 namespace OpenFreqClient.ViewModels;
 
-public partial class SettingsViewModel : ViewModelBase
+public partial class SettingsViewModel : ViewModelBase, IDisposable
 {
     private Window MainWindow => ((IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!)
         .MainWindow!;
@@ -548,5 +548,11 @@ public partial class SettingsViewModel : ViewModelBase
                 // Don't update _left, _top, _width, _height - keep the last normal values
                 break;
         }
+    }
+
+    public void Dispose()
+    {
+        _audioService.PlaybackDevicesChanged -= OnPlaybackDevicesChanged;
+        _audioService.RecordingDevicesChanged -= OnRecordingDevicesChanged;
     }
 }

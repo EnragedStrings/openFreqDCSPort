@@ -9,6 +9,8 @@ namespace OpenFreqClient.Views;
 
 public partial class ChannelCardView : UserControl
 {
+    private ChannelCardViewModel? _trackedVm;
+
     public ChannelCardView()
     {
         InitializeComponent();
@@ -17,8 +19,11 @@ public partial class ChannelCardView : UserControl
     protected override void OnDataContextChanged(EventArgs e)
     {
         base.OnDataContextChanged(e);
-        if (DataContext is ChannelCardViewModel vm)
-            vm.PropertyChanged += OnVmPropertyChanged;
+        if (_trackedVm != null)
+            _trackedVm.PropertyChanged -= OnVmPropertyChanged;
+        _trackedVm = DataContext as ChannelCardViewModel;
+        if (_trackedVm != null)
+            _trackedVm.PropertyChanged += OnVmPropertyChanged;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)

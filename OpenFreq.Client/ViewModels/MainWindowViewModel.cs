@@ -20,6 +20,7 @@ using FalconRadioService.Models;
 using FalconRadioService.Services;
 using Material.Styles.Controls;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Client.Models;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreqAudio;
@@ -168,20 +169,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         // manually start it so we can be sure to get a notification if its already running
         _ivcMonitorService.Start();
 
-        LobbyPeerList.CollectionChanged += (_, _) =>
-        {
-            OnPropertyChanged(nameof(HasLobbyPeers));
-            OnPropertyChanged(nameof(LobbyPeerCount));
-            OnPropertyChanged(nameof(DistinctPeers));
-            OnPropertyChanged(nameof(TotalChannels));
-        };
-        GamePeerList.CollectionChanged += (_, _) =>
-        {
-            OnPropertyChanged(nameof(HasGamePeers));
-            OnPropertyChanged(nameof(GamePeerCount));
-            OnPropertyChanged(nameof(DistinctPeers));
-            OnPropertyChanged(nameof(TotalChannels));
-        };
+        LobbyPeerList.CollectionChanged += OnLobbyPeerListChanged;
+        GamePeerList.CollectionChanged += OnGamePeerListChanged;
         Settings.PropertyChanged += OnSettingsPropertyChanged;
         ChannelList.PropertyChanged += OnChannelListPropertyChanged;
         UpdateLocationSubscription();
@@ -786,6 +775,22 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         });
     }
 
+    private void OnLobbyPeerListChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasLobbyPeers));
+        OnPropertyChanged(nameof(LobbyPeerCount));
+        OnPropertyChanged(nameof(DistinctPeers));
+        OnPropertyChanged(nameof(TotalChannels));
+    }
+
+    private void OnGamePeerListChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasGamePeers));
+        OnPropertyChanged(nameof(GamePeerCount));
+        OnPropertyChanged(nameof(DistinctPeers));
+        OnPropertyChanged(nameof(TotalChannels));
+    }
+
     private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(Settings.Is3dMode)) return;
@@ -894,7 +899,12 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                             Latitude = cg.Latitude,
                             Longitude = cg.Longitude,
                             AltitudeFt = cg.AltitudeFeet,
-                            RadioStationData = cg.RadioStationData,
+                            RadioStationData = new RadioStationData
+                            {
+                                Type = RadioStationData.RadioStationType.STATIONARY,
+                                Preset = cg.RadioStationData.Preset,
+                                Ppm = cg.RadioStationData.Ppm,
+                            },
                             Channels = cg.Channels.Select(c => new ChannelData
                             {
                                 Name = c.Name,
@@ -933,6 +943,12 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.PeerActivityReceived -= OnPeerActivityReceived;
         _openFreqService.AllPeersStatusChanged -= OnAllPeersChanged;
         _openFreqService.FrequencyTransmissionStatusChanged -= OnFrequencyTransmissionStatusChanged;
+        _openFreqService.AudioPlaybackErrorOccurred -= OnAudioErrorOccurred;
+        _audioService.AudioDeviceErrorOccurred -= OnAudioErrorOccurred;
+        _ivcMonitorService.IvcStatusChanged -= OnIvcStatusChanged;
+        _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
+        LobbyPeerList.CollectionChanged -= OnLobbyPeerListChanged;
+        GamePeerList.CollectionChanged -= OnGamePeerListChanged;
         Settings.PropertyChanged -= OnSettingsPropertyChanged;
         ChannelList.PropertyChanged -= OnChannelListPropertyChanged;
         if (_subscribedLocation != null)
@@ -951,6 +967,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         
         await DisconnectAsync();
         ChannelList.Dispose();
+        Settings.Dispose();
         _openFreqService.Dispose();
         _hotkeyService.Dispose();
         _acmiClientService.Dispose();

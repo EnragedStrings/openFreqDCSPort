@@ -105,11 +105,20 @@
                                 <Border CornerRadius="6"
                                         Background="{Binding AccentBrush}"
                                         Opacity="0.75">
-                                    <avalonia:MaterialIcon Kind="RadioTower"
-                                                           Width="16" Height="16"
-                                                           Foreground="White"
-                                                           HorizontalAlignment="Center"
-                                                           VerticalAlignment="Center" />
+                                    <Panel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <avalonia:MaterialIcon Kind="MapMarkerOutline"
+                                                               Width="16" Height="16"
+                                                               Foreground="White"
+                                                               IsVisible="{Binding RadioStationData.Type,
+                                                                           Converter={StaticResource EnumToBoolConverter},
+                                                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}" />
+                                        <avalonia:MaterialIcon Kind="Airplane"
+                                                               Width="16" Height="16"
+                                                               Foreground="White"
+                                                               IsVisible="{Binding RadioStationData.Type,
+                                                                           Converter={StaticResource EnumToBoolConverter},
+                                                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.ACMI}}" />
+                                    </Panel>
                                 </Border>
                                 <!-- RX indicator dot (rendered below TX so TX takes priority) -->
                                 <Ellipse Width="9" Height="9"
@@ -186,8 +195,29 @@
                                             <avalonia:MaterialIcon Kind="PencilOutline" Width="15" Height="15" />
                                         </Button>
 
+                                        <!-- Track Button — visible when type=ACMI and ACMI connected -->
+                                        <Button Grid.Row="1" Grid.Column="1"
+                                                Classes="Flat"
+                                                Command="{Binding TrackSelectedAircraftCommand}"
+                                                Width="28" Height="28"
+                                                Padding="4"
+                                                VerticalAlignment="Top"
+                                                ToolTip.Tip="Track aircraft on map">
+                                            <Button.IsVisible>
+                                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                    <Binding Path="RadioStationData.Type"
+                                                             Converter="{StaticResource EnumToBoolConverter}"
+                                                             ConverterParameter="{x:Static models:RadioStationData+RadioStationType.ACMI}" />
+                                                    <Binding Path="IsAcmiConnected" />
+                                                    <Binding Path="SelectedTacviewCallsign"
+                                                             Converter="{x:Static ObjectConverters.IsNotNull}" />
+                                                </MultiBinding>
+                                            </Button.IsVisible>
+                                                <avalonia:MaterialIcon Kind="Map" Width="15" Height="15"/>
+                                        </Button>
+
                                         <!-- Position Source -->
-                                        <Panel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,5,0,0">
+                                        <Panel Grid.Row="1" Grid.Column="0" Margin="0,5,0,0" MinHeight="23">
 
                                             <StackPanel Orientation="Horizontal" Spacing="5"
                                                         IsVisible="{Binding RadioStationData.Type,
@@ -202,7 +232,7 @@
                                                         IsVisible="{Binding RadioStationData.Type,
                                                                     Converter={StaticResource EnumToBoolConverter},
                                                                     ConverterParameter={x:Static models:RadioStationData+RadioStationType.ACMI}}">
-                                                <avalonia:MaterialIcon Kind="Crosshairs" Width="13" Height="13"
+                                                <avalonia:MaterialIcon Kind="Airplane" Width="13" Height="13"
                                                                        Opacity="0.5" VerticalAlignment="Center" />
                                                 <TextBlock Classes="Caption" Opacity="0.6" VerticalAlignment="Center">
                                                     <Run Text="Track:" />
@@ -222,7 +252,7 @@
                                         </Panel>
 
                                         <!-- Station Preset -->
-                                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                        <StackPanel Grid.Row="2" Grid.Column="0"
                                                     Orientation="Horizontal" Spacing="5"
                                                     Margin="0,3,0,0"
                                                     IsVisible="{Binding RadioStationData.Preset, Converter={x:Static ObjectConverters.IsNotNull}}">

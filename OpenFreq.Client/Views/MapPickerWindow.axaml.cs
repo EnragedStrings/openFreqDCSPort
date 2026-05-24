@@ -28,6 +28,11 @@ public partial class MapPickerWindow : Window
         _viewModel.PositionConfirmed += OnPositionConfirmed;
         DataContext = _viewModel;
         MapControl.PointerPressed += OnMapPointerPressed;
+        Closed += (_, _) =>
+        {
+            _viewModel.PositionConfirmed -= OnPositionConfirmed;
+            MapControl.PointerPressed -= OnMapPointerPressed;
+        };
     }
 
     /// <summary>
@@ -46,9 +51,9 @@ public partial class MapPickerWindow : Window
     /// <summary>
     /// Updates the tracked aircraft position (tracking mode only)
     /// </summary>
-    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitude)
+    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach)
     {
-        _viewModel.UpdateTrackedPosition(lat, lon, heading, altitude);
+        _viewModel.UpdateTrackedPosition(lat, lon, heading, altitudeFt, speedKts, speedMach);
     }
     
     private void OnMapPointerPressed(object? sender, PointerPressedEventArgs e)

@@ -31,7 +31,9 @@ public partial class MapPickerViewModel : ViewModelBase
     [ObservableProperty] public partial double Latitude { get; set; }
     [ObservableProperty] public partial double Longitude { get; set; }
     [ObservableProperty] public partial double Heading { get; set; }
-    [ObservableProperty] public partial double Altitude { get; set; }
+    [ObservableProperty] public partial double SpeedKts { get; set; }
+    [ObservableProperty] public partial double SpeedMach { get; set; }
+    [ObservableProperty] public partial double AltitudeFt { get; set; }
     [ObservableProperty] public partial string SearchQuery { get; set; } = string.Empty;
     [ObservableProperty] public partial bool IsSearching { get; private set; }
     [ObservableProperty] public partial string? SearchError { get; set; }
@@ -169,14 +171,16 @@ public partial class MapPickerViewModel : ViewModelBase
     /// <summary>
     /// Updates the tracked aircraft position and heading (tracking mode only)
     /// </summary>
-    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitude)
+    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach)
     {
         if (!IsTrackingMode) return;
 
         Latitude = lat;
         Longitude = lon;
         Heading = heading;
-        Altitude = altitude;
+        AltitudeFt = altitudeFt;
+        SpeedKts = speedKts;
+        SpeedMach = speedMach;
 
         UpdatePositionMarker(lat, lon, heading);
 

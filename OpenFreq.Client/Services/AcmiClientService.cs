@@ -440,6 +440,10 @@ public class AcmiClientService : IAcmiClientService
                 _logger.LogInformation("Stream ended: {Total} lines processed, all valid", lineCount);
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Data stream cancelled (clean disconnect)");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Data stream error");

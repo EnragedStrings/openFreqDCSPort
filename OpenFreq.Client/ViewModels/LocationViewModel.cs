@@ -22,7 +22,6 @@ using OpenFreqClient.Models;
 using OpenFreqClient.Services;
 using OpenFreqClient.Services.Interfaces;
 using OpenFreqClient.Views;
-using SharpHook.Data;
 
 namespace OpenFreqClient.ViewModels;
 
@@ -46,7 +45,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         public override string ToString() => CallSign;
     }
 
-    [ObservableProperty] private ObservableCollection<TacviewAircraftItem> _tacviewFlightCallsigns = [];
+    // Shared global list owned by ChannelCardListViewModel — same instance across all locations
+    public ObservableCollection<TacviewAircraftItem> TacviewFlightCallsigns { get; private set; } = null!;
     [ObservableProperty] private TacviewAircraftItem? _selectedTacviewCallsign;
 
     public RadioStationData RadioStationData { get; private set; }
@@ -56,8 +56,6 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     private readonly IAcmiClientService _acmiClientService;
 
     [ObservableProperty] public partial ObservableCollection<ChannelCardViewModel> Channels { get; set; } = [];
-
-    private readonly CancellationTokenSource? _callsignUpdateCts = new();
 
     // UI Properties
     [ObservableProperty] public partial double Latitude { get; set; }
@@ -79,8 +77,9 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
     public LocationViewModel(IOpenFreqService openFreqService, IHotkeyService hotkeyService,
         IAcmiClientService acmiClientService, SettingsViewModel settingsViewModel, string name,
-        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType, double latitude = 0,
-        double longitude = 0, double altitudeFeet = 0, bool editMode = true)
+        RadioStationPreset preset, RadioStationData.RadioStationType radioStationType,
+        ObservableCollection<TacviewAircraftItem> globalTacviewCallsigns,
+        double latitude = 0, double longitude = 0, double altitudeFeet = 0, bool editMode = true)
     {
         RadioStationData = new RadioStationData
         {
@@ -97,6 +96,7 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         AltitudeFeet = altitudeFeet;
         _acmiClientService = acmiClientService;
         EditMode = editMode;
+        TacviewFlightCallsigns = globalTacviewCallsigns;
 
         // Subscribe to connection state for auto-join
         _openFreqService.ConnectionStateChanged += OnConnectionStateChanged;
@@ -107,6 +107,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChanged;
 
+        // Sync initial ACMI state — event may have already fired before this VM was created
+        IsAcmiConnected = _acmiClientService.Status == AcmiConnectionStatus.Connected;
 
         // Subscribe to hotkey events
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
@@ -130,7 +132,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         if (!_openFreqService.IsAuthenticated) return;
         if (message.Join)
         {
-            await _openFreqService.JoinFrequencyAsync(message.FrequencyKhz, message.ChannelId, message.RadioStationData);
+            await _openFreqService.JoinFrequencyAsync(message.FrequencyKhz, message.ChannelId,
+                message.RadioStationData);
         }
         else
         {
@@ -138,27 +141,17 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async void OnAcmiConnectionStatusChanged(object? sender, AcmiConnectionEventArgs e)
+    private void OnAcmiConnectionStatusChanged(object? sender, AcmiConnectionEventArgs e)
     {
-        if (e.Status == AcmiConnectionStatus.Connected)
-        {
-            IsAcmiConnected = true;
-            CancellationToken token;
-            try { token = _callsignUpdateCts?.Token ?? CancellationToken.None; }
-            catch (ObjectDisposedException) { return; }
-            await UpdateTacviewCallsigns(token);
-        }
-        else
-        {
-            IsAcmiConnected = false;
-        }
+        IsAcmiConnected = e.Status == AcmiConnectionStatus.Connected;
     }
 
 
     public ChannelCardViewModel CreateChannel(int frequencyKhz, string name, bool isInEditMode = true,
         RadioType? bmsRadioType = null)
     {
-        var channel = new ChannelCardViewModel(_openFreqService, _hotkeyService, name, frequencyKhz, isInEditMode, RadioStationData, this,
+        var channel = new ChannelCardViewModel(_openFreqService, _hotkeyService, name, frequencyKhz, isInEditMode,
+            RadioStationData, this,
             Settings);
         channel.Name = name;
         channel.FrequencyKhz = frequencyKhz;
@@ -246,10 +239,10 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
                 channel.TransmissionStatus = e.TransmissionStatus;
         }
 
-        AnyChannelTransmitting = Channels.Any(c => c.TransmissionStatus == Channel.ChannelTransmissionStatus.Transmitting);
+        AnyChannelTransmitting =
+            Channels.Any(c => c.TransmissionStatus == Channel.ChannelTransmissionStatus.Transmitting);
         AnyChannelReceiving = Channels.Any(c => c.TransmissionStatus == Channel.ChannelTransmissionStatus.Receiving);
     }
-
 
 
     private void OnSquelchEnabledDisabled(object recipient, SquelchEnabledDisabledMessage message)
@@ -292,12 +285,14 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
                         // mute all channels of the same channel type in this location when transmitting
                         var mutedFrequencies = GetAllFrequenciesOfLocation(channel.Type);
                         mutedFrequencies.Remove(channel.FrequencyKhz);
-                        await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, channel.Id, mutedFrequencies);
+                        await _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, channel.Id,
+                            mutedFrequencies);
                     }
                 }
                 else if (e.Type == IHotkeyService.HotkeyType.SquelchToggle)
                 {
-                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected && Settings.Is3dMode)
+                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
+                        Settings.Is3dMode)
                     {
                         channel.ToggleSquelch();
                     }
@@ -392,10 +387,10 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
         _acmiClientService.ConnectionStatusChanged -= OnAcmiConnectionStatusChanged;
 
-        _callsignUpdateCts?.Cancel();
-        _callsignUpdateCts?.Dispose();
-
         WeakReferenceMessenger.Default.Unregister<ChannelUpdatedMessage>(this);
+        WeakReferenceMessenger.Default.Unregister<ChannelJoinLeaveRequestedMessage>(this);
+        WeakReferenceMessenger.Default.Unregister<SquelchEnabledDisabledMessage>(this);
+        WeakReferenceMessenger.Default.Unregister<ChannelDeleteRequestedMessage>(this);
         WeakReferenceMessenger.Default.Unregister<StartTransmissionMessage>(this);
         WeakReferenceMessenger.Default.Unregister<StopTransmissionMessage>(this);
     }
@@ -432,61 +427,6 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     {
         WeakReferenceMessenger.Default.Send(new LocationSelectionRequestedMessage(Id));
         EditMode = true;
-    }
-
-    [RelayCommand]
-    private async Task UpdateTacviewCallsigns(CancellationToken cancellationToken)
-    {
-        while (_acmiClientService.Status == AcmiConnectionStatus.Connected
-               && !cancellationToken.IsCancellationRequested)
-        {
-            var currentAircraft = _acmiClientService.GetAllAircraft()
-                .Select(ac => new TacviewAircraftItem(ac.CallSign, ac.ObjectId))
-                .ToList();
-
-            if (currentAircraft.Count > 0)
-            {
-                _callsignUpdateCts?.Cancel(false);
-            }
-
-            // Incremental update
-            var currentIds = currentAircraft.Select(a => a.ObjectId).ToHashSet();
-
-            // Remove items no longer present
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                for (int i = TacviewFlightCallsigns.Count - 1; i >= 0; i--)
-                {
-                    if (!currentIds.Contains(TacviewFlightCallsigns[i].ObjectId))
-                    {
-                        TacviewFlightCallsigns.RemoveAt(i);
-                    }
-                }
-            });
-
-            // Add new items
-            var existingIds = TacviewFlightCallsigns.Select(a => a.ObjectId).ToHashSet();
-            foreach (var aircraft in currentAircraft)
-            {
-                if (aircraft.CallSign != string.Empty && !existingIds.Contains(aircraft.ObjectId))
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        TacviewFlightCallsigns.Add(aircraft);
-                    });
-                }
-            }
-
-            try
-            {
-                await Task.Delay(1000, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when cancellation is requested
-                break;
-            }
-        }
     }
 
     partial void OnLatitudeChanged(double value)
@@ -611,11 +551,14 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
                 if (aircraft != null && _trackingWindow != null)
                 {
                     // Update window with current aircraft position
+                    var aircraftSpeedKts =
+                        AcmiHeightmapConverter.CalculateTAS(aircraft.Mach, aircraft.Transform.Altitude);
                     _trackingWindow.UpdateTrackedPosition(
                         aircraft.Transform.Latitude,
                         aircraft.Transform.Longitude,
                         (aircraft.Transform.Heading + 360) % 360, // the ACMI streams sends headings as +/-180
-                        aircraft.Transform.AltitudeFt);
+                        aircraft.Transform.AltitudeFt,
+                        aircraftSpeedKts, aircraft.Mach);
                 }
 
                 // Update rate: 10 Hz (100ms)

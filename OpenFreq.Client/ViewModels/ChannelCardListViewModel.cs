@@ -398,15 +398,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                         // set hotkeys and Pan from Settings
                         switch (type)
                         {
-                            case RadioType.Radio2:
-                                channel.PttHotKey = new KeyboardBinding(KeyCode.VcF1);
-                                channel.SquelchHotKey = _settings.BmsVhfSquelchHotkey;
-                                channel.Pan = _settings.BmsRadio2Pan;
-                                break;
                             case RadioType.Radio1:
-                                channel.PttHotKey = new KeyboardBinding(KeyCode.VcF2);
+                                channel.PttHotKey = new KeyboardBinding(KeyCode.VcF1);
                                 channel.SquelchHotKey = _settings.BmsUhfSquelchHotkey;
                                 channel.Pan = _settings.BmsRadio1Pan;
+                                break;
+                            case RadioType.Radio2:
+                                channel.PttHotKey = new KeyboardBinding(KeyCode.VcF2);
+                                channel.SquelchHotKey = _settings.BmsVhfSquelchHotkey;
+                                channel.Pan = _settings.BmsRadio2Pan;
                                 break;
                             case RadioType.Guard:
                                 channel.PttHotKey = new KeyboardBinding(KeyCode.VcF3);

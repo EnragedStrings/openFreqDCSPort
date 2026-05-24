@@ -616,14 +616,16 @@ public class SignalingServer
             {
                 try
                 {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                     await session.WebSocket.CloseAsync(
                         WebSocketCloseStatus.NormalClosure,
                         "Cleanup",
-                        CancellationToken.None);
+                        cts.Token);
                 }
-                catch (WebSocketException)
+                catch (Exception ex) when (ex is WebSocketException or OperationCanceledException)
                 {
-                    // Already closed, don't care
+                    // Graceful close failed or timed out — force abort so client detects disconnect
+                    session.WebSocket.Abort();
                 }
             }
 

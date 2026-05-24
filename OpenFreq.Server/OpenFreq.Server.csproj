@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>OpenFreqServer</RootNamespace>
+    <ApplicationIcon>openfreq_server.ico</ApplicationIcon>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">

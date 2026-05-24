@@ -83,7 +83,7 @@ dotnet run --project OpenFreq.Client/OpenFreq.Client.csproj
 
 ## Contributing
 
-Pull requests are welcome. Due to the complexity of this nature, please keep them small. For bugfixes, please specify clear testing/repro cases.
+Pull requests are welcome. Due to the complexity of the project, please keep them small. For bugfixes, please specify clear testing/repro cases.
 
 ## License
 

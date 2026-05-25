@@ -354,6 +354,7 @@ public class OpenFreqRtcClient : IDisposable
                 {
                     await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server closing",
                         CancellationToken.None);
+                    CleanupRtp();
                     IsConnected = false;
                     IsAuthenticated = false;
                     OnConnectionStateChanged(ConnectionState.Disconnected);
@@ -380,6 +381,7 @@ public class OpenFreqRtcClient : IDisposable
         catch (Exception ex)
         {
             OnError($"WebSocket error: {ex.Message}");
+            CleanupRtp();
             IsConnected = false;
             IsAuthenticated = false;
             OnConnectionStateChanged(ConnectionState.Disconnected);

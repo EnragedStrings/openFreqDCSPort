@@ -37,7 +37,7 @@
     <TrimmerRootAssembly Include="Serilog.Sinks.Console" />
     <TrimmerRootAssembly Include="Serilog.Sinks.File" />
     <TrimmerRootAssembly Include="Terminal.Gui" />
-    <TrimmerRootAssembly Include="System.Management" />
+    <TrimmerRootAssembly Include="System.Management" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
   </ItemGroup>
 
   <Target Name="RemoveBassNativesFromPublish" AfterTargets="ComputeFilesToPublish">

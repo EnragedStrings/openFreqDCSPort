@@ -1,11 +1,73 @@
 using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Terminal.Gui;
-using Attribute = Terminal.Gui.Attribute;
-using Label = Terminal.Gui.Label;
+using Terminal.Gui.App;
+using Terminal.Gui.Drivers;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.Views;
+using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace OpenFreqServer;
+
+/// <summary>Row model for colored list views.</summary>
+internal record ColoredRow(string Text, bool IsTransmitting);
+
+/// <summary>
+/// Reusable IListDataSource that renders transmitting rows in red.
+/// </summary>
+internal class ColoredListSource : IListDataSource
+{
+    private static readonly Attribute _normalAttr       = new(ColorName16.BrightYellow, ColorName16.Black);
+    private static readonly Attribute _transmitAttr     = new(ColorName16.BrightRed,    ColorName16.Black);
+    private static readonly Attribute _selectedAttr     = new(ColorName16.Black,         ColorName16.Gray);
+    private static readonly Attribute _selectedTxAttr   = new(ColorName16.Black,         ColorName16.BrightRed);
+
+    public ObservableCollection<ColoredRow> Rows { get; } = new();
+
+    public event NotifyCollectionChangedEventHandler? CollectionChanged;
+
+    public ColoredListSource()
+    {
+        Rows.CollectionChanged += (s, e) => CollectionChanged?.Invoke(this, e);
+    }
+
+    public int Count                            => Rows.Count;
+    public int MaxItemLength                    => Rows.Count > 0 ? Rows.Max(r => r.Text.Length) : 0;
+    public bool SuspendCollectionChangedEvent   { get; set; }
+    public bool IsMarked(int item)              => false;
+    public void SetMark(int item, bool value)   { }
+    public void Dispose()                       { }
+    public System.Collections.IList ToList()    => Rows.Select(r => r.Text).ToList<string>();
+
+    public void Render(ListView listView, bool selected, int item, int col, int row, int width, int viewportX)
+    {
+        if (item >= Rows.Count) return;
+        var rowData = Rows[item];
+
+        var text = rowData.Text;
+        var maxLen = Math.Max(0, width - col);
+        if (text.Length > maxLen) text = text[..maxLen];
+
+        listView.Move(col, row);
+
+        var attr = selected
+            ? (rowData.IsTransmitting ? _selectedTxAttr : _selectedAttr)
+            : (rowData.IsTransmitting ? _transmitAttr   : _normalAttr);
+
+        listView.SetAttribute(attr);
+        listView.AddStr(text);
+
+        // Pad remainder so selection highlight fills the row
+        var pad = maxLen - text.Length;
+        if (pad > 0) listView.AddStr(new string(' ', pad));
+    }
+
+}
 
 public class TerminalGuiServer : IDisposable
 {
@@ -16,15 +78,17 @@ public class TerminalGuiServer : IDisposable
     private Task? _updateTask;
 
     private Label? _statusLabel;
-    private TabView? _tabView;
+    private Tabs? _tabView;
     private ListView? _frequenciesListView;
     private ListView? _clientsListView;
     private ListView? _logsListView;
 
-    private List<string> _frequencyLines = new();
-    private List<string> _clientLines = new();
-    private List<string> _logLines = new();
-    
+    private readonly ColoredListSource _frequencySource = new();
+    private readonly ColoredListSource _clientSource    = new();
+    private readonly ObservableCollection<string> _logLines = new();
+
+    private IApplication? _app;
+
     public TerminalGuiServer(ServerConfig config, ServerStats stats, ConcurrentQueue<TuiLogMessage> logMessages)
     {
         _config = config;
@@ -35,26 +99,27 @@ public class TerminalGuiServer : IDisposable
     public void Start()
     {
         Console.OutputEncoding = Encoding.UTF8;
-        Application.Init();
+        using var app = Application.Create().Init();
+        _app = app;
 
         try
         {
-            SetupUi();
+            var top = new Window { Width = Dim.Fill(), Height = Dim.Fill() };
+            SetupUi(top, app);
             _updateTask = Task.Run(async () => await UpdateLoop());
-            Application.Run();
+            app.Run(top);
         }
         finally
         {
-            Application.Shutdown();
+            _app = null;
         }
     }
 
     public void Stop()
     {
-        if (_cts.IsCancellationRequested) return; // Prevent double-stop
+        if (_cts.IsCancellationRequested) return;
         _cts.Cancel();
 
-        // Wait for update task to finish
         try
         {
             _updateTask?.Wait(TimeSpan.FromSeconds(2));
@@ -63,128 +128,115 @@ public class TerminalGuiServer : IDisposable
         {
         }
 
-        Application.RequestStop();
+        _app?.RequestStop();
     }
 
-    private void SetupUi()
+    private void SetupUi(View top, IApplication app)
     {
-        var top = Application.Top;
+        const string freqTab   = "≋ Frequencies";
+        const string clientTab = "☺ Clients";
+        const string logTab    = "▤ Logs";
 
-        var useUnicode = !OperatingSystem.IsWindows();
-        var freqTab = useUnicode ? "📡 Frequencies" : "≋ Frequencies";
-        var clientTab = useUnicode ? "👥 Clients" : "☺ Clients";
-        var logTab = useUnicode ? "📝 Logs" : "▤ Logs";
-        
-        var schemeDefault = new ColorScheme
+        var schemeDefault = new Scheme
         {
-            Normal = Attribute.Make(Color.Gray, Color.Black),
-            Focus = Attribute.Make(Color.BrightCyan, Color.Black),
-            HotNormal = Attribute.Make(Color.BrightYellow, Color.Black),
-            HotFocus = Attribute.Make(Color.BrightYellow, Color.Black)
+            Normal    = new Attribute(ColorName16.Gray, ColorName16.Black),
+            Focus     = new Attribute(ColorName16.BrightCyan, ColorName16.Black),
+            HotNormal = new Attribute(ColorName16.BrightYellow, ColorName16.Black),
+            HotFocus  = new Attribute(ColorName16.BrightYellow, ColorName16.Black)
         };
 
-        var schemeHeader = new ColorScheme
+        var schemeHeader = new Scheme
         {
-            Normal = Attribute.Make(Color.BrightYellow, Color.Black)
+            Normal = new Attribute(ColorName16.BrightYellow, ColorName16.Black)
         };
 
-        var schemeFrame = new ColorScheme
+        var schemeFrame = new Scheme
         {
-            Normal = Attribute.Make(Color.BrightCyan, Color.Black)
+            Normal = new Attribute(ColorName16.BrightCyan, ColorName16.Black)
         };
 
-        var schemeStatus = new ColorScheme
+        var schemeStatus = new Scheme
         {
-            Normal = Attribute.Make(Color.Black, Color.BrightGreen)
+            Normal = new Attribute(ColorName16.Black, ColorName16.BrightGreen)
         };
 
         // ──────────────────────────────────────────────
         // STATUS BAR (Top)
         // ──────────────────────────────────────────────
-        _statusLabel = new Label("")
+        _statusLabel = new Label
         {
-            X = 0,
-            Y = 0,
-            Width = Dim.Fill(),
+            X      = 0,
+            Y      = 0,
+            Width  = Dim.Fill(),
             Height = 1,
-            ColorScheme = schemeStatus,
-            TextAlignment = TextAlignment.Left
         };
+        _statusLabel.SetScheme(schemeStatus);
         top.Add(_statusLabel);
+
+        // ──────────────────────────────────────────────
+        // FOOTER (Bottom)
+        // ──────────────────────────────────────────────
+        var schemeFooter = new Scheme
+        {
+            Normal = new Attribute(ColorName16.Black, ColorName16.Gray)
+        };
+        var footer = new Label
+        {
+            X      = 0,
+            Y      = Pos.AnchorEnd(1),
+            Width  = Dim.Fill(),
+            Height = 1,
+            Text   = "  F1=Frequencies  F2=Clients  F3=Logs  │  CTRL+Q=Quit Server",
+        };
+        footer.SetScheme(schemeFooter);
+        top.Add(footer);
 
         // ──────────────────────────────────────────────
         // TAB VIEW (Main Content)
         // ──────────────────────────────────────────────
-        _tabView = new TabView()
+        _tabView = new Tabs
         {
-            X = 0,
-            Y = Pos.Bottom(_statusLabel),
-            Width = Dim.Fill(),
-            Height = Dim.Fill(),
-            ColorScheme = schemeDefault
+            X      = 0,
+            Y      = Pos.Bottom(_statusLabel),
+            Width  = Dim.Fill(),
+            Height = Dim.Fill() - 1,
         };
+        _tabView.SetScheme(schemeDefault);
 
-        _tabView.AddTab(new TabView.Tab(freqTab, CreateFrequenciesView(schemeFrame, schemeHeader)), false);
-        _tabView.AddTab(new TabView.Tab(clientTab, CreateClientsView(schemeFrame, schemeHeader)), false);
-        _tabView.AddTab(new TabView.Tab(logTab, CreateLogsView(schemeFrame, schemeHeader)), false);
+        var freqView = CreateFrequenciesView(schemeFrame, schemeHeader);
+        freqView.Title = freqTab;
+        _tabView.Add(freqView);
+
+        var clientView = CreateClientsView(schemeFrame, schemeHeader);
+        clientView.Title = clientTab;
+        _tabView.Add(clientView);
+
+        var logView = CreateLogsView(schemeFrame, schemeHeader);
+        logView.Title = logTab;
+        _tabView.Add(logView);
 
         top.Add(_tabView);
 
         // ──────────────────────────────────────────────
         // Global Key Shortcuts
         // ──────────────────────────────────────────────
-        Application.RootKeyEvent += args =>
+        app.Keyboard.KeyDown += (_, key) =>
         {
-            switch (args.Key)
+            switch (key.KeyCode)
             {
-                case Key.Q | Key.CtrlMask:
-                case Key.q | Key.CtrlMask:
+                case KeyCode.Q | KeyCode.CtrlMask:
                     Stop();
-                    return true;
-                case Key.F1:
-                    _tabView.SelectedTab = _tabView.Tabs.ElementAt(0);
-                    return true;
-                case Key.F2:
-                    _tabView.SelectedTab = _tabView.Tabs.ElementAt(1);
-                    return true;
-                case Key.F3:
-                    _tabView.SelectedTab = _tabView.Tabs.ElementAt(2);
-                    return true;
+                    break;
+                case KeyCode.F1:
+                    _tabView.Value = _tabView.TabCollection.ElementAt(0);
+                    break;
+                case KeyCode.F2:
+                    _tabView.Value = _tabView.TabCollection.ElementAt(1);
+                    break;
+                case KeyCode.F3:
+                    _tabView.Value = _tabView.TabCollection.ElementAt(2);
+                    break;
             }
-
-            return false;
-        };
-
-        // ──────────────────────────────────────────────
-        // Graceful Resize Handling
-        // ──────────────────────────────────────────────
-        Application.Resized += (_) =>
-        {
-            Application.MainLoop.Invoke(() =>
-            {
-                try
-                {
-                    Application.Top.LayoutSubviews();
-                    if (_tabView != null)
-                    {
-                        foreach (var tab in _tabView.Tabs)
-                        {
-                            tab.View.LayoutSubviews();
-                            tab.View.SetNeedsDisplay();
-                        }
-
-                        _tabView.LayoutSubviews();
-                    }
-
-                    Application.Driver.Clip = new Rect(0, 0, Application.Driver.Cols, Application.Driver.Rows);
-                    _tabView?.SetFocus();
-                    Application.Refresh();
-                }
-                catch
-                {
-                    /* ignore */
-                }
-            });
         };
 
         UpdateStatus();
@@ -193,80 +245,82 @@ public class TerminalGuiServer : IDisposable
         UpdateLogs();
     }
 
-
-    private View CreateFrequenciesView(ColorScheme frameScheme, ColorScheme headerScheme)
+    private View CreateFrequenciesView(Scheme frameScheme, Scheme headerScheme)
     {
-        var frame = new FrameView(" Active Frequencies ")
+        var frame = new FrameView
         {
-            X = 1,
-            Y = 0,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 1,
-            ColorScheme = frameScheme
+            Title  = " Active Frequencies ",
+            X      = 0,
+            Y      = 0,
+            Width  = Dim.Fill(),
+            Height = Dim.Fill(),
         };
+        frame.SetScheme(frameScheme);
 
-        _frequenciesListView = new ListView(_frequencyLines)
+        _frequenciesListView = new ListView
         {
-            X = 1,
-            Y = 1,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 2,
-            AllowsMarking = false,
+            X        = 1,
+            Y        = 1,
+            Width    = Dim.Fill() - 2,
+            Height   = Dim.Fill() - 2,
             CanFocus = true,
-            ColorScheme = headerScheme
         };
+        _frequenciesListView.SetScheme(headerScheme);
+        _frequenciesListView.Source = _frequencySource;
 
         frame.Add(_frequenciesListView);
         return frame;
     }
 
-    private View CreateClientsView(ColorScheme frameScheme, ColorScheme headerScheme)
+    private View CreateClientsView(Scheme frameScheme, Scheme headerScheme)
     {
-        var frame = new FrameView(" Connected Clients ")
+        var frame = new FrameView
         {
-            X = 1,
-            Y = 0,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 1,
-            ColorScheme = frameScheme
+            Title  = " Connected Clients ",
+            X      = 0,
+            Y      = 0,
+            Width  = Dim.Fill(),
+            Height = Dim.Fill(),
         };
+        frame.SetScheme(frameScheme);
 
-        _clientsListView = new ListView(_clientLines)
+        _clientsListView = new ListView
         {
-            X = 1,
-            Y = 1,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 2,
-            AllowsMarking = false,
+            X        = 1,
+            Y        = 1,
+            Width    = Dim.Fill() - 2,
+            Height   = Dim.Fill() - 2,
             CanFocus = true,
-            ColorScheme = headerScheme
         };
+        _clientsListView.SetScheme(headerScheme);
+        _clientsListView.Source = _clientSource;
 
         frame.Add(_clientsListView);
         return frame;
     }
 
-    private View CreateLogsView(ColorScheme frameScheme, ColorScheme headerScheme)
+    private View CreateLogsView(Scheme frameScheme, Scheme headerScheme)
     {
-        var frame = new FrameView(" Recent Logs ")
+        var frame = new FrameView
         {
-            X = 1,
-            Y = 0,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 1,
-            ColorScheme = frameScheme
+            Title  = " Recent Logs ",
+            X      = 0,
+            Y      = 0,
+            Width  = Dim.Fill(),
+            Height = Dim.Fill(),
         };
+        frame.SetScheme(frameScheme);
 
-        _logsListView = new ListView(_logLines)
+        _logsListView = new ListView
         {
-            X = 1,
-            Y = 1,
-            Width = Dim.Fill() - 2,
-            Height = Dim.Fill() - 2,
-            AllowsMarking = false,
+            X        = 1,
+            Y        = 1,
+            Width    = Dim.Fill() - 2,
+            Height   = Dim.Fill() - 2,
             CanFocus = true,
-            ColorScheme = headerScheme
         };
+        _logsListView.SetScheme(headerScheme);
+        _logsListView.SetSource(_logLines);
 
         frame.Add(_logsListView);
         return frame;
@@ -280,7 +334,7 @@ public class TerminalGuiServer : IDisposable
             {
                 await Task.Delay(1000, _cts.Token);
 
-                Application.MainLoop.Invoke(() =>
+                _app?.Invoke(() =>
                 {
                     UpdateStatus();
                     UpdateFrequencies();
@@ -303,65 +357,60 @@ public class TerminalGuiServer : IDisposable
     {
         if (_statusLabel == null) return;
 
-        var uptime = _stats.Uptime;
+        var uptime    = _stats.Uptime;
         var uptimeStr = $"{uptime.Days}d{uptime.Hours:D2}h{uptime.Minutes:D2}m{uptime.Seconds:D2}s";
 
         var color = _stats.TotalClients > 0
-            ? Attribute.Make(Color.Black, Color.BrightGreen)
-            : Attribute.Make(Color.Black, Color.BrightRed);
+            ? new Attribute(ColorName16.Black, ColorName16.BrightGreen)
+            : new Attribute(ColorName16.Black, ColorName16.BrightRed);
 
-        _statusLabel.ColorScheme = new ColorScheme { Normal = color };
+        _statusLabel.SetScheme(new Scheme { Normal = color });
 
-        _statusLabel.Text =
+        var info =
             $"● OpenFreq Server | Up: {uptimeStr} | " +
             $"Ports: {_config.WebSocketPort} (ws://) {_config.AudioPort} (Audio) | Clients: {_stats.AuthenticatedClients} | " +
             $"TX: {_stats.ActiveTransmissions} | " +
             $"Auth:{(!string.IsNullOrEmpty(_config.ServerPassword) ? " Yes" : " No")} | " +
-            $"Opus:{(_config.EnableOpusCompression ? " Yes" : " No")} | " +
-            $"F1=Freq  F2=Clients  F3=Logs  CTRL+q=Quit";
+            $"Opus:{(_config.EnableOpusCompression ? " Yes" : " No")}";
+
+        const string hotkeys  = " | F1=Freq  F2=Clients  F3=Logs  CTRL+q=Quit";
+        var termWidth = _app?.Screen.Width ?? Console.WindowWidth;
+        var full      = info + hotkeys;
+        _statusLabel.Text = full.Length <= termWidth ? full : info.Length <= termWidth ? info : info[..termWidth];
     }
 
     private void UpdateFrequencies()
     {
         if (_frequenciesListView == null) return;
 
-        // Save both selection and top visible item
         var currentSelection = _frequenciesListView.SelectedItem;
-        var currentTopItem = _frequenciesListView.TopItem;
+        var frequencies      = _stats.GetFrequencyStats();
+        var rows             = _frequencySource.Rows;
 
-        var frequencies = _stats.GetFrequencyStats();
-
-        _frequencyLines.Clear();
+        rows.Clear();
 
         if (frequencies.Count == 0)
         {
-            _frequencyLines.Add("No active frequencies");
+            rows.Add(new ColoredRow("No active frequencies", false));
         }
         else
         {
-            _frequencyLines.Add($"{"Frequency",-15} {"Clients",8} {"Status",10}");
-            _frequencyLines.Add(new string('-', 40));
+            rows.Add(new ColoredRow($"{"Frequency",-15} {"Clients",8} {"Status",10}", false));
+            rows.Add(new ColoredRow(new string('-', 40), false));
 
             foreach (var freq in frequencies)
             {
-                var status = freq.ClientCount > 0 ? "● Active" : "○ Idle";
-                _frequencyLines.Add($"{$"{freq.FrequencyKhz/1000d:F3} MHz",-15} {freq.ClientCount,8} {status,10}");
+                var indicator = freq.IsTransmitting ? "● TX" : freq.ClientCount > 0 ? "● RX" : "○ Idle";
+                var text      = $"{$"{freq.FrequencyKhz / 1000d:F3} MHz",-15} {freq.ClientCount,8} {indicator,10}";
+                rows.Add(new ColoredRow(text, freq.IsTransmitting));
             }
 
             var totalActive = frequencies.Count(f => f.ClientCount > 0);
-            _frequencyLines.Add(" ");
-            _frequencyLines.Add($"Active: {totalActive}/{frequencies.Count}");
+            rows.Add(new ColoredRow(" ", false));
+            rows.Add(new ColoredRow($"Active: {totalActive}/{frequencies.Count}", false));
         }
 
-        _frequenciesListView.SetSource(_frequencyLines);
-
-        // Restore scroll position
-        if (currentTopItem >= 0 && currentTopItem < _frequencyLines.Count)
-        {
-            _frequenciesListView.TopItem = currentTopItem;
-        }
-
-        if (currentSelection >= 0 && currentSelection < _frequencyLines.Count)
+        if (currentSelection >= 0 && currentSelection < rows.Count)
         {
             _frequenciesListView.SelectedItem = currentSelection;
             _frequenciesListView.EnsureSelectedItemVisible();
@@ -372,78 +421,77 @@ public class TerminalGuiServer : IDisposable
     {
         if (_clientsListView == null) return;
 
-        // Save both selection and top visible item
         var currentSelection = _clientsListView.SelectedItem;
-        var currentTopItem = _clientsListView.TopItem;
+        var clients          = _stats.GetActiveClients().OrderByDescending(c => c.LastActivity).ToList();
+        var rows             = _clientSource.Rows;
 
-        var clients = _stats.GetActiveClients().OrderByDescending(c => c.LastActivity).ToList();
+        rows.Clear();
 
-        _clientLines.Clear();
-
-        _clientLines.Add($"{"Display Name",-24} {"Client ID",-20} {"Frequency",-12} {"Status",8} {"Activity",10}");
-        _clientLines.Add(new string('─', 80));
+        rows.Add(new ColoredRow($"{"Display Name",-24} {"Client ID",-20} {"Frequency",-12} {"Status",8} {"Last WS",9} {"Last RTP",9}", false));
+        rows.Add(new ColoredRow(new string('─', 90), false));
 
         if (clients.Count == 0)
         {
-            _clientLines.Add("No active clients");
+            rows.Add(new ColoredRow("No active clients", false));
         }
         else
         {
             foreach (var client in clients)
             {
-                var displayName = string.IsNullOrWhiteSpace(client.DisplayName) 
-                    ? "Unnamed" 
+                var displayName = string.IsNullOrWhiteSpace(client.DisplayName)
+                    ? "Unnamed"
                     : client.DisplayName;
-                var shortDisplayName = displayName.Length > 24 
-                    ? displayName.Substring(0, 21) + "..." 
+                var shortDisplayName = displayName.Length > 24
+                    ? displayName.Substring(0, 21) + "..."
                     : displayName;
-                    
-                var shortId = client.Id.Length > 20 ? client.Id.Substring(0, 20) : client.Id;
-                var timeSinceActivity = (DateTime.UtcNow - client.LastActivity).TotalSeconds;
-                var activityStr = timeSinceActivity < 60
-                    ? $"{timeSinceActivity:F0}s ago"
-                    : $"{timeSinceActivity / 60:F0}m ago";
 
-                var frequencies = client.CurrentFrequencies.ToList();
+                var shortId           = client.Id.Length > 20 ? client.Id.Substring(0, 20) : client.Id;
+                var timeSinceWs       = (DateTime.UtcNow - client.LastActivity).TotalSeconds;
+                var wsStr = timeSinceWs < 60
+                    ? $"{timeSinceWs:F0}s ago"
+                    : $"{timeSinceWs / 60:F0}m ago";
+
+                var lastRtp  = _stats.GetLastRtpReceived(client.Id);
+                var rtpStr   = lastRtp.HasValue
+                    ? ((DateTime.UtcNow - lastRtp.Value).TotalSeconds is var rtpAge && rtpAge < 60
+                        ? $"{rtpAge:F0}s ago"
+                        : $"{rtpAge / 60:F0}m ago")
+                    : "no RTP";
+
+                var frequencies     = client.CurrentFrequencies.ToList();
+                var anyTransmitting = frequencies.Any(f =>
+                    f.Value == ClientSession.FrequencyClientStatus.Transmitting);
 
                 if (frequencies.Count == 0)
                 {
-                    // No frequencies
-                    _clientLines.Add($"{shortDisplayName,-24} {shortId,-20} {"-",-12} {"● RX",8} {activityStr,10}");
+                    rows.Add(new ColoredRow(
+                        $"{shortDisplayName,-24} {shortId,-20} {"-",-12} {"● RX",8} {wsStr,9} {rtpStr,9}", false));
                 }
                 else
                 {
-                    // First frequency with full client info
-                    var firstFreq = frequencies[0];
-                    var firstStatus = firstFreq.Value == ClientSession.FrequencyClientStatus.Transmitting
-                        ? "● TX"
-                        : "● RX";
-                    _clientLines.Add(
-                        $"{shortDisplayName,-24} {shortId,-20} {firstFreq.Key/1000d,-12:F3} {firstStatus,8} {activityStr,10}");
+                    var firstFreq   = frequencies[0];
+                    var firstTx     = firstFreq.Value == ClientSession.FrequencyClientStatus.Transmitting;
+                    var firstStatus = firstTx ? "● TX" : "● RX";
+                    rows.Add(new ColoredRow(
+                        $"{shortDisplayName,-24} {shortId,-20} {firstFreq.Key / 1000d,-12:F3} {firstStatus,8} {wsStr,9} {rtpStr,9}",
+                        anyTransmitting));
 
-                    // Additional frequencies on subsequent lines
                     for (int i = 1; i < frequencies.Count; i++)
                     {
-                        var freq = frequencies[i];
-                        var status = freq.Value == ClientSession.FrequencyClientStatus.Transmitting ? "● TX" : "● RX";
-                        _clientLines.Add($"{"",-24} {"",-20} {freq.Key/1000d,-12:F3} {status,8} {"",10}");
+                        var freq   = frequencies[i];
+                        var tx     = freq.Value == ClientSession.FrequencyClientStatus.Transmitting;
+                        var status = tx ? "● TX" : "● RX";
+                        rows.Add(new ColoredRow(
+                            $"{"",-24} {"",-20} {freq.Key / 1000d,-12:F3} {status,8} {"",9} {"",9}", anyTransmitting));
                     }
                 }
             }
 
-            _clientLines.Add(" ");
-            _clientLines.Add($"Total: {clients.Count} clients");
+            rows.Add(new ColoredRow(" ", false));
+            rows.Add(new ColoredRow($"Total: {clients.Count} clients", false));
         }
 
-        _clientsListView.SetSource(_clientLines);
-
-        // Restore scroll position
-        if (currentTopItem >= 0 && currentTopItem < _clientLines.Count)
-        {
-            _clientsListView.TopItem = currentTopItem;
-        }
-
-        if (currentSelection >= 0 && currentSelection < _clientLines.Count)
+        if (currentSelection >= 0 && currentSelection < rows.Count)
         {
             _clientsListView.SelectedItem = currentSelection;
             _clientsListView.EnsureSelectedItemVisible();
@@ -454,11 +502,9 @@ public class TerminalGuiServer : IDisposable
     {
         if (_logsListView == null) return;
 
-        // Save both selection and top visible item
         var currentSelection = _logsListView.SelectedItem;
-        var currentTopItem = _logsListView.TopItem;
-        var oldCount = _logsListView.Source?.Count ?? 0;
-        var wasAtBottom = (currentSelection >= oldCount - 2) || oldCount == 0;
+        var oldCount         = _logsListView.Source?.Count ?? 0;
+        var wasAtBottom      = (currentSelection >= oldCount - 2) || oldCount == 0;
 
         var logs = _logMessages
             .OrderByDescending(m => m.Timestamp)
@@ -478,41 +524,28 @@ public class TerminalGuiServer : IDisposable
         {
             foreach (var log in logs)
             {
-                var timeStr = log.Timestamp.ToLocalTime().ToString("HH:mm:ss");
+                var timeStr  = log.Timestamp.ToLocalTime().ToString("HH:mm:ss");
                 var levelStr = log.Level switch
                 {
-                    LogLevel.Error => "ERROR",
-                    LogLevel.Warning => "WARN",
+                    LogLevel.Error       => "ERROR",
+                    LogLevel.Warning     => "WARN",
                     LogLevel.Information => "INFO",
-                    LogLevel.Debug => "DEBUG",
-                    _ => log.Level.ToString()
+                    LogLevel.Debug       => "DEBUG",
+                    _                    => log.Level.ToString()
                 };
 
                 _logLines.Add($"{timeStr,-10} {levelStr,-8} {log.Message}");
             }
         }
 
-        _logsListView.SetSource(_logLines);
-
-        // Restore scroll position
         if (wasAtBottom)
         {
-            // Auto-scroll to bottom - let ListView position naturally
             _logsListView.SelectedItem = _logLines.Count - 1;
             _logsListView.EnsureSelectedItemVisible();
         }
-        else
+        else if (currentSelection >= 0 && currentSelection < _logLines.Count)
         {
-            // Restore previous position
-            if (currentTopItem >= 0 && currentTopItem < _logLines.Count)
-            {
-                _logsListView.TopItem = currentTopItem;
-            }
-
-            if (currentSelection >= 0 && currentSelection < _logLines.Count)
-            {
-                _logsListView.SelectedItem = currentSelection;
-            }
+            _logsListView.SelectedItem = currentSelection;
         }
     }
 

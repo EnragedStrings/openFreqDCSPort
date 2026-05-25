@@ -29,7 +29,6 @@ class Program
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 30,
                 shared: true)
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
             .CreateLogger();
 #else
         Log.Logger = new LoggerConfiguration()
@@ -79,7 +78,7 @@ class Program
             var server = new SignalingServer(config, loggerFactory);
 
             // Create stats tracker and Terminal.Gui TUI
-            var stats = new ServerStats(server.Clients, server.ChannelManager);
+            var stats = new ServerStats(server.Clients, server.ChannelManager, server.AudioServer);
             using var tui = new TerminalGuiServer(config, stats, logMessages);
 
             // Setup graceful shutdown

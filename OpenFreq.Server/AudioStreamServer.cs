@@ -410,6 +410,9 @@ public class AudioStreamServer
         }
     }
 
+    public DateTime? GetLastRtpReceived(string clientId) =>
+        _sessions.TryGetValue(clientId, out var s) ? s.LastReceived : null;
+
     public void RemoveSession(string clientId)
     {
         if (!_sessions.TryRemove(clientId, out _)) return;

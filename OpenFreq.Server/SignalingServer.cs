@@ -71,6 +71,7 @@ public class SignalingServer
 
     public ConcurrentDictionary<string, ClientSession> Clients => _clients;
     public FrequencyChannelManager ChannelManager => _channelManager;
+    public AudioStreamServer AudioServer => _audioServer;
 
     private static string GetDisplayName(ClientSession session) =>
         !string.IsNullOrWhiteSpace(session.DisplayName) ? session.DisplayName : "Unnamed";

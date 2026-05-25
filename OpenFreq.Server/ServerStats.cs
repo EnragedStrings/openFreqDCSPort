@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace OpenFreqServer;
 
-public class ServerStats(ConcurrentDictionary<string, ClientSession> clients, FrequencyChannelManager channelManager)
+public class ServerStats(ConcurrentDictionary<string, ClientSession> clients, FrequencyChannelManager channelManager, AudioStreamServer audioServer)
 {
     private readonly DateTime _startTime = DateTime.UtcNow;
 
@@ -15,9 +15,9 @@ public class ServerStats(ConcurrentDictionary<string, ClientSession> clients, Fr
 
     public TimeSpan Uptime => DateTime.UtcNow - _startTime;
 
-    public List<(int FrequencyKhz, int ClientCount)> GetFrequencyStats()
+    public List<(int FrequencyKhz, int ClientCount, bool IsTransmitting)> GetFrequencyStats()
     {
-        var stats = new List<(int FrequencyKhz, int ClientCount)>();
+        var stats = new List<(int FrequencyKhz, int ClientCount, bool IsTransmitting)>();
         var allFrequencies = clients
             .SelectMany(client => client.Value.CurrentFrequencies.Keys)
             .Distinct()
@@ -26,12 +26,17 @@ public class ServerStats(ConcurrentDictionary<string, ClientSession> clients, Fr
         foreach (var freq in allFrequencies)
         {
             var count = channelManager.GetChannelCount(freq);
-            stats.Add((freq, count));
+            var isTransmitting = clients.Values.Any(c =>
+                c.CurrentFrequencies.TryGetValue(freq, out var status) &&
+                status == ClientSession.FrequencyClientStatus.Transmitting);
+            stats.Add((freq, count, isTransmitting));
         }
 
         return stats.OrderBy(s => s.FrequencyKhz).ToList();
     }
     
+    public DateTime? GetLastRtpReceived(string clientId) => audioServer.GetLastRtpReceived(clientId);
+
     public List<ClientSession> GetActiveClients()
     {
         return clients.Values

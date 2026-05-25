@@ -11,12 +11,12 @@ Physics-based multiplayer radio communication for Falcon BMS.
 
 1. [Installation](#1-installation "Installation")
 2. [Server](#2-server "Server")
-3. [Client - BMS Mode](#3-client-bms-mode "Client - BMS Mode")
-4. [Client - GCI Mode](#4-client-gci-mode "Client - GCI Mode")
+3. [Client - BMS Mode](#3-client---bms-mode "Client - BMS Mode")
+4. [Client - GCI Mode](#4-client---gci-mode "Client - GCI Mode")
 
 ---
 
-## 1. Installation
+## 1\. Installation
 
 All OpenFreq components (Server and Client) can be run as-is. If you prefer smaller executables and have a local .NET 10 runtime, use the respective packages.
 
@@ -103,7 +103,7 @@ BMS mode is **Windows-only**. The client reads radio state and position data dir
 4. Select your **Theater** from the dropdown. If BMS is installed, theaters are detected automatically and the heightmap path is filled in for you.
 5. Select your **Input** and **Output** audio devices.
 6. Set a **Display Name** (used as your callsign in GCI mode; in BMS mode your logbook callsign overrides this automatically).
-7. Optionally configure **UHF Squelch** and **VHF Squelch** hotkeys (see [Squelch](#squelch-bms "Squelch") below).
+7. Optionally configure **UHF Squelch** and **VHF Squelch** hotkeys (see [Squelch](#squelch "Squelch") below).
 8. Click **Save** / close the drawer.
 
 ### Connecting
@@ -120,7 +120,7 @@ The connection flow:
 
 ### Radio Channels
 
-OpenFreq reads the BMS RCC shared memory (Radio Control Computer) every frame. It tracks:
+OpenFreq reads the BMS shared memory. It tracks:
 
 - **Radio 1 (UHF for the F-16)**: frequency and power state
 - **Radio 2 (VHF for the F-16)**: frequency and power state
@@ -132,7 +132,7 @@ Frequency changes in the cockpit are reflected instantly in OpenFreq. When a rad
 
 ### Lobby Mode / Game Mode
 
-![](C:\Users\richa\Projects\OpenFreq\docs\handbook_screens\client_game_mode.png)
+![](handbook_screens/client_game_mode.png)
 
 This mode reflects current IVC implementation: in Lobby mode, all audio communication is transmitted and received as-is without any changes.
 
@@ -180,10 +180,13 @@ In GCI mode you manually define your **location** (position on the theater map) 
 5. Select your **Theater**.
 6. Set the **Heightmap Path** - this is required in GCI mode. It is the `.raw` heightmap file for the theater. If BMS is installed on the same machine, select the theater from the dropdown to fill this in automatically.
    
-   The heightmap can be found in the `\TerrData\<Terrain Name>\NewTerrain\HeightMaps` sub folder of your BMS 4.38 directory.
+   The heightmap can be found in the `\TerrData\<Terrain Name>\NewTerrain\HeightMaps` subfolder of your BMS 4.38 directory.
 7. Optionally enter a **Tacview Server Address** and password if you want live positional tracking via Tacview ACMI.
+
+	The BMS Tacview stream is only available when the respective client is in 3D. You can enter the **Tacview Server Address** before the connection is possible - OpenFreq will automatically try to connect indefintely as long as you are connected to the OpenFreq Server.
 8. Select **Input** and **Output** audio devices.
 9. Set a **Display Name** - this is your callsign shown to other clients.
+
 
 ### Locations
 
@@ -194,7 +197,7 @@ A **Location** represents a physical radio station (e.g. a GCI radar site, AWACS
 - **Radio Station Preset** - hardware preset affecting transmit power and receiver sensitivity (e.g. AWACS, ground station)
 - **Channels** - the frequencies this location monitors
 
-![f](C:\Users\richa\Projects\OpenFreq\docs\handbook_screens\client_gci_mode_location_setup.png)
+![](handbook_screens/client_gci_mode_location_setup.png)
 
 #### Setting Position
 

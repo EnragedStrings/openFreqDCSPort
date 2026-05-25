@@ -51,9 +51,11 @@ public partial class MapPickerWindow : Window
     /// <summary>
     /// Updates the tracked aircraft position (tracking mode only)
     /// </summary>
-    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach)
+    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach, string? callsign = null)
     {
-        _viewModel.UpdateTrackedPosition(lat, lon, heading, altitudeFt, speedKts, speedMach);
+        _viewModel.UpdateTrackedPosition(lat, lon, heading, altitudeFt, speedKts, speedMach, callsign);
+        if (callsign != null)
+            Title = $"Tracking: {callsign}";
     }
     
     private void OnMapPointerPressed(object? sender, PointerPressedEventArgs e)

@@ -551,14 +551,17 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
                 if (aircraft != null && _trackingWindow != null)
                 {
                     // Update window with current aircraft position
+                    // CalculateTAS returns m/s; convert to knots for display
+                    const double MpsToKts = 1.94384;
                     var aircraftSpeedKts =
-                        AcmiHeightmapConverter.CalculateTAS(aircraft.Mach, aircraft.Transform.Altitude);
+                        AcmiHeightmapConverter.CalculateTAS(aircraft.Mach, aircraft.Transform.Altitude) * MpsToKts;
                     _trackingWindow.UpdateTrackedPosition(
                         aircraft.Transform.Latitude,
                         aircraft.Transform.Longitude,
                         (aircraft.Transform.Heading + 360) % 360, // the ACMI streams sends headings as +/-180
                         aircraft.Transform.AltitudeFt,
-                        aircraftSpeedKts, aircraft.Mach);
+                        aircraftSpeedKts, aircraft.Mach,
+                        aircraft.CallSign);
                 }
 
                 // Update rate: 10 Hz (100ms)

@@ -171,7 +171,7 @@ public partial class MapPickerViewModel : ViewModelBase
     /// <summary>
     /// Updates the tracked aircraft position and heading (tracking mode only)
     /// </summary>
-    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach)
+    public void UpdateTrackedPosition(double lat, double lon, double heading, double altitudeFt, double speedKts, double speedMach, string? callsign = null)
     {
         if (!IsTrackingMode) return;
 
@@ -181,6 +181,8 @@ public partial class MapPickerViewModel : ViewModelBase
         AltitudeFt = altitudeFt;
         SpeedKts = speedKts;
         SpeedMach = speedMach;
+        if (callsign != null)
+            TrackedCallsign = callsign;
 
         UpdatePositionMarker(lat, lon, heading);
 

@@ -625,7 +625,6 @@ public class AcmiClientService : IAcmiClientService
     {
         aircraft.LastUpdate = _referenceTime.AddSeconds(_relativeTime);
         
-
         // Parse only essential properties
         int pos = 0;
         while (pos < properties.Length)
@@ -667,15 +666,8 @@ public class AcmiClientService : IAcmiClientService
                 }
                 else if (key.SequenceEqual("Mach".AsSpan()))
                 {
-                    try
-                    {
-                        aircraft.Mach = float.Parse(value.ToString());
-                    }
-                    catch (Exception e)
-                    {
-                        _logger.LogError("{ToString}", e.ToString());
-                       aircraft.Mach = 0;
-                    }
+                    if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var mach))
+                        aircraft.Mach = mach;
                 }
                 // Skip all other properties (IAS, CAS, AOA, Health, etc.)
             }

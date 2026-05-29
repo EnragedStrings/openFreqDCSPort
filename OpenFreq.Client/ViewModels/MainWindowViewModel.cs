@@ -68,6 +68,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     public int LobbyPeerCount => LobbyPeerList.SelectMany(f => f.Peers).Select(p => p.Id).Distinct().Count();
     public int GamePeerCount => GamePeerList.SelectMany(f => f.Peers).Select(p => p.Id).Distinct().Count();
 
+
     private readonly Dictionary<(string peerId, int freqKhz), bool> _peerModes = new();
     private SortedDictionary<int, List<PeerData>> _latestAllPeers = new();
 
@@ -653,7 +654,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _logger.LogError(message);
         HasError = true;
         ErrorMessage = message;
-        StatusMessage = $"⚠️ {message}";
+        StatusMessage = message;
 
         // Add to error log with timestamp
         var logEntry = $"[{DateTime.Now:HH:mm:ss}] {message}";

@@ -203,7 +203,7 @@ public class OpenFreqService : IOpenFreqService
 
     // Events for UI updates
     public IOpenFreqService.Mode OwnPositionMode { get; private set; }
-    public event EventHandler<ConnectionState>? ConnectionStateChanged;
+    public event EventHandler<ConnectionStateChangedEventArgs>? ConnectionStateChanged;
     public event EventHandler<string>? StatusMessageReceived;
     public event EventHandler<string>? AudioPlaybackErrorOccurred;
     public event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
@@ -996,7 +996,7 @@ public class OpenFreqService : IOpenFreqService
             _activeTransmissionSlots.Clear();
         }
 
-        ConnectionStateChanged?.Invoke(this, e.State);
+        ConnectionStateChanged?.Invoke(this, e);
     }
 
     private void OnClientAuthenticated(object? sender, AuthenticationEventArgs e)

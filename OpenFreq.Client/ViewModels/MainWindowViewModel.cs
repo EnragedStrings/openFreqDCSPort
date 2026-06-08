@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -14,6 +15,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DialogHostAvalonia;
 using FalconBmsDataService.Models;
 using FalconBmsDataService.Services;
 using FalconRadioService.Models;
@@ -163,6 +165,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
             FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
         _falconRadioSharedMemoryService.LogbookNameChanged += OnLogbookNameChanged;
+        _falconRadioSharedMemoryService.RadioClientConflict += OnRadioClientConflict;
+        _falconRadioSharedMemoryService.RadioClientConflictResolved += OnRadioClientConflictResolved;
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged += OnAircraftInfoChanged;
@@ -182,6 +186,10 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _ = LoadConfigurationAsync();
 
         _openFreqService.SetOwnPositionMode(Settings.ConnectionMode);
+
+        // A mutex conflict may already be in place so check explicitly.
+        if (_falconRadioSharedMemoryService.HasConflict)
+            Dispatcher.UIThread.Post(() => _ = ShowIvcActiveAsync(), DispatcherPriority.Loaded);
     }
 
     private void OnAircraftInfoChanged(object? sender, AircraftInfoChangedEventArgs e)
@@ -347,10 +355,43 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _channelHandlers.Remove(ch);
     }
 
+    // Add grace period for failed Shmem polling - should never happen IRL but let's keep safe
+    private static readonly TimeSpan ShmemLossGracePeriod = TimeSpan.FromSeconds(2);
+    private CancellationTokenSource? _shmemLossGraceCts;
+
     private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
     {
-        if (e.OldState != ServiceState.Connected) return;
         if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
+        // Recovered within the grace window — cancel the pending disconnect.
+        if (e.NewState == ServiceState.Connected)
+        {
+            _shmemLossGraceCts?.Cancel();
+            _shmemLossGraceCts = null;
+            return;
+        }
+
+        if (e.OldState != ServiceState.Connected) return;
+
+        _shmemLossGraceCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _shmemLossGraceCts = cts;
+        try
+        {
+            await Task.Delay(ShmemLossGracePeriod, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // shmem recovered — keep the WS connection
+        }
+        finally
+        {
+            if (ReferenceEquals(_shmemLossGraceCts, cts))
+                _shmemLossGraceCts = null;
+            cts.Dispose();
+        }
+
+        // Still not Connected after the grace window — treat as a real BMS exit.
         Settings.Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
         await DisconnectAsync();
     }
@@ -361,38 +402,50 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         {
             await Dispatcher.UIThread.InvokeAsync(async () =>
             {
-                IvcWarning = ivcStatusChangedEventArgs.IsRunning;
-
-                if (!IvcWarning)
+                if (!ivcStatusChangedEventArgs.IsRunning)
                 {
-                    // IVC died — take over mutex and RCS if we were in read-only mode
-                    if (Settings.ConnectionMode == IOpenFreqService.Mode.BMS &&
-                        !_falconRadioSharedMemoryService.IsOwner)
-                    {
-                        _ = Task.Run(() =>
-                        {
-                            try
-                            {
-                                _falconRadioSharedMemoryService.Stop();
-                                _falconRadioSharedMemoryService.Start();
-                                _logger.LogInformation("Re-acquired radio client mutex after IVC exit");
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Failed to restart FalconRadioSharedMemoryService after IVC exit");
-                            }
-                        });
-                    }
+                    // IVC process gone. The radio service's retry loop takes over the mutex on its own
+                    // and raises RadioClientConflictResolved, which clears the banner — but clear it here
+                    // too for the case where IVC was detected without ever holding the radio mutex.
+                    IvcWarning = false;
                     return;
                 }
 
-                await PromptKillIvcAsync();
+                await ShowIvcActiveAsync();
             });
         }
         catch (Exception e)
         {
             _logger.LogError("{ToString}", e.ToString());
         }
+    }
+
+    private void OnRadioClientConflict(object? sender, EventArgs e)
+    {
+        _logger.LogWarning("Radio client mutex conflict");
+        Dispatcher.UIThread.Post(() => _ = ShowIvcActiveAsync());
+    }
+
+    private void OnRadioClientConflictResolved(object? sender, EventArgs e)
+    {
+        _logger.LogInformation("Radio client conflict resolved");
+        Dispatcher.UIThread.Post(() =>
+        {
+            IvcWarning = false;
+
+            // Dismiss the kill-IVC prompt if it's still open — the conflict is gone.
+            if (_killIvcDialogOpen && DialogHost.IsDialogOpen("MainDialogHost"))
+                DialogHost.Close("MainDialogHost", false);
+        });
+    }
+
+    private bool _killIvcDialogOpen;
+
+    private async Task ShowIvcActiveAsync()
+    {
+        if (IvcWarning) return;
+        IvcWarning = true;
+        await PromptKillIvcAsync();
     }
 
     [RelayCommand]
@@ -403,14 +456,26 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task PromptKillIvcAsync()
     {
-        if (!await ConfirmationDialogService.ShowAsync(
-                title: "IVC Client detected",
-                message: "The BMS IVC Client seems to be running.\n" +
-                         "OpenFreq will not work in BMS mode.\n" +
-                         "\n" +
-                         "Kill the IVC process?",
+        bool confirmed;
+        _killIvcDialogOpen = true;
+        try
+        {
+            confirmed = await ConfirmationDialogService.ShowAsync(
+                title: "Radio client conflict",
+                message: "Another radio client owns the radio shared memory.\n\n" +
+                         "This is usually the Falcon BMS IVC Client, but it can also be another OpenFreq instance. OpenFreq will not work in BMS mode until it is closed." +
+                         "\n\n" +
+                         "Kill the IVC process? (Close any other OpenFreq instance manually)",
                 cancelText: "Cancel",
-                confirmText: "Kill IVC")) return;
+                confirmText: "Kill IVC");
+        }
+        finally
+        {
+            _killIvcDialogOpen = false;
+        }
+
+        // Conflict cleared itself (other client closed) while the prompt was open, or user cancelled.
+        if (!confirmed) return;
 
         // Disconnect from any server first, then ensure BMS mode is active
         if (_openFreqService.IsConnected)
@@ -534,6 +599,10 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         OnPropertyChanged(nameof(AppBarColorZone));
     }
 
+    private bool IsBmsConflictBlocking =>
+        Settings.ConnectionMode == IOpenFreqService.Mode.BMS &&
+        (_falconRadioSharedMemoryService.HasConflict || IvcWarning);
+
     [RelayCommand]
     private async Task ConnectAsync()
     {
@@ -542,6 +611,14 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             // Gracefully handle if already connected
             if (_openFreqService.IsConnected)
             {
+                return;
+            }
+
+            // Block BMS connection while another radio client owns the radio shared memory.
+            if (IsBmsConflictBlocking)
+            {
+                ShowError("Another radio client (Falcon BMS IVC or another OpenFreq instance) owns the " +
+                          "radio shared memory. Close it before connecting in BMS mode.");
                 return;
             }
 
@@ -600,6 +677,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     {
         if (_openFreqService.IsConnected) return;
         if (string.IsNullOrWhiteSpace(Settings.OpenFreqServerAddress)) return;
+        // Never join BMS while another radio client owns the radio shared memory.
+        if (IsBmsConflictBlocking) return;
 
         await _openFreqService.Initialize(Settings.GetSettings(),
             _audioService.GetRecordingBassIndex(Settings.RecordingDeviceIndex),
@@ -697,6 +776,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             PeerId = _openFreqService.PeerId ?? "";
             ClearError();
             SettingsDrawerOpened = false;
+
+            // Re-read live BMS flight state on connect to rule out stale local Is3dMode
+            if (Settings.ConnectionMode == IOpenFreqService.Mode.BMS &&
+                _falconSharedMemoryService.IsFlying is { } isFlying)
+                Dispatcher.UIThread.Post(() => Settings.Is3dMode = isFlying);
 
             if (Settings is { ModeIsGci: false, MinimizeOnConnect: true })
             {
@@ -1024,6 +1108,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.ConnectionParametersChanged -=
             FalconRadioSharedMemoryServiceOnConnectionParametersChanged;
         _falconRadioSharedMemoryService.LogbookNameChanged -= OnLogbookNameChanged;
+        _falconRadioSharedMemoryService.RadioClientConflict -= OnRadioClientConflict;
+        _falconRadioSharedMemoryService.RadioClientConflictResolved -= OnRadioClientConflictResolved;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged -= OnAircraftInfoChanged;
 

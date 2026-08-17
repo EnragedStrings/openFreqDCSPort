@@ -21,6 +21,7 @@ public interface IRtcClient : IDisposable
     event EventHandler<PeerTransmissionEventArgs>? PeerTransmissionStateChanged;
     event EventHandler<AudioDataEventArgs>? AudioDataReceived;
     event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusUpdateReceived;
+    event EventHandler<ServerSettingsEventArgs>? ServerSettingsChanged;
     event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     string ServerIp { get; }
@@ -41,7 +42,7 @@ public interface IRtcClient : IDisposable
     void SendAudio(
         Memory<short> pcmData,
         List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-            AmbientNoiseType ambientNoiseType)> frequencies,
+            Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)> frequencies,
         bool in3d);
 }
 

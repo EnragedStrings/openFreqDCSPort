@@ -111,7 +111,7 @@ static class Program
                 ? null
                 : new TerminalGuiServer(config,
                     new ServerStats(server.Clients, server.ChannelManager, server.AudioServer),
-                    logMessages, version);
+                    logMessages, version, server.BroadcastServerSettingsAsync);
 
             // Setup graceful shutdown
             var shutdownCts = new CancellationTokenSource();
@@ -230,6 +230,7 @@ static class Program
                     MaxClientsPerChannel = 50,
                     MaxChannelsPerClient = 10,
                     EnableOpusCompression = true,
+                    DcsLineOfSightEnabled = true,
                     BroadcastPeerUpdates = true
                 };
 

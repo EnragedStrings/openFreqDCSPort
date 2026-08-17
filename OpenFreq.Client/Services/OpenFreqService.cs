@@ -13,9 +13,12 @@ using FalconRadioService.Models;
 using FalconRadioService.Services;
 using ManagedBass;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Client.Models.Dcs;
+using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Client.Models;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
+using OpenFreq.Utilities;
 using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services.Audio;
@@ -95,6 +98,8 @@ public class OpenFreqService : IOpenFreqService
     // Pre-allocated sidetone conversion buffer — reused every recording callback (single-threaded).
     private float[] _sidetonePushBuffer = new float[4800]; // 100ms @ 48kHz, grows if needed
     private readonly MicLevelNormalizer _micNormalizer = new(OpenFreqRtcClient.SAMPLE_RATE);
+    private DateTime _lastMicLevelEventUtc = DateTime.MinValue;
+    private DateTime _nextEmptyTransmissionWarningUtc = DateTime.MinValue;
 
     // Cache duration - this effectively controls the rate of local physics calculations
     private readonly TimeSpan _audioParamsCacheDuration = TimeSpan.FromMilliseconds(50);
@@ -108,15 +113,18 @@ public class OpenFreqService : IOpenFreqService
     private readonly IRtcClientFactory _rtcClientFactory;
     private readonly IPlaybackServiceFactory _playbackServiceFactory;
     private readonly ISignalCalculatorFactory _signalCalculatorFactory;
+    private string? _loadedDcsHeightmapPath;
 
     public OpenFreqService(IFalconSharedMemoryService falconSharedMemoryService,
-        IFalconRadioSharedMemoryService falconRadioSharedMemoryService, ILogger<OpenFreqService> logger,
+        IFalconRadioSharedMemoryService falconRadioSharedMemoryService, IDcsExportService dcsExportService,
+        ILogger<OpenFreqService> logger,
         ILoggerFactory loggerFactory, IAcmiClientService acmiClientService,
         IRtcClientFactory rtcClientFactory, IPlaybackServiceFactory playbackServiceFactory,
         ISignalCalculatorFactory signalCalculatorFactory)
     {
         _falconSharedMemoryService = falconSharedMemoryService;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
+        _dcsExportService = dcsExportService;
         _logger = logger;
         _loggerFactory = loggerFactory;
         _acmiClientService = acmiClientService;
@@ -135,6 +143,8 @@ public class OpenFreqService : IOpenFreqService
             updateIntervalMs: 100, // UI update rate
             signalTimeoutMs: 500 // How long until "no signal"
         );
+
+        _dcsExportService.HeightmapChanged += OnDcsHeightmapChanged;
     }
 
     public int PlaybackDeviceIndex
@@ -190,6 +200,27 @@ public class OpenFreqService : IOpenFreqService
             UpdateMicCaptureState();
         }
     } = true;
+
+    public bool InputMeterEnabled
+    {
+        get;
+        set
+        {
+            if (field == value) return;
+            field = value;
+            UpdateMicCaptureState();
+            if (!value)
+                MicLevelChanged?.Invoke(this, new MicLevelChangedEventArgs(0, 0));
+        }
+    }
+
+    public double InputGain
+    {
+        get => field;
+        set => field = Math.Clamp(value, 0.0d, 4.0d);
+    } = 1.0d;
+
+    public bool DcsLineOfSightEnabled { get; set; } = true;
 
     public double SidetoneVolume
     {
@@ -254,6 +285,7 @@ public class OpenFreqService : IOpenFreqService
 
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
+    private readonly IDcsExportService _dcsExportService;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<OpenFreqService> _logger;
 
@@ -262,6 +294,7 @@ public class OpenFreqService : IOpenFreqService
     public event EventHandler<ConnectionStateChangedEventArgs>? ConnectionStateChanged;
     public event EventHandler<string>? StatusMessageReceived;
     public event EventHandler<string>? AudioPlaybackErrorOccurred;
+    public event EventHandler<MicLevelChangedEventArgs>? MicLevelChanged;
     public event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
     public event EventHandler<FrequencyTransmissionStatusEventArgs>? FrequencyTransmissionStatusChanged;
     public event EventHandler<FrequencyJoinedEventArgs>? FrequencyJoined;
@@ -314,6 +347,7 @@ public class OpenFreqService : IOpenFreqService
         _client.PeerTransmissionStateChanged += OnClientPeerTransmissionStatusChanged;
         _client.AudioDataReceived += OnClientAudioDataReceived;
         _client.AllPeersStatusUpdateReceived += OnAllPeersStatusUpdateReceived;
+        _client.ServerSettingsChanged += OnClientServerSettingsChanged;
         _client.ErrorOccurred += OnClientErrorOccurred;
 
         RecordingDeviceIndex = recordingDeviceIndex;
@@ -453,6 +487,8 @@ public class OpenFreqService : IOpenFreqService
                 _client.TransmissionStateChanged -= OnClientTransmissionStatusChanged;
                 _client.PeerTransmissionStateChanged -= OnClientPeerTransmissionStatusChanged;
                 _client.AudioDataReceived -= OnClientAudioDataReceived;
+                _client.AllPeersStatusUpdateReceived -= OnAllPeersStatusUpdateReceived;
+                _client.ServerSettingsChanged -= OnClientServerSettingsChanged;
                 _client.ErrorOccurred -= OnClientErrorOccurred;
 
                 _logger.LogDebug("Disconnecting client: {ClientHashCode}", _client.GetHashCode());
@@ -676,9 +712,11 @@ public class OpenFreqService : IOpenFreqService
         }
 
         _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
-        if (!tunedFrequencyData?.IsEnabled ?? false)
+        if (tunedFrequencyData is not { IsEnabled: true })
         {
-            _logger.LogWarning("Trying to start transmission on disabled frequency {FrequencyKhz}", frequencyKhz);
+            _logger.LogWarning("Trying to start transmission on unavailable frequency {FrequencyKhz} slot {SlotId}",
+                frequencyKhz, slotId);
+            OnStatusMessage($"Cannot transmit on {frequencyKhz / 1000d:F3}: radio is not joined/enabled");
             return;
         }
 
@@ -753,7 +791,7 @@ public class OpenFreqService : IOpenFreqService
     /// estimator can keep tracking the room between talk-spurts).
     /// </summary>
     private bool WantMicCapture =>
-        IsConnected && (MicNormalizationEnabled || !_activeTransmissionsAndMutedFrequencies.IsEmpty);
+        InputMeterEnabled || (IsConnected && (MicNormalizationEnabled || !_activeTransmissionsAndMutedFrequencies.IsEmpty));
 
     /// <summary>
     /// Opens or closes the shared mic capture stream to match <see cref="WantMicCapture"/>.
@@ -819,8 +857,9 @@ public class OpenFreqService : IOpenFreqService
                 _recordHandle, Bass.LastError);
         if (!Bass.StreamFree(_recordHandle))
             _logger.LogWarning("StreamFree on record handle {Handle} returned false: {Error}",
-                _recordHandle, Bass.LastError);
+            _recordHandle, Bass.LastError);
         _recordHandle = 0;
+        MicLevelChanged?.Invoke(this, new MicLevelChangedEventArgs(0, 0));
     }
 
     public async Task NotifyModeAsync(bool is3d)
@@ -883,6 +922,7 @@ public class OpenFreqService : IOpenFreqService
         {
             case IOpenFreqService.Mode.BMS:
                 {
+                    _dcsExportService.Stop();
                     _acmiClientService.Stop();
                     if (_falconSharedMemoryService.State == ServiceState.Stopped)
                     {
@@ -892,7 +932,16 @@ public class OpenFreqService : IOpenFreqService
                     break;
                 }
             case IOpenFreqService.Mode.GCI:
+                _dcsExportService.Stop();
                 _falconSharedMemoryService.Stop();
+                break;
+            case IOpenFreqService.Mode.DCS:
+                _acmiClientService.Stop();
+                _falconSharedMemoryService.Stop();
+                _falconRadioSharedMemoryService.Stop();
+                if (_dcsExportService.State == ServiceState.Stopped)
+                    _dcsExportService.Start();
+                LoadCurrentDcsHeightmapIfAvailable();
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(newMode), newMode, null);
@@ -912,12 +961,13 @@ public class OpenFreqService : IOpenFreqService
     /// <summary>
     /// Load heightmap for terrain-aware RF calculations
     /// </summary>
-    public void LoadHeightmap(string path, int width = 32768, int height = 32768, int bytesPerSample = 2)
+    public void LoadHeightmap(string path, int width = 32768, int height = 32768, int bytesPerSample = 2,
+        double? cellSizeMeters = null)
     {
         _signalCalculator?.Dispose();
         // Cell size = theater world size / DEM resolution
-        var cellSizeMeters = BmsHeightmapConverter.HEIGHTMAP_SIZE_METERS / width;
-        _signalCalculator = _signalCalculatorFactory.Create(path, width, height, bytesPerSample, cellSizeMeters,
+        var cellSize = cellSizeMeters ?? BmsHeightmapConverter.HEIGHTMAP_SIZE_METERS / width;
+        _signalCalculator = _signalCalculatorFactory.Create(path, width, height, bytesPerSample, cellSize,
             _loggerFactory);
         OnStatusMessage($"Heightmap loaded: {path}");
         _logger.LogDebug($"Heightmap loaded: {path}");
@@ -928,10 +978,46 @@ public class OpenFreqService : IOpenFreqService
         return _signalCalculator?.SampleElevation(xMeters, yMeters);
     }
 
+    private void OnDcsHeightmapChanged(object? sender, DcsHeightmapChangedEventArgs e)
+    {
+        if (OwnPositionMode != IOpenFreqService.Mode.DCS) return;
+        LoadDcsHeightmap(e.HeightmapInfo);
+    }
+
+    private void LoadCurrentDcsHeightmapIfAvailable()
+    {
+        var heightmapInfo = _dcsExportService.HeightmapInfo;
+        if (heightmapInfo != null)
+            LoadDcsHeightmap(heightmapInfo);
+    }
+
+    private void LoadDcsHeightmap(DcsHeightmapInfo heightmapInfo)
+    {
+        if (!heightmapInfo.Ready || string.IsNullOrWhiteSpace(heightmapInfo.RawPath))
+            return;
+
+        if (!File.Exists(heightmapInfo.RawPath))
+        {
+            _logger.LogWarning("DCS heightmap metadata exists, but raw file is missing: {Path}",
+                heightmapInfo.RawPath);
+            return;
+        }
+
+        if (string.Equals(_loadedDcsHeightmapPath, heightmapInfo.RawPath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        LoadHeightmap(heightmapInfo.RawPath, heightmapInfo.SamplesX, heightmapInfo.SamplesZ, 2,
+            heightmapInfo.CellSizeMeters);
+        _loadedDcsHeightmapPath = heightmapInfo.RawPath;
+    }
+
     private bool RecordProcedure(int handle, IntPtr buffer, int length, IntPtr user)
     {
         try
         {
+            if (length <= 0)
+                return true;
+
             // While not transmitting we keep the mic open purely so the normalizer can track
             // the room's noise floor. Feed those idle samples to the estimator and return —
             // nothing is sent, monitored, or recorded until PTT is held. This also freezes the
@@ -949,7 +1035,15 @@ public class OpenFreqService : IOpenFreqService
                         samples = new ReadOnlySpan<short>((void*)buffer, length / sizeof(short));
                     }
 
+                    PublishMicLevel(samples, InputGain);
                     _micNormalizer.UpdateNoiseFloor(samples);
+                }
+                else if (InputMeterEnabled)
+                {
+                    unsafe
+                    {
+                        PublishMicLevel(new ReadOnlySpan<short>((void*)buffer, length / sizeof(short)), InputGain);
+                    }
                 }
 
                 return true;
@@ -986,6 +1080,8 @@ public class OpenFreqService : IOpenFreqService
             // (and peers receive) the same normalized audio.
             if (MicNormalizationEnabled)
                 _micNormalizer.Process(audioData, audioData.Length);
+            ApplyInputGain(audioData);
+            PublishMicLevel(audioData);
 
             // Convert mic to float once and fan out to sidetone (speaker loopback) and/or the
             // session recording (own voice, rendered through radio FX downstream).
@@ -1007,7 +1103,7 @@ public class OpenFreqService : IOpenFreqService
             // Send to ALL active frequencies
             var frequenciesData =
                 new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-                    AmbientNoiseType ambientNoiseType)>();
+                    Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)>();
 
             // List of frequencies that got disabled in the meantime
             var disabledFrequencies = new List<int>();
@@ -1031,19 +1127,32 @@ public class OpenFreqService : IOpenFreqService
 
                 var position = GetOwnPosition(frequencyKhz, txSlotId) ?? new Vector3(0, 0, 0);
                 var velocity = GetOwnVelocity(frequencyKhz, txSlotId);
+                var dcsPosition = GetOwnDcsLocalPosition(frequencyKhz, txSlotId);
 
                 if (RadioStationPreset.IsVHF(frequencyKhz))
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, radioStationData.RadioStation.Preset.AmbientNoiseType));
+                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType));
                 }
                 else
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_UHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, radioStationData.RadioStation.Preset.AmbientNoiseType));
+                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType));
                 }
+            }
+
+            if (frequenciesData.Count == 0)
+            {
+                var now = DateTime.UtcNow;
+                if (now >= _nextEmptyTransmissionWarningUtc)
+                {
+                    _nextEmptyTransmissionWarningUtc = now.AddSeconds(1);
+                    _logger.LogWarning("Mic audio captured while transmitting, but no valid frequency metadata was available");
+                    OnStatusMessage("Mic audio captured, but no valid transmit frequency was available");
+                }
+                return true;
             }
 
             // Tell the recorder how to render our own voice "as if heard from the same position":
@@ -1073,6 +1182,50 @@ public class OpenFreqService : IOpenFreqService
         return true;
     }
 
+    private void ApplyInputGain(short[] samples)
+    {
+        var gain = InputGain;
+        if (Math.Abs(gain - 1.0d) < 0.0001d)
+            return;
+
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var scaled = (int)Math.Round(samples[i] * gain);
+            samples[i] = (short)Math.Clamp(scaled, short.MinValue + 1, short.MaxValue);
+        }
+    }
+
+    private void PublishMicLevel(ReadOnlySpan<short> samples, double previewGain = 1.0d)
+    {
+        if (samples.Length == 0)
+            return;
+
+        var now = DateTime.UtcNow;
+        if (now - _lastMicLevelEventUtc < TimeSpan.FromMilliseconds(50))
+            return;
+
+        _lastMicLevelEventUtc = now;
+
+        double sumSquares = 0;
+        var peak = 0;
+        foreach (var sample in samples)
+        {
+            var adjusted = previewGain == 1.0d
+                ? sample
+                : (int)Math.Clamp(Math.Round(sample * previewGain), short.MinValue + 1, short.MaxValue);
+            var value = adjusted == short.MinValue ? short.MaxValue : Math.Abs(adjusted);
+            if (value > peak)
+                peak = value;
+            sumSquares += (double)adjusted * adjusted;
+        }
+
+        var rms = Math.Sqrt(sumSquares / samples.Length) / short.MaxValue;
+        var peakNormalized = peak / (double)short.MaxValue;
+        MicLevelChanged?.Invoke(this, new MicLevelChangedEventArgs(
+            Math.Clamp(rms, 0, 1),
+            Math.Clamp(peakNormalized, 0, 1)));
+    }
+
     private Vector3? GetOwnPosition(int frequencyKhz, Guid slotId)
     {
         _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
@@ -1091,6 +1244,13 @@ public class OpenFreqService : IOpenFreqService
                 return new Vector3(BmsHeightmapConverter.ToHeightmap(_falconSharedMemoryService.Position.X,
                     _falconSharedMemoryService.Position.Y, _falconSharedMemoryService.Position.Z));
 
+            case RadioStationData.RadioStationType.DCS:
+                if (_dcsExportService.State != ServiceState.Connected ||
+                    _dcsExportService.Position == null) return null;
+
+                return new Vector3(DcsHeightmapConverter.ToHeightmap(_dcsExportService.Position,
+                    _dcsExportService.HeightmapInfo));
+
             case RadioStationData.RadioStationType.STATIONARY:
                 var position = tunedFrequencyData.RadioStation.Vector3;
                 return new Vector3(position.X, position.Y,
@@ -1107,6 +1267,19 @@ public class OpenFreqService : IOpenFreqService
             default:
                 return null;
         }
+    }
+
+    private Vector3? GetOwnDcsLocalPosition(int frequencyKhz, Guid slotId)
+    {
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
+        if (tunedFrequencyData?.RadioStation.Type != RadioStationData.RadioStationType.DCS)
+            return null;
+
+        if (_dcsExportService.State != ServiceState.Connected || _dcsExportService.Position == null)
+            return null;
+
+        var position = _dcsExportService.Position;
+        return new Vector3(position.X, position.Y, position.Z);
     }
 
     private Vector3? GetOwnVelocity(int frequencyKhz, Guid slotId)
@@ -1133,6 +1306,11 @@ public class OpenFreqService : IOpenFreqService
                     bmsVel.X * feetToMeters, // East (swap X to second component)
                     bmsVel.Z * feetToMeters // Up (Z already inverted to Up in service)
                 );
+
+            case RadioStationData.RadioStationType.DCS:
+                return _dcsExportService.Velocity == null
+                    ? null
+                    : new Vector3(DcsHeightmapConverter.VelocityToHeightmap(_dcsExportService.Velocity));
 
             case RadioStationData.RadioStationType.STATIONARY:
                 // we are stationary, duh
@@ -1201,7 +1379,9 @@ public class OpenFreqService : IOpenFreqService
 
     private void OnClientAuthenticated(object? sender, AuthenticationEventArgs e)
     {
+        DcsLineOfSightEnabled = e.DcsLineOfSightEnabled;
         OnStatusMessage($"Authenticated - Peer ID: {e.PeerId}, Audio Port: {e.AudioPort}");
+        OnStatusMessage($"DCS LOS constraint {(DcsLineOfSightEnabled ? "enabled" : "disabled")} by server");
         OnAllPeersStatusUpdateReceived(sender, new AllPeersStatusEventArgs(e.Peers));
         // Push current mode to server immediately so it knows our Is3d state before
         // we join any channels — prevents the AllPeersStatus broadcast on join from
@@ -1338,6 +1518,20 @@ public class OpenFreqService : IOpenFreqService
                 ? CalculateAudioParamsSync(frequencyTransmission, e.PeerId)
                 : FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Khz);
 
+            if (Apply3dAudioEffects)
+                _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
+
+            if (audioParams.SignalBlocked)
+            {
+                if (_playbackService?.IsStreamActive(streamId) ?? false)
+                {
+                    _playbackService.UpdateStreamParams(streamId, audioParams);
+                    _playbackService.ClearStreamBuffer(streamId);
+                }
+
+                continue;
+            }
+
             lock (_streamCreationLock)
             {
                 var streamExists = _playbackService?.IsStreamActive(streamId) ?? false;
@@ -1371,12 +1565,6 @@ public class OpenFreqService : IOpenFreqService
 
             var ambientNoiseType = Apply3dAudioEffects ? frequencyTransmission.AmbientNoiseType : AmbientNoiseType.None;
 
-            // Update signal strength tracking for 3D audio
-            if (Apply3dAudioEffects)
-            {
-                _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
-            }
-
             // Push audio data immediately
             _playbackService?.PushAudioData(streamId, e.AudioData, ambientNoiseType);
         }
@@ -1391,13 +1579,18 @@ public class OpenFreqService : IOpenFreqService
         var anySlotKey = _tunedSlots.Keys.FirstOrDefault(k => k.FreqKhz == frequencyTransmission.Khz);
         var ownPosition = anySlotKey != default ? GetOwnPosition(anySlotKey.FreqKhz, anySlotKey.SlotId) : null;
         var ownVelocity = anySlotKey != default ? GetOwnVelocity(anySlotKey.FreqKhz, anySlotKey.SlotId) : null;
+        var dcsLineOfSight = RequestDcsLineOfSight(cacheKey, frequencyTransmission);
+        var receiverData = GetAnyTunedSlot(frequencyTransmission.Khz);
+        var receiverSensitivityDb = GetReceiverSensitivityDb(frequencyTransmission.Khz, receiverData);
 
         if (frequencyTransmission.Position == null || ownPosition == null || _signalCalculator == null)
         {
             // Inputs missing (e.g. a concealed frame without position).
-            // Reuse the last physics result for this source+freq, even if expired.
-            // Stale RF params beat full-volume no-physics audio.
-            return LastKnownOrDefaultAudioParams(cacheKey, frequencyTransmission.Khz);
+            var fallbackParams = TryCreateDcsFreeSpaceAudioParams(frequencyTransmission, anySlotKey,
+                receiverSensitivityDb)
+                                 ?? CloneAudioParams(LastKnownOrDefaultAudioParams(cacheKey,
+                                     frequencyTransmission.Khz));
+            return PrepareReceivedAudioParams(fallbackParams, dcsLineOfSight, frequencyTransmission, anySlotKey);
         }
 
         // Check cache
@@ -1406,19 +1599,16 @@ public class OpenFreqService : IOpenFreqService
         if (_audioParamsCache.TryGetValue(cacheKey, out var cached) &&
             (now - cached.LastCalculated) < _audioParamsCacheDuration)
         {
-            return cached.Params;
+            return PrepareReceivedAudioParams(CloneAudioParams(cached.Params), dcsLineOfSight,
+                frequencyTransmission, anySlotKey);
         }
 
         // Calculate — all slots on the same freq share the same RadioStationData, so any slot's data is fine.
-        var receiverData = GetAnyTunedSlot(frequencyTransmission.Khz);
         if (receiverData == null)
         {
-            return LastKnownOrDefaultAudioParams(cacheKey, frequencyTransmission.Khz);
+            return PrepareReceivedAudioParams(CloneAudioParams(LastKnownOrDefaultAudioParams(cacheKey,
+                frequencyTransmission.Khz)), dcsLineOfSight, frequencyTransmission, anySlotKey);
         }
-
-        var receiverSensitivityDb = RadioStationPreset.IsVHF(frequencyTransmission.Khz)
-            ? receiverData.RadioStation.Preset.RxSensitivity_VHF_dBm
-            : receiverData.RadioStation.Preset.RxSensitivity_UHF_dBm;
 
         var audioParams = _signalCalculator.CalculateAudioParams(
             frequencyTransmission.Position.X, frequencyTransmission.Position.Y, frequencyTransmission.Position.Z,
@@ -1441,7 +1631,180 @@ public class OpenFreqService : IOpenFreqService
         _logger.LogDebug("Calculated audio params {AudioParams}", audioParams);
 #endif
 
+        return PrepareReceivedAudioParams(CloneAudioParams(audioParams), dcsLineOfSight, frequencyTransmission,
+            anySlotKey);
+    }
+
+    private AudioParams PrepareReceivedAudioParams(AudioParams audioParams, DcsLineOfSightResult? dcsLineOfSight,
+        FrequencyTransmission frequencyTransmission, (int FreqKhz, Guid SlotId) slotKey)
+    {
+        ApplyDcsDistanceAndHorizonLoss(audioParams, frequencyTransmission, slotKey);
+        return ApplyDcsLineOfSightLoss(audioParams, dcsLineOfSight);
+    }
+
+    private static double GetReceiverSensitivityDb(int frequencyKhz, TunedFrequencyData? receiverData)
+    {
+        if (receiverData != null)
+        {
+            return RadioStationPreset.IsVHF(frequencyKhz)
+                ? receiverData.RadioStation.Preset.RxSensitivity_VHF_dBm
+                : receiverData.RadioStation.Preset.RxSensitivity_UHF_dBm;
+        }
+
+        return RadioStationPreset.IsVHF(frequencyKhz) ? -113.0d : -107.0d;
+    }
+
+    private AudioParams? TryCreateDcsFreeSpaceAudioParams(FrequencyTransmission frequencyTransmission,
+        (int FreqKhz, Guid SlotId) slotKey, double receiverSensitivityDb)
+    {
+        if (OwnPositionMode != IOpenFreqService.Mode.DCS ||
+            frequencyTransmission.DcsPosition == null ||
+            slotKey == default)
+            return null;
+
+        var ownDcsPosition = GetOwnDcsLocalPosition(slotKey.FreqKhz, slotKey.SlotId);
+        if (ownDcsPosition == null)
+            return null;
+
+        var remote = frequencyTransmission.DcsPosition;
+        var dx = remote.X - ownDcsPosition.X;
+        var dy = remote.Y - ownDcsPosition.Y;
+        var dz = remote.Z - ownDcsPosition.Z;
+        var distanceMeters = Math.Max(1.0d, Math.Sqrt(dx * dx + dy * dy + dz * dz));
+        var frequencyHz = Math.Max(1.0d, frequencyTransmission.Khz * 1000.0d);
+        var txPowerDbm = 10.0d * Math.Log10(Math.Max(0.001d, frequencyTransmission.TxPowerWatts) * 1000.0d);
+        var fsplDb = 20.0d * Math.Log10(4.0d * Math.PI * distanceMeters * frequencyHz / 299792458.0d);
+        var weatherLossDb = 0.02d * (distanceMeters / 1000.0d);
+
+        var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Khz,
+            (float)frequencyTransmission.Ppm);
+        audioParams.ReceivedDb = (float)(txPowerDbm - fsplDb - weatherLossDb);
+        audioParams.ReceivedSnrDb = audioParams.ReceivedDb - (float)receiverSensitivityDb;
+        UpdateFadingRates(audioParams);
         return audioParams;
+    }
+
+    private void ApplyDcsDistanceAndHorizonLoss(AudioParams audioParams,
+        FrequencyTransmission frequencyTransmission, (int FreqKhz, Guid SlotId) slotKey)
+    {
+        if (OwnPositionMode != IOpenFreqService.Mode.DCS ||
+            frequencyTransmission.DcsPosition == null ||
+            slotKey == default)
+            return;
+
+        var ownDcsPosition = GetOwnDcsLocalPosition(slotKey.FreqKhz, slotKey.SlotId);
+        if (ownDcsPosition == null)
+            return;
+
+        var remote = frequencyTransmission.DcsPosition;
+        var dx = remote.X - ownDcsPosition.X;
+        var dy = remote.Y - ownDcsPosition.Y;
+        var dz = remote.Z - ownDcsPosition.Z;
+        var distanceMeters = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        var distanceNm = distanceMeters / 1852.0d;
+
+        var extraLossDb = 0.0d;
+        if (distanceNm > 60.0d)
+            extraLossDb += (Math.Min(distanceNm, 140.0d) - 60.0d) * 0.10d;
+        if (distanceNm > 140.0d)
+            extraLossDb += (Math.Min(distanceNm, 220.0d) - 140.0d) * 0.25d;
+        if (distanceNm > 220.0d)
+            extraLossDb += (distanceNm - 220.0d) * 0.75d;
+
+        var horizonMeters = CalculateRadioHorizonMeters(ownDcsPosition.Y, remote.Y);
+        if (horizonMeters > 1.0d)
+        {
+            var horizonRatio = distanceMeters / horizonMeters;
+            if (horizonRatio > 0.75d)
+            {
+                var nearHorizon = Math.Min(horizonRatio, 1.0d) - 0.75d;
+                extraLossDb += Math.Pow(nearHorizon / 0.25d, 2.0d) * 12.0d;
+            }
+
+            if (horizonRatio > 1.0d)
+                extraLossDb += 24.0d + (horizonRatio - 1.0d) * 80.0d;
+
+            if (horizonRatio > 1.15d)
+                audioParams.SignalBlocked = true;
+        }
+
+        if (extraLossDb > 0.001d)
+            ApplyAttenuation(audioParams, extraLossDb);
+
+        if (audioParams.ReceivedSnrDb <= -18.0f)
+            audioParams.SignalBlocked = true;
+    }
+
+    private static double CalculateRadioHorizonMeters(double txAltitudeMsl, double rxAltitudeMsl)
+    {
+        const double effectiveEarthRadiusMeters = 6378000.0d * 4.0d / 3.0d;
+        var txHeight = Math.Max(2.0d, txAltitudeMsl);
+        var rxHeight = Math.Max(2.0d, rxAltitudeMsl);
+        return Math.Sqrt(2.0d * effectiveEarthRadiusMeters * txHeight) +
+               Math.Sqrt(2.0d * effectiveEarthRadiusMeters * rxHeight);
+    }
+
+    private static void ApplyAttenuation(AudioParams audioParams, double attenuationDb)
+    {
+        audioParams.ReceivedDb -= (float)attenuationDb;
+        audioParams.ReceivedSnrDb -= (float)attenuationDb;
+        UpdateFadingRates(audioParams);
+    }
+
+    private static void UpdateFadingRates(AudioParams audioParams)
+    {
+        var bandConfig = FastPathAudioSim.GetBandConfig(audioParams.RadioFrequencyKHz);
+        audioParams.DropoutRate = FastPathAudioSim.CalculateDropoutRate(audioParams.ReceivedSnrDb, bandConfig);
+        audioParams.DeepFadeRate = FastPathAudioSim.CalculateDeepFadeRate(audioParams.ReceivedSnrDb, bandConfig);
+    }
+
+    private DcsLineOfSightResult? RequestDcsLineOfSight(
+        (string PeerId, int FrequencyKhz) cacheKey,
+        FrequencyTransmission frequencyTransmission)
+    {
+        if (!DcsLineOfSightEnabled ||
+            OwnPositionMode != IOpenFreqService.Mode.DCS ||
+            frequencyTransmission.DcsPosition == null)
+            return null;
+
+        var position = frequencyTransmission.DcsPosition;
+        return _dcsExportService.RequestLineOfSight(
+            $"{cacheKey.PeerId}:{cacheKey.FrequencyKhz}",
+            new DcsVector3(position.X, position.Y, position.Z));
+    }
+
+    private static AudioParams ApplyDcsLineOfSightLoss(AudioParams audioParams, DcsLineOfSightResult? result)
+    {
+        if (result is not { TerrainAvailable: true })
+            return audioParams;
+
+        var loss = Math.Clamp(result.Loss, 0.0d, 1.0d);
+        if (loss <= 0.001d)
+            return audioParams;
+
+        var attenuationDb = loss >= 0.99d ? 180.0d : loss * 60.0d;
+        ApplyAttenuation(audioParams, attenuationDb);
+
+        audioParams.DropoutRate = Math.Max(audioParams.DropoutRate, (float)(loss * 8.0d));
+        audioParams.DeepFadeRate = Math.Max(audioParams.DeepFadeRate, (float)(loss * 1.5d));
+        if (loss >= 0.99d || audioParams.ReceivedSnrDb <= -18.0f)
+            audioParams.SignalBlocked = true;
+        return audioParams;
+    }
+
+    private static AudioParams CloneAudioParams(AudioParams source)
+    {
+        return new AudioParams
+        {
+            ReceivedDb = source.ReceivedDb,
+            ReceivedSnrDb = source.ReceivedSnrDb,
+            DropoutRate = source.DropoutRate,
+            DeepFadeRate = source.DeepFadeRate,
+            RadioFrequencyKHz = source.RadioFrequencyKHz,
+            TuneOffsetPPM = source.TuneOffsetPPM,
+            TerrainProfile = source.TerrainProfile,
+            SignalBlocked = source.SignalBlocked
+        };
     }
 
     // Last computed physics params for this source+freq, ignoring the cache freshness.
@@ -1510,6 +1873,12 @@ public class OpenFreqService : IOpenFreqService
     private void OnAllPeersStatusUpdateReceived(object? sender, AllPeersStatusEventArgs args) =>
         AllPeersStatusChanged?.Invoke(this, args);
 
+    private void OnClientServerSettingsChanged(object? sender, ServerSettingsEventArgs args)
+    {
+        DcsLineOfSightEnabled = args.DcsLineOfSightEnabled;
+        OnStatusMessage($"DCS LOS constraint {(DcsLineOfSightEnabled ? "enabled" : "disabled")} by server");
+    }
+
     public void Dispose()
     {
         // Stop the cache cleanup
@@ -1522,6 +1891,7 @@ public class OpenFreqService : IOpenFreqService
 
         _playbackService?.StopAll();
         _signalCalculator?.Dispose();
+        _dcsExportService.HeightmapChanged -= OnDcsHeightmapChanged;
 
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged -= OnFalconStateChanged;
@@ -1539,6 +1909,7 @@ public class OpenFreqService : IOpenFreqService
             _client.PeerTransmissionStateChanged -= OnClientPeerTransmissionStatusChanged;
             _client.AudioDataReceived -= OnClientAudioDataReceived;
             _client.AllPeersStatusUpdateReceived -= OnAllPeersStatusUpdateReceived;
+            _client.ServerSettingsChanged -= OnClientServerSettingsChanged;
             _client.ErrorOccurred -= OnClientErrorOccurred;
 
             _client.Dispose();

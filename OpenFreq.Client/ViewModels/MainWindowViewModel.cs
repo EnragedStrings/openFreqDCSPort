@@ -23,6 +23,7 @@ using FalconRadioService.Services;
 using Material.Styles.Controls;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Models;
+using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreqAudio;
@@ -40,6 +41,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     private readonly IAudioService _audioService;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
+    private readonly IDcsExportService _dcsExportService;
     private readonly IAcmiClientService _acmiClientService;
     private readonly IConfigurationService _configurationService;
     private readonly IIvcMonitorService _ivcMonitorService;
@@ -141,7 +143,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         ILogger<MainWindowViewModel> logger,
         ChannelCardListViewModel channelList,
         SettingsViewModel settings, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
-        IFalconSharedMemoryService falconSharedMemoryService, IIvcMonitorService ivcMonitorService)
+        IFalconSharedMemoryService falconSharedMemoryService, IDcsExportService dcsExportService,
+        IIvcMonitorService ivcMonitorService)
     {
         _openFreqService = openFreqService;
         _hotkeyService = hotkeyService;
@@ -153,6 +156,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         Settings = settings;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
         _falconSharedMemoryService = falconSharedMemoryService;
+        _dcsExportService = dcsExportService;
         _ivcMonitorService = ivcMonitorService;
 
         // Subscribe to service events
@@ -174,6 +178,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged += OnAircraftInfoChanged;
+        _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
+        _dcsExportService.StateChanged += OnDcsExportStateChanged;
 
         // IVC Monitor
         _ivcMonitorService.IvcStatusChanged += OnIvcStatusChanged;
@@ -198,6 +204,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnAircraftInfoChanged(object? sender, AircraftInfoChangedEventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
         _logger.LogDebug("BMS Aircraft info changed: {nctr} to preset {name}", e.AcNCTR, e.AcName);
         // If we are in 3d, the SHMEM AcName and AcNCTR fields are now populated.
 
@@ -264,7 +272,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     private void JoinFrequencyFromPeerList(int frequencyKhz)
     {
         var location = ChannelList.SelectedLocation;
-        if (location == null || location.IsBmsLocation) return;
+        if (location == null || location.IsManagedBySimulator) return;
 
         var existing = location.Channels.FirstOrDefault(c => c.FrequencyKhz == frequencyKhz);
         if (existing == null)
@@ -426,12 +434,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnRadioClientConflict(object? sender, EventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
         _logger.LogWarning("Radio client mutex conflict");
         Dispatcher.UIThread.Post(() => _ = ShowIvcActiveAsync());
     }
 
     private void OnRadioClientConflictResolved(object? sender, EventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
         _logger.LogInformation("Radio client conflict resolved");
         Dispatcher.UIThread.Post(() =>
         {
@@ -500,12 +512,15 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnFlyingStateChanged(object? sender, FlyingStateChangedEventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
         Settings.Is3dMode = e.NewFlyingState;
     }
 
     private void FalconRadioSharedMemoryServiceOnConnectionParametersChanged(object? sender,
         ConnectionParametersChangedEventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
         _logger.LogDebug($"FalconRadioSharedMemoryServiceOnConnectionParametersChanged: {e.NewParameters}");
 
         // BMS wants us to close the client
@@ -589,6 +604,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnLogbookNameChanged(object? sender, LogbookNameChangedEventArgs e)
     {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
+
         // BMS initialises Telemetry::m_logbookName to "Wot Pilot?!" before the session
         // is established; the real callsign is only written after ClientReady().
         // Ignore the sentinel so we never push the placeholder as a display name.
@@ -810,7 +827,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             ClearError();
             SettingsDrawerOpened = false;
 
-            if (Settings.ModeIsGci)
+            if (Settings.ModeIsGci || Settings.ModeIsDcs)
                 Dispatcher.UIThread.Post(() => Settings.AddOpenFreqServerAddressToHistory());
 
             // Re-read live BMS flight state on connect to rule out stale local Is3dMode
@@ -818,7 +835,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                 _falconSharedMemoryService.IsFlying is { } isFlying)
                 Dispatcher.UIThread.Post(() => Settings.Is3dMode = isFlying);
 
-            if (Settings is { ModeIsGci: false, MinimizeOnConnect: true })
+            if (Settings.ConnectionMode == IOpenFreqService.Mode.DCS)
+                Dispatcher.UIThread.Post(() => Settings.Is3dMode = _dcsExportService.IsInGame);
+
+            if (Settings is { ModeIsBms: true, MinimizeOnConnect: true } ||
+                Settings is { ModeIsDcs: true, MinimizeOnConnect: true })
             {
                 Dispatcher.UIThread.Post(() =>
                 {
@@ -851,6 +872,22 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                     window.WindowState = WindowState.Normal;
             });
         }
+    }
+
+    private void OnDcsGameModeChanged(object? sender, DcsGameModeChangedEventArgs e)
+    {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
+        Dispatcher.UIThread.Post(() => Settings.Is3dMode = e.NewIsInGame);
+    }
+
+    private async void OnDcsExportStateChanged(object? sender, ServiceStateChangedEventArgs e)
+    {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
+
+        if (e is not { OldState: ServiceState.Connected, NewState: ServiceState.Disconnected }) return;
+
+        Dispatcher.UIThread.Post(() => Settings.Is3dMode = false);
+        await Task.CompletedTask;
     }
 
     [RelayCommand]
@@ -888,6 +925,44 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             var capturedKey = await _hotkeyService.CaptureNextHotkeyAsync();
             Settings.BmsVhfSquelchHotkey = capturedKey;
             ChannelList.FalconLocation?.UpdateVhfHotkey(capturedKey);
+        }
+        catch (OperationCanceledException)
+        {
+            // Capture was cancelled
+        }
+        finally
+        {
+            IsCapturingHotkey = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task BeginCaptureDcsArc210PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc210PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsArc164PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc164PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsArc186PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc186PttHotkey = binding);
+
+    [RelayCommand]
+    private void ClearDcsArc210PttHotkey() => Settings.DcsArc210PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsArc164PttHotkey() => Settings.DcsArc164PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsArc186PttHotkey() => Settings.DcsArc186PttHotkey = null;
+
+    private async Task CaptureSettingsHotkeyAsync(Action<HotkeyBinding?> assign)
+    {
+        IsCapturingHotkey = true;
+        try
+        {
+            assign(await _hotkeyService.CaptureNextHotkeyAsync());
         }
         catch (OperationCanceledException)
         {
@@ -975,8 +1050,14 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(Settings.Is3dMode)) return;
-        Dispatcher.UIThread.Post(UpdateModeDependent);
+        if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
+        {
+            _openFreqService.SetOwnPositionMode(Settings.ConnectionMode);
+            return;
+        }
+
+        if (e.PropertyName == nameof(SettingsViewModel.Is3dMode))
+            Dispatcher.UIThread.Post(UpdateModeDependent);
     }
 
     private void UpdateModeDependent()
@@ -1034,7 +1115,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             Settings.LoadFromSettings(config.Settings);
 
             // Load locations
-            foreach (var locationData in config.Locations)
+            foreach (var locationData in config.Locations.Where(ShouldLoadPersistedLocation))
             {
                 var location = ChannelList.CreateLocation(locationData);
                 location.Latitude = locationData.Latitude;
@@ -1049,6 +1130,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
                     // Set PTT hotkey
                     channel.PttHotKey = channelData.Hotkey;
+                    channel.Pan = channelData.Pan;
                     if (channel.PttHotKey != null)
                     {
                         _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.Ptt, channel.PttHotKey, channel.Id);
@@ -1064,6 +1146,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    private static bool ShouldLoadPersistedLocation(LocationData locationData)
+    {
+        if (locationData.RadioStationData.Type is RadioStationData.RadioStationType.BMS
+            or RadioStationData.RadioStationType.DCS)
+            return false;
+
+        return !string.Equals(locationData.Name, "BMS Channels", StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(locationData.Name, "DCS A-10C II Radios", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task SaveConfigurationAsync()
     {
         try
@@ -1072,7 +1164,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             {
                 Settings = Settings.GetSettings(),
                 Locations = ChannelList.Locations
-                    .Where(cg => !cg.Equals(ChannelList.FalconLocation))
+                    .Where(cg => cg.RadioStationData.Type is not RadioStationData.RadioStationType.BMS
+                        and not RadioStationData.RadioStationType.DCS)
                     .Select(cg =>
                     {
                         return new LocationData
@@ -1083,14 +1176,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                             AltitudeFt = cg.AltitudeFeet,
                             RadioStationData = new RadioStationData
                             {
-                                Type = RadioStationData.RadioStationType.STATIONARY,
+                                Type = cg.RadioStationData.Type,
                                 Preset = cg.RadioStationData.Preset,
                                 Ppm = cg.RadioStationData.Ppm,
+                                AcmiAircraftId = cg.RadioStationData.AcmiAircraftId,
                             },
                             Channels = cg.Channels.Select(c => new ChannelData
                             {
                                 Name = c.Name,
                                 FrequencyKhz = c.FrequencyKhz,
+                                Pan = c.Pan,
                                 Hotkey = c.PttHotKey,
                             }).ToList()
                         };
@@ -1149,6 +1244,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.RadioClientConflictResolved -= OnRadioClientConflictResolved;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged -= OnAircraftInfoChanged;
+        _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
+        _dcsExportService.StateChanged -= OnDcsExportStateChanged;
 
         await DisconnectAsync();
         ChannelList.Dispose();
@@ -1160,6 +1257,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
         _falconSharedMemoryService.Dispose();
         _falconRadioSharedMemoryService.Dispose();
+        _dcsExportService.Dispose();
         await _audioService.DisposeAsync();
         await _ivcMonitorService.DisposeAsync();
     }

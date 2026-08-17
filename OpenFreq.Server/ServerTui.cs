@@ -17,13 +17,13 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace OpenFreqServer;
 
 /// <summary>Row model for colored list views.</summary>
-[ExcludeFromCodeCoverage] // Terminal.Gui rendering — not unit tested
+[ExcludeFromCodeCoverage] // Terminal.Gui rendering Ã¢â‚¬â€ not unit tested
 internal record ColoredRow(string Text, bool IsTransmitting);
 
 /// <summary>
 /// Reusable IListDataSource that renders transmitting rows in red.
 /// </summary>
-[ExcludeFromCodeCoverage] // Terminal.Gui rendering — not unit tested
+[ExcludeFromCodeCoverage] // Terminal.Gui rendering Ã¢â‚¬â€ not unit tested
 internal class ColoredListSource : IListDataSource
 {
     private static readonly Attribute _normalAttr = new(ColorName16.BrightYellow, ColorName16.Black);
@@ -73,7 +73,7 @@ internal class ColoredListSource : IListDataSource
 
 }
 
-[ExcludeFromCodeCoverage] // Terminal.Gui rendering — not unit tested
+[ExcludeFromCodeCoverage] // Terminal.Gui rendering Ã¢â‚¬â€ not unit tested
 public class TerminalGuiServer : IDisposable
 {
     private readonly ServerConfig _config;
@@ -92,15 +92,18 @@ public class TerminalGuiServer : IDisposable
     private readonly ColoredListSource _clientSource = new();
     private readonly ObservableCollection<string> _logLines = new();
     private readonly string _version;
+    private readonly Func<Task>? _broadcastServerSettingsAsync;
 
     private IApplication? _app;
 
-    public TerminalGuiServer(ServerConfig config, ServerStats stats, ConcurrentQueue<TuiLogMessage> logMessages, string version = "unknown")
+    public TerminalGuiServer(ServerConfig config, ServerStats stats, ConcurrentQueue<TuiLogMessage> logMessages,
+        string version = "unknown", Func<Task>? broadcastServerSettingsAsync = null)
     {
         _config = config;
         _stats = stats;
         _logMessages = logMessages;
         _version = version;
+        _broadcastServerSettingsAsync = broadcastServerSettingsAsync;
     }
 
     public void Start()
@@ -140,9 +143,9 @@ public class TerminalGuiServer : IDisposable
 
     private void SetupUi(View top, IApplication app)
     {
-        const string freqTab = "≋ Frequencies";
-        const string clientTab = "☺ Clients";
-        const string logTab = "▤ Logs";
+        const string freqTab = "Ã¢â€°â€¹ Frequencies";
+        const string clientTab = "Ã¢ËœÂº Clients";
+        const string logTab = "Ã¢â€“Â¤ Logs";
 
         var schemeDefault = new Scheme
         {
@@ -167,9 +170,9 @@ public class TerminalGuiServer : IDisposable
             Normal = new Attribute(ColorName16.Black, ColorName16.BrightGreen)
         };
 
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         // STATUS BAR (Top)
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         _statusLabel = new Label
         {
             X = 0,
@@ -180,9 +183,9 @@ public class TerminalGuiServer : IDisposable
         _statusLabel.SetScheme(schemeStatus);
         top.Add(_statusLabel);
 
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         // FOOTER (Bottom)
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         var schemeFooter = new Scheme
         {
             Normal = new Attribute(ColorName16.Black, ColorName16.Gray)
@@ -193,14 +196,14 @@ public class TerminalGuiServer : IDisposable
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
             Height = 1,
-            Text = "  F1=Frequencies  F2=Clients  F3=Logs  │  CTRL+Q=Quit Server",
+            Text = "  F1=Frequencies  F2=Clients  F3=Logs  F4=Toggle LOS  |  CTRL+Q=Quit Server",
         };
         footer.SetScheme(schemeFooter);
         top.Add(footer);
 
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         // TAB VIEW (Main Content)
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         _tabView = new Tabs
         {
             X = 0,
@@ -224,9 +227,9 @@ public class TerminalGuiServer : IDisposable
 
         top.Add(_tabView);
 
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         // Global Key Shortcuts
-        // ──────────────────────────────────────────────
+        // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         app.Keyboard.KeyDown += (_, key) =>
         {
             switch (key.KeyCode)
@@ -242,6 +245,9 @@ public class TerminalGuiServer : IDisposable
                     break;
                 case KeyCode.F3:
                     _tabView.Value = _tabView.TabCollection.ElementAt(2);
+                    break;
+                case KeyCode.F4:
+                    ToggleDcsLineOfSight();
                     break;
             }
         };
@@ -370,16 +376,50 @@ public class TerminalGuiServer : IDisposable
         _statusLabel.SetScheme(new Scheme { Normal = color });
 
         var info =
-            $"● OpenFreq Server {_version} | Up: {uptimeStr} | " +
+            $"Ã¢â€”Â OpenFreq Server {_version} | Up: {uptimeStr} | " +
             $"Ports: {_config.WebSocketPort} (ws://) {_config.AudioPort} (Audio) | Clients: {_stats.AuthenticatedClients} | " +
             $"TX: {_stats.ActiveTransmissions} | " +
             $"Auth:{(!string.IsNullOrEmpty(_config.ServerPassword) ? " Yes" : " No")} | " +
-            $"Opus:{(_config.EnableOpusCompression ? " Yes" : " No")}";
+            $"Opus:{(_config.EnableOpusCompression ? " Yes" : " No")} | " +
+            $"DCS LOS:{(_config.DcsLineOfSightEnabled ? " On" : " Off")}";
 
-        const string hotkeys = " | F1=Freq  F2=Clients  F3=Logs  CTRL+q=Quit";
+        const string hotkeys = " | F1=Freq  F2=Clients  F3=Logs  F4=LOS  CTRL+q=Quit";
         var termWidth = _app?.Screen.Width ?? Console.WindowWidth;
         var full = info + hotkeys;
         _statusLabel.Text = full.Length <= termWidth ? full : info.Length <= termWidth ? info : info[..termWidth];
+    }
+
+    private void ToggleDcsLineOfSight()
+    {
+        _config.DcsLineOfSightEnabled = !_config.DcsLineOfSightEnabled;
+        _logMessages.Enqueue(new TuiLogMessage
+        {
+            Timestamp = DateTime.UtcNow,
+            Level = LogLevel.Information,
+            Message = $"DCS line-of-sight constraint {(_config.DcsLineOfSightEnabled ? "enabled" : "disabled")}"
+        });
+
+        UpdateStatus();
+
+        if (_broadcastServerSettingsAsync == null)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _broadcastServerSettingsAsync();
+            }
+            catch (Exception ex)
+            {
+                _logMessages.Enqueue(new TuiLogMessage
+                {
+                    Timestamp = DateTime.UtcNow,
+                    Level = LogLevel.Error,
+                    Message = $"Failed to broadcast server settings: {ex.Message}"
+                });
+            }
+        });
     }
 
     private void UpdateFrequencies()
@@ -403,7 +443,7 @@ public class TerminalGuiServer : IDisposable
 
             foreach (var freq in frequencies)
             {
-                var indicator = freq.IsTransmitting ? "● TX" : freq.ClientCount > 0 ? "● RX" : "○ Idle";
+                var indicator = freq.IsTransmitting ? "Ã¢â€”Â TX" : freq.ClientCount > 0 ? "Ã¢â€”Â RX" : "Ã¢â€”â€¹ Idle";
                 var freqStr = (freq.FrequencyKhz / 1000d).ToString("F3", CultureInfo.InvariantCulture) + " MHz";
                 var text = $"{freqStr,-15} {freq.ClientCount,8} {indicator,10}";
                 rows.Add(new ColoredRow(text, freq.IsTransmitting));
@@ -432,7 +472,7 @@ public class TerminalGuiServer : IDisposable
         rows.Clear();
 
         rows.Add(new ColoredRow($"{"Display Name",-24} {"Client ID",-20} {"Frequency",-12} {"Status",8} {"Last WS",9} {"Last RTP",9}", false));
-        rows.Add(new ColoredRow(new string('─', 90), false));
+        rows.Add(new ColoredRow(new string('-', 90), false));
 
         if (clients.Count == 0)
         {
@@ -469,13 +509,13 @@ public class TerminalGuiServer : IDisposable
                 if (frequencies.Count == 0)
                 {
                     rows.Add(new ColoredRow(
-                        $"{shortDisplayName,-24} {shortId,-20} {"-",-12} {"● RX",8} {wsStr,9} {rtpStr,9}", false));
+                        $"{shortDisplayName,-24} {shortId,-20} {"-",-12} {"Ã¢â€”Â RX",8} {wsStr,9} {rtpStr,9}", false));
                 }
                 else
                 {
                     var firstFreq = frequencies[0];
                     var firstTx = firstFreq.Value == ClientSession.FrequencyClientStatus.Transmitting;
-                    var firstStatus = firstTx ? "● TX" : "● RX";
+                    var firstStatus = firstTx ? "Ã¢â€”Â TX" : "Ã¢â€”Â RX";
                     rows.Add(new ColoredRow(
                         $"{shortDisplayName,-24} {shortId,-20} {(firstFreq.Key / 1000d).ToString("F3", CultureInfo.InvariantCulture),-12} {firstStatus,8} {wsStr,9} {rtpStr,9}",
                         anyTransmitting));
@@ -484,7 +524,7 @@ public class TerminalGuiServer : IDisposable
                     {
                         var freq = frequencies[i];
                         var tx = freq.Value == ClientSession.FrequencyClientStatus.Transmitting;
-                        var status = tx ? "● TX" : "● RX";
+                        var status = tx ? "Ã¢â€”Â TX" : "Ã¢â€”Â RX";
                         rows.Add(new ColoredRow(
                             $"{"",-24} {"",-20} {(freq.Key / 1000d).ToString("F3", CultureInfo.InvariantCulture),-12} {status,8} {"",9} {"",9}", anyTransmitting));
                     }
@@ -518,7 +558,7 @@ public class TerminalGuiServer : IDisposable
 
         _logLines.Clear();
         _logLines.Add($"{"Time",-10} {"Level",-8} {"Message"}");
-        _logLines.Add(new string('─', 80));
+        _logLines.Add(new string('-', 80));
 
         if (logs.Count == 0)
         {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -19,7 +20,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 {
     private readonly IHotkeyService _hotkeyService;
     private readonly LocationViewModel _parentLocationViewModel;
-    public SettingsViewModel Settings { get; }
+    public SettingsViewModel? Settings { get; }
 
     public Guid Id { get; } = Guid.NewGuid();
 
@@ -78,6 +79,9 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     // We cant use a sane frequency->type mapping because BMS likes to set lobby frequencies, e.g. 1.234 MHz
     public RadioType? BmsRadioType { get; set; }
 
+    // Stable DCS radio key, e.g. "Arc210" or "Arc164:guard".
+    public string? DcsRadioId { get; set; }
+
     [ObservableProperty] public partial double SignalStrengthPercent { get; set; }
     [ObservableProperty] public partial double SignalStrengthDbm { get; set; }
 
@@ -115,6 +119,9 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     /// <summary>Pan: -100 = full left, 0 = center, +100 = full right.</summary>
     [ObservableProperty]
     public partial int Pan { get; set; } = 0;
+
+    public bool ShowManualPanControl =>
+        RadioStationData.Type == RadioStationData.RadioStationType.DCS;
 
     [ObservableProperty] public partial bool IsSquelchEnabled { get; set; } = true;
 
@@ -156,6 +163,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         Settings = settings;
         IsEditable = isEditable;
         BmsRadioType = bmsRadioType;
+        if (Settings != null)
+            Settings.PropertyChanged += OnSettingsPropertyChanged;
 
         WeakReferenceMessenger.Default.Register<SignalStrengthTracker.SignalStrengthUpdateMessage>(this,
             (_, m) =>
@@ -274,8 +283,13 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected)
             return;
 
-        // Don't allow "click" transmissions in BMS 3d mode - rather use the comms switch
-        if (Settings is { ModeIsGci: false, Is3dMode: true })
+        if (RadioStationData.Type == RadioStationData.RadioStationType.DCS &&
+            DcsRadioId?.Contains(":guard", StringComparison.OrdinalIgnoreCase) == true)
+            return;
+
+        // Don't allow click transmissions in BMS 3d mode - use the comms switch there.
+        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS &&
+            Settings is { ModeIsGci: false, Is3dMode: true })
             return;
 
         // mute only the transmitting frequency
@@ -289,8 +303,13 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected)
             return;
 
-        // Don't allow "click" transmissions in BMS 3d mode - rather use the comms switch
-        if (Settings is { ModeIsGci: false, Is3dMode: true })
+        if (RadioStationData.Type == RadioStationData.RadioStationType.DCS &&
+            DcsRadioId?.Contains(":guard", StringComparison.OrdinalIgnoreCase) == true)
+            return;
+
+        // Don't allow click transmissions in BMS 3d mode - use the comms switch there.
+        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS &&
+            Settings is { ModeIsGci: false, Is3dMode: true })
             return;
 
         WeakReferenceMessenger.Default.Send(new StopTransmissionMessage(Id, FrequencyKhz));
@@ -299,6 +318,12 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     partial void OnPanChanged(int value)
     {
         WeakReferenceMessenger.Default.Send(new ChannelPanUpdateMessage(Id, FrequencyKhz, value));
+    }
+
+    private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
+            OnPropertyChanged(nameof(ShowManualPanControl));
     }
 
     [RelayCommand]
@@ -334,6 +359,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         {
             _hotkeyService.UnregisterHotkey(IHotkeyService.HotkeyType.Ptt, PttHotKey, Id);
         }
+        if (Settings != null)
+            Settings.PropertyChanged -= OnSettingsPropertyChanged;
         WeakReferenceMessenger.Default.Unregister<SignalStrengthTracker.SignalStrengthUpdateMessage>(this);
     }
 }

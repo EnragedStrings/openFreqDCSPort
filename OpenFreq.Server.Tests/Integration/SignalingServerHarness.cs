@@ -10,11 +10,13 @@ namespace OpenFreq.Server.Tests.Integration;
 /// </summary>
 public sealed class SignalingServerHarness : IAsyncDisposable
 {
+    public ServerConfig Config { get; }
     public FakeAudioRelay Audio { get; }
     public SignalingServer Server { get; }
 
-    private SignalingServerHarness(FakeAudioRelay audio, SignalingServer server)
+    private SignalingServerHarness(ServerConfig config, FakeAudioRelay audio, SignalingServer server)
     {
+        Config = config;
         Audio = audio;
         Server = server;
     }
@@ -29,6 +31,7 @@ public sealed class SignalingServerHarness : IAsyncDisposable
         string? password = null,
         int maxClientsPerChannel = 50,
         bool broadcastPeerUpdates = true,
+        bool dcsLineOfSightEnabled = true,
         TimeSpan? rtpTimeout = null,
         TimeSpan? watchdogInterval = null)
     {
@@ -39,6 +42,7 @@ public sealed class SignalingServerHarness : IAsyncDisposable
             AudioPort = FakeAudioRelay.FakePort,
             MaxClientsPerChannel = maxClientsPerChannel,
             BroadcastPeerUpdates = broadcastPeerUpdates,
+            DcsLineOfSightEnabled = dcsLineOfSightEnabled,
             EnableOpusCompression = false,
         };
 
@@ -47,7 +51,7 @@ public sealed class SignalingServerHarness : IAsyncDisposable
             config, NullLoggerFactory.Instance, audio, rtpTimeout, watchdogInterval);
 
         await server.StartAsync();
-        return new SignalingServerHarness(audio, server);
+        return new SignalingServerHarness(config, audio, server);
     }
 
     public async ValueTask DisposeAsync()

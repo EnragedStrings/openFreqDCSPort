@@ -32,5 +32,6 @@ public class ChannelData
 {
     public string? Name { get; set; }
     public int FrequencyKhz { get; set; }
+    public int Pan { get; set; }
     public HotkeyBinding? Hotkey { get; set; }
 }

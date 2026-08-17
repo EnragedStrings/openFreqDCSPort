@@ -2,7 +2,7 @@
 
 # OpenFreq
 
-Real-time network voice radio with real-time physics simulation for [Falcon BMS](https://www.falcon-bms.com/).
+Real-time network voice radio with real-time physics simulation for [Falcon BMS](https://www.falcon-bms.com/) and DCS.
 ![](docs/openfreq_client_screenshot.png)
 ![](docs/openfreq_server_screenshot.png)
 
@@ -13,6 +13,8 @@ Real-time network voice radio with real-time physics simulation for [Falcon BMS]
 - [Realistic AM simulation including squelch](https://bitbashing.io/am-radio.html)
 - Hot-swappable audio devices
 - Dedicated GCI (Ground Controlled Intercept) client mode with unlimited positions & channels
+- DCS A-10C II mode with DCS Export.lua radio/PTT/position integration
+- Optional DCS terrain heightmap generation through `land.getHeight`
 - Full 3D audio effects enabled in GCI mode — identical physics simulation as BMS mode
 - GCI Position sources: static via map UI picker & address search or live Tacview/ACMI feed
 - Transmitter / Receiver performance presets and SFX
@@ -37,6 +39,19 @@ Real-time network voice radio with real-time physics simulation for [Falcon BMS]
 2. Select Theater. Linux: specify Theater heightmap file
 3. Enter connection data and Display name, Connect
 4. Don't forget to switch to "Game" mode when clients move to 3D
+
+### DCS Mode
+*Note: the first DCS pass targets the A-10C II module.*
+
+1. Install the OpenFreq DCS client package, or run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File installer/windows/Install-DcsExport.ps1
+   ```
+2. Launch OpenFreq Client and set it to DCS mode.
+3. Enter the OpenFreq server address, password, and display name, then connect.
+4. Start an A-10C II mission. DCS drives the radio channels, cockpit PTT, own-aircraft position, and game/lobby state.
+
+The DCS export is installed under `Saved Games\DCS...\Mods\Services\OpenFreqDCS` and is loaded from `Saved Games\DCS...\Scripts\Export.lua`. Heightmap sampling is disabled by default in `DCS/OpenFreqDCS/Scripts/OpenFreqDCSConfig.lua`; enable it only when you want DCS to generate a raw terrain file for OpenFreq.
 
 
 ### Server
@@ -86,6 +101,10 @@ dotnet run --project OpenFreq.Server/OpenFreq.Server.csproj
 
 # Run client
 dotnet run --project OpenFreq.Client/OpenFreq.Client.csproj
+
+# Publish Windows DCS client/server packages
+powershell -ExecutionPolicy Bypass -File build/Publish-Client.ps1 -Installer
+powershell -ExecutionPolicy Bypass -File build/Publish-Server.ps1 -Installer
 ```
 
 ## Contributing

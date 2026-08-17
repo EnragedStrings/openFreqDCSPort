@@ -16,7 +16,9 @@ using FalconRadioService.Models;
 using FalconRadioService.Services;
 using Microsoft.Extensions.Logging;
 using NetTopologySuite.Index.Quadtree;
+using OpenFreq.Client.Models.Dcs;
 using OpenFreq.Client.Models;
+using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreq.Utilities;
@@ -36,10 +38,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private readonly ILogger<ChannelCardListViewModel> _logger;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
+    private readonly IDcsExportService _dcsExportService;
     private readonly SettingsViewModel _settings;
 
     private const string BmsLocationName = "BMS Channels";
+    private const string DcsLocationName = "DCS A-10C II Radios";
     public LocationViewModel? FalconLocation { get; private set; }
+    public LocationViewModel? DcsLocation { get; private set; }
 
     private readonly Lock _channelImportLock = new();
 
@@ -70,13 +75,17 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     public IEnumerable<LocationViewModel> Locations =>
         _settings.ConnectionMode == IOpenFreqService.Mode.BMS
             ? AllLocations.Where(g => g.RadioStationData.Type == RadioStationData.RadioStationType.BMS)
-            : AllLocations.Where(g => g.RadioStationData.Type != RadioStationData.RadioStationType.BMS);
+            : _settings.ConnectionMode == IOpenFreqService.Mode.DCS
+                ? AllLocations.Where(g => g.RadioStationData.Type == RadioStationData.RadioStationType.DCS)
+                : AllLocations.Where(g => g.RadioStationData.Type is not RadioStationData.RadioStationType.BMS
+                    and not RadioStationData.RadioStationType.DCS);
 
 
     public ChannelCardListViewModel(IOpenFreqService openFreqService, IHotkeyService hotkeyService,
         IAcmiClientService acmiClientService, ILogger<ChannelCardListViewModel> logger,
         IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
-        IFalconSharedMemoryService falconSharedMemoryService, SettingsViewModel settingsViewModel)
+        IFalconSharedMemoryService falconSharedMemoryService, IDcsExportService dcsExportService,
+        SettingsViewModel settingsViewModel)
     {
         _openFreqService = openFreqService;
         _hotkeyService = hotkeyService;
@@ -84,6 +93,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _logger = logger;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
         _falconSharedMemoryService = falconSharedMemoryService;
+        _dcsExportService = dcsExportService;
         _settings = settingsViewModel;
         _settings.PropertyChanged += OnSettingsChanged;
 
@@ -96,6 +106,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconRadioSharedMemoryService.VolumeChanged += OnRadioVolumeChanged;
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
+        _dcsExportService.RadioChanged += OnDcsRadioChanged;
+        _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
+        _dcsExportService.StateChanged += OnDcsStateChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChangedForCallsigns;
@@ -114,7 +127,14 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationDeleteRequestedMessage>(this,
             async (r, m) => await DeleteLocation(m.LocationId));
         WeakReferenceMessenger.Default.Register<ChannelPanUpdateMessage>(this,
-            (r, m) => _openFreqService.SetPan(m.FrequencyKhz, m.ChannelId, m.Pan));
+            (r, m) =>
+            {
+                _openFreqService.SetPan(m.FrequencyKhz, m.ChannelId, m.Pan);
+
+                var dcsChannel = DcsLocation?.Channels.FirstOrDefault(c => c.Id == m.ChannelId);
+                if (!string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId))
+                    _settings.SetDcsRadioPan(dcsChannel.DcsRadioId, m.Pan);
+            });
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationSelectionRequestedMessage>(this,
             (r, m) => SelectedLocation = Locations.FirstOrDefault(g => g.Id == m.LocationId));
     }
@@ -147,6 +167,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             foreach (var ch in FalconLocation.Channels
                          .Where(c => c.BmsRadioType == RadioType.Radio2))
                 ch.Pan = _settings.BmsRadio2Pan;
+        }
+        else if (e.PropertyName is nameof(SettingsViewModel.DcsArc210PttHotkey)
+                 or nameof(SettingsViewModel.DcsArc164PttHotkey)
+                 or nameof(SettingsViewModel.DcsArc186PttHotkey))
+        {
+            ApplyDcsPttHotkeysOnUiThread();
         }
     }
 
@@ -200,7 +226,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private void OnOpenFreqConnectionStateChanged(object? sender, ConnectionStateChangedEventArgs args)
     {
         var e = args.State;
-        if (e == ConnectionState.Authenticated && !_settings.ModeIsGci)
+        if (e == ConnectionState.Authenticated && _settings.ModeIsBms)
         {
             _logger.LogDebug("OpenFreq authenticated, importing and joining BMS channels");
 
@@ -216,11 +242,28 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 }
             });
         }
+        else if (e == ConnectionState.Authenticated && _settings.ModeIsDcs)
+        {
+            _logger.LogDebug("OpenFreq authenticated, importing and joining DCS channels");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ImportDcsRadioChannels();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to import/join DCS channels");
+                }
+            });
+        }
         else if (e == ConnectionState.Authenticated && _settings.ModeIsGci)
         {
             foreach (var location in AllLocations)
             {
-                if (location.RadioStationData.Type != RadioStationData.RadioStationType.BMS)
+                if (location.RadioStationData.Type is not RadioStationData.RadioStationType.BMS
+                    and not RadioStationData.RadioStationType.DCS)
                 {
                     location.JoinAllChannelsAsync().Wait(100);
                 }
@@ -247,7 +290,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnRadioVolumeChanged(object? sender, RadioVolumeChangedEventArgs e)
     {
-        if (_settings.ModeIsGci || FalconLocation == null) return;
+        if (!_settings.ModeIsBms || FalconLocation == null) return;
 
         _logger.LogDebug($"VOLUME {e.OldVolume} -> {e.NewVolume}");
 
@@ -266,7 +309,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnRadioPowerChanged(object? sender, RadioPowerChangedEventArgs e)
     {
-        if (_settings.ModeIsGci || FalconLocation == null) return;
+        if (!_settings.ModeIsBms || FalconLocation == null) return;
 
         var channels = FalconLocation.Channels.Where(c => c.BmsRadioType == e.RadioType).ToList();
         foreach (var channel in channels)
@@ -287,6 +330,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private async void OnConnectionParametersChanged(object? sender,
         ConnectionParametersChangedEventArgs e)
     {
+        if (!_settings.ModeIsBms) return;
+
         // Delete the BMS location on both TerminateClient and plain MP disconnect (ReadyToTransmit → false).
         if (e.NewParameters.TerminateClient || (e.OldParameters.ReadyToTransmit && !e.NewParameters.ReadyToTransmit))
         {
@@ -350,7 +395,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void LogBmsVolumeDiagnostics(string trigger)
     {
-        if (_settings.ModeIsGci) return;
+        if (!_settings.ModeIsBms) return;
 
         var parts = new List<string>();
         foreach (var type in Enum.GetValues<RadioType>())
@@ -370,6 +415,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnFlyingStateChanged(object? sender, FlyingStateChangedEventArgs e)
     {
+        if (!_settings.ModeIsBms) return;
+
         _logger.LogDebug($"FalconSharedMemoryServiceOnFlyingStateChanged: {e.OldFlyingState} -> {e.NewFlyingState}");
         if (!e.OldFlyingState && e.NewFlyingState)
         {
@@ -462,8 +509,202 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         });
     }
 
+    private async Task ImportDcsRadioChannels()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            lock (_channelImportLock)
+            {
+                EnsureDcsLocation();
+                foreach (var radio in _dcsExportService.GetRadios())
+                    SyncDcsRadioOnUiThread(radio);
+            }
+        });
+    }
+
+    private void EnsureDcsLocation()
+    {
+        if (DcsLocation == null)
+        {
+            DcsLocation = CreateLocation(DcsLocationName, RadioStationPresets.FighterGeneric,
+                RadioStationData.RadioStationType.DCS);
+            DcsLocation.EditMode = false;
+            SelectedLocation = DcsLocation;
+            return;
+        }
+
+        if (!AllLocations.Contains(DcsLocation))
+            AllLocations.Add(DcsLocation);
+    }
+
+    private void OnDcsRadioChanged(object? sender, DcsRadioChangedEventArgs e)
+    {
+        if (!_settings.ModeIsDcs) return;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            lock (_channelImportLock)
+            {
+                EnsureDcsLocation();
+                SyncDcsRadioOnUiThread(e.NewRadio);
+            }
+        });
+    }
+
+    private async void OnDcsStateChanged(object? sender, ServiceStateChangedEventArgs e)
+    {
+        if (!_settings.ModeIsDcs) return;
+
+        if (e.NewState == ServiceState.Connected && _openFreqService.IsAuthenticated)
+        {
+            await ImportDcsRadioChannels();
+            return;
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private void OnDcsGameModeChanged(object? sender, DcsGameModeChangedEventArgs e)
+    {
+        if (!_settings.ModeIsDcs) return;
+
+        Dispatcher.UIThread.Post(() => _settings.Is3dMode = e.NewIsInGame);
+    }
+
+    private void SyncDcsRadioOnUiThread(DcsRadioState radio)
+    {
+        if (DcsLocation == null || radio.Slot == DcsRadioSlot.Intercom) return;
+
+        SyncDcsChannelOnUiThread(
+            key: GetDcsRadioKey(radio),
+            name: radio.Name,
+            frequencyKhz: radio.FrequencyKhz,
+            shouldBeJoined: IsUsableDcsRadio(radio),
+            volume: radio.Volume,
+            allowTransmit: true);
+
+        SyncDcsChannelOnUiThread(
+            key: GetDcsRadioKey(radio, secondary: true),
+            name: $"{radio.Name} Guard",
+            frequencyKhz: radio.SecondaryFrequencyKhz,
+            shouldBeJoined: IsUsableDcsRadio(radio) && radio.SecondaryFrequencyKhz > 0,
+            volume: radio.Volume,
+            allowTransmit: false);
+    }
+
+    private void SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,
+        double volume, bool allowTransmit)
+    {
+        if (DcsLocation == null) return;
+
+        var channel = DcsLocation.Channels.FirstOrDefault(c => c.DcsRadioId == key);
+        if (channel == null)
+        {
+            channel = DcsLocation.CreateChannel(Math.Max(frequencyKhz, IDcsExportService.RadioOffFrequencyKhz),
+                name, false);
+            channel.DcsRadioId = key;
+            channel.IsEditable = false;
+            channel.Pan = _settings.GetDcsRadioPan(key);
+        }
+
+        var oldFrequencyKhz = channel.FrequencyKhz;
+        var targetFrequencyKhz = Math.Max(frequencyKhz, IDcsExportService.RadioOffFrequencyKhz);
+        var frequencyChangedWhileConnected = oldFrequencyKhz != targetFrequencyKhz &&
+                                             channel.ConnectionStatus == Channel.ChannelConnectionStatus.Connected;
+
+        if (frequencyChangedWhileConnected)
+        {
+            _logger.LogDebug("DCS radio {RadioKey} changed frequency {OldFrequencyKhz} -> {NewFrequencyKhz}",
+                key, oldFrequencyKhz, targetFrequencyKhz);
+            _openFreqService.LeaveFrequencyAsync(oldFrequencyKhz, channel.Id)
+                .Wait(TimeSpan.FromMilliseconds(500));
+            channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
+        }
+
+        channel.Name = name;
+        channel.FrequencyKhz = targetFrequencyKhz;
+
+        if (!allowTransmit)
+        {
+            channel.PttHotKey = null;
+        }
+        else
+        {
+            channel.PttHotKey = GetDcsPttHotkey(key);
+        }
+
+        if (!_openFreqService.IsAuthenticated) return;
+
+        if (shouldBeJoined)
+        {
+            if (frequencyChangedWhileConnected ||
+                channel.ConnectionStatus != Channel.ChannelConnectionStatus.Connected ||
+                !_openFreqService.IsFrequencyJoined(channel.FrequencyKhz, channel.Id))
+            {
+                _openFreqService.JoinFrequencyAsync(channel.FrequencyKhz, channel.Id, DcsLocation.RadioStationData)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+            }
+
+            _openFreqService.SetVolume(channel.FrequencyKhz, channel.Id, (float)volume);
+            _openFreqService.SetPan(channel.FrequencyKhz, channel.Id, channel.Pan);
+        }
+        else if (channel.ConnectionStatus == Channel.ChannelConnectionStatus.Connected)
+        {
+            _openFreqService.LeaveFrequencyAsync(channel.FrequencyKhz, channel.Id)
+                .Wait(TimeSpan.FromMilliseconds(500));
+        }
+    }
+
+    private static bool IsUsableDcsRadio(DcsRadioState radio) =>
+        radio.IsOn && radio.FrequencyKhz > IDcsExportService.RadioOffFrequencyKhz;
+
+    private static string GetDcsRadioKey(DcsRadioState radio, bool secondary = false) =>
+        secondary ? $"{radio.Slot}:guard" : radio.Slot.ToString();
+
+    private HotkeyBinding? GetDcsPttHotkey(string radioKey)
+    {
+        var slotKey = radioKey.Split(':', 2)[0];
+        return Enum.TryParse<DcsRadioSlot>(slotKey, out var slot)
+            ? GetDcsPttHotkey(slot)
+            : null;
+    }
+
+    private HotkeyBinding? GetDcsPttHotkey(DcsRadioSlot slot) => slot switch
+    {
+        DcsRadioSlot.Arc210 => _settings.DcsArc210PttHotkey,
+        DcsRadioSlot.Arc164 => _settings.DcsArc164PttHotkey,
+        DcsRadioSlot.Arc186 => _settings.DcsArc186PttHotkey,
+        _ => null
+    };
+
+    private void ApplyDcsPttHotkeysOnUiThread()
+    {
+        if (DcsLocation == null)
+            return;
+
+        void Apply()
+        {
+            foreach (var channel in DcsLocation.Channels)
+            {
+                if (channel.DcsRadioId == null)
+                    continue;
+
+                channel.PttHotKey = channel.DcsRadioId.Contains(":guard", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : GetDcsPttHotkey(channel.DcsRadioId);
+            }
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+            Apply();
+        else
+            Dispatcher.UIThread.Post(Apply);
+    }
+
     private void OnBmsPttChanged(object? sender, RadioPttChangedEventArgs e)
     {
+        if (!_settings.ModeIsBms) return;
+
         // Do NOT capture keys twice - for non-flying, we want to use the callbacks from our HotKey service
         if (!_hotkeyService.PttKeysPaused || _falconSharedMemoryService.IsFlying == false)
             return;
@@ -491,7 +732,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void OnBmsFrequencyChanged(object? sender, RadioFrequencyChangedEventArgs e)
     {
-        if (_settings.ModeIsGci) return;
+        if (!_settings.ModeIsBms) return;
         if (FalconLocation == null)
         {
             _logger.LogWarning("Unclean state: FalconLocation is null, reimporting");
@@ -786,6 +1027,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconRadioSharedMemoryService.VolumeChanged -= OnRadioVolumeChanged;
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
+        _dcsExportService.RadioChanged -= OnDcsRadioChanged;
+        _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
+        _dcsExportService.StateChanged -= OnDcsStateChanged;
         _openFreqService.ConnectionStateChanged -= OnOpenFreqConnectionStateChanged;
         AllLocations.CollectionChanged -= OnAllLocationsChanged;
         _settings.PropertyChanged -= OnSettingsChanged;

@@ -20,8 +20,7 @@ sealed class Program
     public static void Main(string[] args)
     {
         // Initialize Serilog for file logging
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        var logsDirectory = Path.Combine(exeDir, "logs");
+        var logsDirectory = AppDataPaths.ClientLogDirectory;
         Directory.CreateDirectory(logsDirectory);
 
         var logFile = Path.Combine(logsDirectory, $"openfreq-client-{DateTime.Now:yyyy-MM-dd}.log");

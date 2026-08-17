@@ -10,6 +10,7 @@ public partial class RadioStationData : ObservableObject
     public enum RadioStationType
     {
         BMS,
+        DCS,
         ACMI,
         STATIONARY
     }

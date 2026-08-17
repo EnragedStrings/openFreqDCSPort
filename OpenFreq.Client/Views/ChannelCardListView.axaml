@@ -118,6 +118,18 @@
                                                                IsVisible="{Binding RadioStationData.Type,
                                                                            Converter={StaticResource EnumToBoolConverter},
                                                                            ConverterParameter={x:Static models:RadioStationData+RadioStationType.ACMI}}" />
+                                        <avalonia:MaterialIcon Kind="ShieldAirplane"
+                                                               Width="16" Height="16"
+                                                               Foreground="White"
+                                                               IsVisible="{Binding RadioStationData.Type,
+                                                                           Converter={StaticResource EnumToBoolConverter},
+                                                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.BMS}}" />
+                                        <avalonia:MaterialIcon Kind="ShieldAirplane"
+                                                               Width="16" Height="16"
+                                                               Foreground="White"
+                                                               IsVisible="{Binding RadioStationData.Type,
+                                                                           Converter={StaticResource EnumToBoolConverter},
+                                                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.DCS}}" />
                                     </Panel>
                                 </Border>
                                 <!-- RX indicator dot (rendered below TX so TX takes priority) -->
@@ -249,6 +261,15 @@
                                                 <TextBlock Text="Falcon BMS" Classes="Caption" Opacity="0.6" VerticalAlignment="Center" />
                                             </StackPanel>
 
+                                            <StackPanel Orientation="Horizontal" Spacing="5"
+                                                        IsVisible="{Binding RadioStationData.Type,
+                                                                    Converter={StaticResource EnumToBoolConverter},
+                                                                    ConverterParameter={x:Static models:RadioStationData+RadioStationType.DCS}}">
+                                                <avalonia:MaterialIcon Kind="ShieldAirplane" Width="13" Height="13"
+                                                                       Opacity="0.5" VerticalAlignment="Center" />
+                                                <TextBlock Text="DCS A-10C II" Classes="Caption" Opacity="0.6" VerticalAlignment="Center" />
+                                            </StackPanel>
+
                                         </Panel>
 
                                         <!-- Station Preset -->
@@ -319,12 +340,28 @@
                 <StackPanel.IsVisible>
                     <MultiBinding Converter="{x:Static BoolConverters.And}">
                         <Binding Path="SelectedLocation" Converter="{x:Static ObjectConverters.IsNull}" />
-                        <Binding Path="Settings.ModeIsGci" Converter="{x:Static BoolConverters.Not}" />
+                        <Binding Path="Settings.ModeIsBms" />
                     </MultiBinding>
                 </StackPanel.IsVisible>
                 <avalonia:MaterialIcon Kind="Airplane" Width="48" Height="48" HorizontalAlignment="Center" />
                 <TextBlock Text="Channels controlled by BMS" HorizontalAlignment="Center" FontWeight="Medium" />
                 <TextBlock Text="Connect Falcon BMS to manage your radio channels" HorizontalAlignment="Center" FontSize="12" />
+            </StackPanel>
+
+            <!-- Empty state - DCS mode -->
+            <StackPanel VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Spacing="12"
+                        Opacity="0.4">
+                <StackPanel.IsVisible>
+                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                        <Binding Path="SelectedLocation" Converter="{x:Static ObjectConverters.IsNull}" />
+                        <Binding Path="Settings.ModeIsDcs" />
+                    </MultiBinding>
+                </StackPanel.IsVisible>
+                <avalonia:MaterialIcon Kind="ShieldAirplane" Width="48" Height="48" HorizontalAlignment="Center" />
+                <TextBlock Text="Channels controlled by DCS" HorizontalAlignment="Center" FontWeight="Medium" />
+                <TextBlock Text="Start an A-10C II mission with the OpenFreq export installed" HorizontalAlignment="Center" FontSize="12" />
             </StackPanel>
 
             <!-- Group Detail -->

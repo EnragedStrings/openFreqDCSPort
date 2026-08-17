@@ -1,0 +1,22 @@
+pcall(function()
+    local okLfs, lfs = pcall(require, "lfs")
+    local writeDir = ""
+    if okLfs and lfs and type(lfs.writedir) == "function" then
+        writeDir = lfs.writedir()
+    end
+
+    local path = writeDir .. [[Mods\Services\OpenFreqDCS\Scripts\OpenFreqDCS.lua]]
+    local ok, err = pcall(dofile, path)
+    if not ok then
+        if log and type(log.write) == "function" and log.ERROR then
+            pcall(log.write, "OpenFreqDCS", log.ERROR, tostring(err))
+        end
+        if writeDir ~= "" then
+            local file = io.open(writeDir .. [[Logs\OpenFreqDCS.log]], "ab")
+            if file then
+                file:write(os.date("!%Y-%m-%dT%H:%M:%SZ "), "loader error: ", tostring(err), "\r\n")
+                file:close()
+            end
+        end
+    end
+end)

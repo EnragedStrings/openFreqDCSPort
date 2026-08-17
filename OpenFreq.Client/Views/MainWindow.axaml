@@ -125,7 +125,7 @@
                             <Border Background="{DynamicResource MaterialBackgroundBrush}"
                                     CornerRadius="8"
                                     Padding="4">
-                                <Grid ColumnDefinitions="*,*">
+                                <Grid ColumnDefinitions="*,*,*">
                                     <Grid.Styles>
                                         <Style Selector="RadioButton">
                                             <Setter Property="Theme"
@@ -134,7 +134,7 @@
                                     </Grid.Styles>
                                     <RadioButton Grid.Column="0"
                                                  GroupName="OwnPositionMode"
-                                                 IsChecked="{Binding !Settings.ModeIsGci}"
+                                                 IsChecked="{Binding Settings.ModeIsBms}"
                                                  Content="BMS"
                                                  FontWeight="Bold"
                                                  HorizontalAlignment="Stretch"
@@ -147,6 +147,20 @@
                                         </RadioButton.IsEnabled>
                                     </RadioButton>
                                     <RadioButton Grid.Column="1"
+                                                 GroupName="OwnPositionMode"
+                                                 IsChecked="{Binding Settings.ModeIsDcs}"
+                                                 Content="DCS"
+                                                 FontWeight="Bold"
+                                                 HorizontalAlignment="Stretch"
+                                                 HorizontalContentAlignment="Center">
+                                        <RadioButton.IsEnabled>
+                                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                <Binding Path="Settings.IsWindowsPlatform" />
+                                                <Binding Path="OpenFreqConnected" Converter="{x:Static BoolConverters.Not}" />
+                                            </MultiBinding>
+                                        </RadioButton.IsEnabled>
+                                    </RadioButton>
+                                    <RadioButton Grid.Column="2"
                                                  GroupName="OwnPositionMode"
                                                  IsChecked="{Binding Settings.ModeIsGci}"
                                                  Content="GCI"
@@ -164,7 +178,7 @@
                         <StackPanel Margin="16">
 
                             <!-- BMS Mode Settings -->
-                            <StackPanel IsVisible="{Binding !Settings.ModeIsGci}">
+                            <StackPanel IsVisible="{Binding Settings.ModeIsBms}">
                                 <!-- Connection Status Card -->
                                 <controls:Card>
                                     <StackPanel Margin="16">
@@ -202,9 +216,34 @@
                                                   PlaceholderText="No input devices found"
                                                   HorizontalAlignment="Stretch"
                                                   Margin="0,0,0,4" />
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                            <Run Text="Input Gain: " />
+                                            <Run Text="{Binding Settings.InputGainText}" />
+                                        </TextBlock>
+                                        <Slider Minimum="0" Maximum="4"
+                                                Value="{Binding Settings.InputGain}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,0,0,4" />
                                         <CheckBox Content="Normalize mic level"
                                                   IsChecked="{Binding Settings.MicNormalizationEnabled}"
-                                                  Margin="0,4,0,12" />
+                                                  Margin="0,4,0,4" />
+                                        <CheckBox Content="Show input meter"
+                                                  IsChecked="{Binding Settings.InputMeterEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <Grid ColumnDefinitions="*,Auto"
+                                              Margin="0,0,0,12"
+                                              IsVisible="{Binding Settings.InputMeterEnabled}">
+                                            <ProgressBar Minimum="0"
+                                                         Maximum="1"
+                                                         Value="{Binding Settings.MicInputLevel}"
+                                                         Height="6"
+                                                         VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Settings.MicInputLevelText}"
+                                                       Classes="InputLabel"
+                                                       Margin="8,0,0,0" />
+                                        </Grid>
 
                                         <TextBlock Text="Output" Classes="InputLabel" />
                                         <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
@@ -344,6 +383,266 @@
                                                            MaxWidth="180"/>
                                             </StackPanel>
                                         </Button>
+                                    </StackPanel>
+                                </controls:Card>
+                            </StackPanel>
+
+                            <!-- DCS Mode Settings -->
+                            <StackPanel IsVisible="{Binding Settings.ModeIsDcs}">
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="Wan"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Connection" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="OpenFreq Server" Classes="InputLabel" />
+                                        <AutoCompleteBox PlaceholderText="Address:Port"
+                                                         Text="{Binding Settings.OpenFreqServerAddress}"
+                                                         ItemsSource="{Binding Settings.OpenFreqServerAddressHistory}"
+                                                         FilterMode="StartsWith"
+                                                         MinimumPrefixLength="0"
+                                                         GotFocus="AddressHistoryBox_GotFocus"
+                                                         IsEnabled="{Binding !OpenFreqConnected}"
+                                                         Margin="0,0,0,8" />
+                                        <TextBox PlaceholderText="Password"
+                                                 PasswordChar="*"
+                                                 Text="{Binding Settings.OpenFreqPassword}"
+                                                 IsEnabled="{Binding !OpenFreqConnected}"
+                                                 Margin="0,0,0,12" />
+                                        <TextBlock Text="Display Name" Classes="InputLabel" />
+                                        <TextBox PlaceholderText="Display Name"
+                                                 Text="{Binding Settings.DisplayName}"
+                                                 Margin="0,0,0,12" />
+                                        <CheckBox Content="Minimize on connect"
+                                                  IsChecked="{Binding Settings.MinimizeOnConnect}" />
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <Button Content="Connect"
+                                        Command="{Binding ConnectCommand}"
+                                        IsEnabled="{Binding Settings.IsReadyToConnect}"
+                                        IsVisible="{Binding !OpenFreqConnected}"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="0,0,0,16"
+                                        Height="40" />
+
+                                <Button Content="Disconnect"
+                                        Command="{Binding DisconnectCommand}"
+                                        IsVisible="{Binding OpenFreqConnected}"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="0,0,0,16"
+                                        Height="40"
+                                        Classes="accent" />
+
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="VolumeHigh"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Audio Devices" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="Input" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.RecordingDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.RecordingDeviceIndex}"
+                                                  IsEnabled="{Binding Settings.HasRecordingDevices}"
+                                                  PlaceholderText="No input devices found"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,4" />
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                            <Run Text="Input Gain: " />
+                                            <Run Text="{Binding Settings.InputGainText}" />
+                                        </TextBlock>
+                                        <Slider Minimum="0" Maximum="4"
+                                                Value="{Binding Settings.InputGain}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,0,0,4" />
+                                        <CheckBox Content="Normalize mic level"
+                                                  IsChecked="{Binding Settings.MicNormalizationEnabled}"
+                                                  Margin="0,4,0,4" />
+                                        <CheckBox Content="Show input meter"
+                                                  IsChecked="{Binding Settings.InputMeterEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <Grid ColumnDefinitions="*,Auto"
+                                              Margin="0,0,0,12"
+                                              IsVisible="{Binding Settings.InputMeterEnabled}">
+                                            <ProgressBar Minimum="0"
+                                                         Maximum="1"
+                                                         Value="{Binding Settings.MicInputLevel}"
+                                                         Height="6"
+                                                         VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Settings.MicInputLevelText}"
+                                                       Classes="InputLabel"
+                                                       Margin="8,0,0,0" />
+                                        </Grid>
+
+                                        <TextBlock Text="Output" Classes="InputLabel" />
+                                        <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"
+                                                  SelectedIndex="{Binding Settings.PlaybackDeviceIndex}"
+                                                  IsEnabled="{Binding Settings.HasPlaybackDevices}"
+                                                  PlaceholderText="No output devices found"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="0,0,0,4" />
+
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                            <Run Text="Master Volume: " />
+                                            <Run Text="{Binding Settings.MasterVolume, StringFormat={}{0:P0}}" />
+                                        </TextBlock>
+                                        <Slider Minimum="0" Maximum="2"
+                                                Value="{Binding Settings.MasterVolume}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,0,0,8" />
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="DCS PTT Bindings" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="ARC-210" Classes="InputLabel" />
+                                        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                            <Button Command="{Binding BeginCaptureDcsArc210PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="6,4"
+                                                    Classes="Flat"
+                                                    ToolTip.Tip="{Binding Settings.DcsArc210PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                           Width="18" Height="18" />
+                                                    <TextBlock Text="{Binding Settings.DcsArc210PttHotkeyDisplay}"
+                                                               Classes="Body2"
+                                                               FontWeight="SemiBold"
+                                                               VerticalAlignment="Center"
+                                                               FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis"
+                                                               MaxWidth="160" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Column="1"
+                                                    Content="Clear"
+                                                    Command="{Binding ClearDcsArc210PttHotkeyCommand}"
+                                                    Margin="8,0,0,0"
+                                                    Padding="8,4"
+                                                    Classes="Flat" />
+                                        </Grid>
+
+                                        <TextBlock Text="ARC-164 UHF" Classes="InputLabel" />
+                                        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                            <Button Command="{Binding BeginCaptureDcsArc164PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="6,4"
+                                                    Classes="Flat"
+                                                    ToolTip.Tip="{Binding Settings.DcsArc164PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                           Width="18" Height="18" />
+                                                    <TextBlock Text="{Binding Settings.DcsArc164PttHotkeyDisplay}"
+                                                               Classes="Body2"
+                                                               FontWeight="SemiBold"
+                                                               VerticalAlignment="Center"
+                                                               FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis"
+                                                               MaxWidth="160" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Column="1"
+                                                    Content="Clear"
+                                                    Command="{Binding ClearDcsArc164PttHotkeyCommand}"
+                                                    Margin="8,0,0,0"
+                                                    Padding="8,4"
+                                                    Classes="Flat" />
+                                        </Grid>
+
+                                        <TextBlock Text="ARC-186 VHF FM" Classes="InputLabel" />
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <Button Command="{Binding BeginCaptureDcsArc186PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="6,4"
+                                                    Classes="Flat"
+                                                    ToolTip.Tip="{Binding Settings.DcsArc186PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                           Width="18" Height="18" />
+                                                    <TextBlock Text="{Binding Settings.DcsArc186PttHotkeyDisplay}"
+                                                               Classes="Body2"
+                                                               FontWeight="SemiBold"
+                                                               VerticalAlignment="Center"
+                                                               FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis"
+                                                               MaxWidth="160" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Column="1"
+                                                    Content="Clear"
+                                                    Command="{Binding ClearDcsArc186PttHotkeyCommand}"
+                                                    Margin="8,0,0,0"
+                                                    Padding="8,4"
+                                                    Classes="Flat" />
+                                        </Grid>
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <controls1:RecordingSettingsCard />
+
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="DeathStarVariant"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="SFX" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+
+                                        <TextBlock Classes="InputLabel" Margin="0,0,0,4">
+                                            <Run Text="Ambient Noise: " />
+                                            <Run Text="{Binding Settings.AmbientNoiseVolume, StringFormat={}{0:P0}}" />
+                                        </TextBlock>
+                                        <Slider Minimum="0" Maximum="1"
+                                                Value="{Binding Settings.AmbientNoiseVolume}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,0,0,12" />
+
+                                        <CheckBox Content="Sidetone"
+                                                  IsChecked="{Binding Settings.SidetoneEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.SidetoneEnabled}">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.SidetoneVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.SidetoneVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                            <TextBlock Classes="InputLabel"
+                                                       Margin="0, 8, 0, 4"
+                                                       TextWrapping="Wrap"
+                                                       Text="Experimental feature: Sidetone with software will always have higher latency than real hardware solutions."
+                                                       FontStyle="Italic" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </controls:Card>
                             </StackPanel>
@@ -532,9 +831,34 @@
                                                   PlaceholderText="No input devices found"
                                                   HorizontalAlignment="Stretch"
                                                   Margin="0,0,0,4" />
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                            <Run Text="Input Gain: " />
+                                            <Run Text="{Binding Settings.InputGainText}" />
+                                        </TextBlock>
+                                        <Slider Minimum="0" Maximum="4"
+                                                Value="{Binding Settings.InputGain}"
+                                                TickFrequency="0.05"
+                                                IsSnapToTickEnabled="True"
+                                                Margin="0,0,0,4" />
                                         <CheckBox Content="Normalize mic level"
                                                   IsChecked="{Binding Settings.MicNormalizationEnabled}"
-                                                  Margin="0,0,0,12" />
+                                                  Margin="0,0,0,4" />
+                                        <CheckBox Content="Show input meter"
+                                                  IsChecked="{Binding Settings.InputMeterEnabled}"
+                                                  Margin="0,0,0,4" />
+                                        <Grid ColumnDefinitions="*,Auto"
+                                              Margin="0,0,0,12"
+                                              IsVisible="{Binding Settings.InputMeterEnabled}">
+                                            <ProgressBar Minimum="0"
+                                                         Maximum="1"
+                                                         Value="{Binding Settings.MicInputLevel}"
+                                                         Height="6"
+                                                         VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Settings.MicInputLevelText}"
+                                                       Classes="InputLabel"
+                                                       Margin="8,0,0,0" />
+                                        </Grid>
 
                                         <TextBlock Text="Output" Classes="InputLabel" />
                                         <ComboBox ItemsSource="{Binding Settings.PlaybackDeviceNames}"

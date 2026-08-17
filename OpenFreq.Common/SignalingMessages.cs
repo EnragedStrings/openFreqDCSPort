@@ -73,6 +73,8 @@ public class SuccessMessage
 
     [JsonPropertyName("opusCompression")] public bool OpusCompressionEnabled { get; set; }
 
+    [JsonPropertyName("dcsLineOfSight")] public bool DcsLineOfSightEnabled { get; set; } = true;
+
     [JsonPropertyName("frequencies")] public SortedDictionary<int, List<PeerData>> FrequenciesPeers { get; set; } = [];
 
 }
@@ -155,4 +157,12 @@ public class AllPeersStatusMessage
 public class ModeUpdateMessage
 {
     [JsonPropertyName("3d")] public bool Is3d { get; set; }
+}
+
+/// <summary>
+/// Server-wide debug/behavior settings pushed to authenticated clients.
+/// </summary>
+public class ServerSettingsMessage
+{
+    [JsonPropertyName("dcsLineOfSight")] public bool DcsLineOfSightEnabled { get; set; } = true;
 }

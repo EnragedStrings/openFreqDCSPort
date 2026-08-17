@@ -19,6 +19,9 @@ public class FrequencyTransmission
     [JsonPropertyName("position")]
     public Vector3? Position { get; set; }
 
+    [JsonPropertyName("dcsPosition")]
+    public Vector3? DcsPosition { get; set; }
+
     [JsonPropertyName("velocity")]
     public Vector3? Velocity { get; set; }
 
@@ -35,13 +38,14 @@ public class FrequencyTransmission
     {
     }
 
-    public FrequencyTransmission(int khz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, bool in3d,
-        AmbientNoiseType ambientNoiseType = AmbientNoiseType.None)
+    public FrequencyTransmission(int khz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
+        bool in3d, AmbientNoiseType ambientNoiseType = AmbientNoiseType.None, Vector3? dcsPosition = null)
     {
         Khz = khz;
         TxPowerWatts = txPowerWatts;
         Ppm = ppm;
         Position = position;
+        DcsPosition = dcsPosition;
         Velocity = velocity;
         In3d = in3d;
         AmbientNoiseType = ambientNoiseType;

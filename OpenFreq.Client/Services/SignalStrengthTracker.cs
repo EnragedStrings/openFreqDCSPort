@@ -52,14 +52,11 @@ public class SignalStrengthTracker : IDisposable
     /// <summary>
     /// Update the signal strength for a given frequency.
     /// Call this from your audio processing pipeline.
-    /// Only updates for signals above the noise floor (SNR > 0 dB).
+    /// Updates for actual signals even when they are below the noise floor so weak/blocked
+    /// transmissions visibly decay instead of leaving the previous strong value in place.
     /// </summary>
     public void UpdateSignalStrength(int frequencyKhz, AudioParams audioParams)
     {
-        // Ignore pure noise floor or below - these are not actual signals
-        if (audioParams.ReceivedSnrDb <= 0)
-            return;
-
         var strength = GetSignalStrength(audioParams);
         _signalStrengths.AddOrUpdate(
             frequencyKhz,

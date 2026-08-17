@@ -71,6 +71,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _trackingCts;
     [ObservableProperty] public partial bool IsTracking { get; set; }
     public bool IsBmsLocation => RadioStationData.Type == RadioStationData.RadioStationType.BMS;
+    public bool IsDcsLocation => RadioStationData.Type == RadioStationData.RadioStationType.DCS;
+    public bool IsManagedBySimulator => IsBmsLocation || IsDcsLocation;
 
     [ObservableProperty] public partial bool AnyChannelTransmitting { get; set; }
     [ObservableProperty] public partial bool AnyChannelReceiving { get; set; }

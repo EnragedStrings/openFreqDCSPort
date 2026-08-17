@@ -8,15 +8,19 @@ namespace OpenFreqClient.Services;
 
 public class ConfigurationService(ILogger<ConfigurationService> logger) : IConfigurationService
 {
-    private static readonly string ConfigFilePath =
+    private static readonly string LegacyConfigFilePath =
         Path.Combine(
             Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory,
             "OpenFreq.Client.json");
+
+    private static readonly string ConfigFilePath = AppDataPaths.ClientConfigPath;
 
     public async Task<AppConfiguration> LoadConfigurationAsync()
     {
         try
         {
+            TryMigrateLegacyConfiguration();
+
             if (!File.Exists(ConfigFilePath))
             {
                 return new AppConfiguration();
@@ -37,6 +41,7 @@ public class ConfigurationService(ILogger<ConfigurationService> logger) : IConfi
     {
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
             var json = Json.Json.Instance.Serialize(config);
             await File.WriteAllTextAsync(ConfigFilePath, json);
             logger.LogInformation("Saved configuration: {ConfigFilePath}", ConfigFilePath);
@@ -50,5 +55,25 @@ public class ConfigurationService(ILogger<ConfigurationService> logger) : IConfi
     public void Dispose()
     {
         // nothing to do yet
+    }
+
+    private void TryMigrateLegacyConfiguration()
+    {
+        try
+        {
+            if (File.Exists(ConfigFilePath) || !File.Exists(LegacyConfigFilePath))
+                return;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
+            File.Copy(LegacyConfigFilePath, ConfigFilePath, overwrite: false);
+            logger.LogInformation(
+                "Migrated legacy configuration from {LegacyConfigFilePath} to {ConfigFilePath}",
+                LegacyConfigFilePath,
+                ConfigFilePath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to migrate legacy configuration");
+        }
     }
 }

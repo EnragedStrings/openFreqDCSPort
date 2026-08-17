@@ -41,6 +41,7 @@ public interface IPlaybackService
     void StartPushStream(string streamId, int sampleRate, int channels, AudioParams audioParams);
     bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None);
     void UpdateStreamParams(string streamId, AudioParams newParams);
+    void ClearStreamBuffer(string streamId);
     Task StopStream(string streamId);
     List<string> GetActiveStreams();
     bool IsStreamActive(string id);
@@ -104,6 +105,7 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
         => _inner.PushAudioData(streamId, audioData, ambientNoise);
     public void UpdateStreamParams(string streamId, AudioParams newParams)
         => _inner.UpdateStreamParams(streamId, newParams);
+    public void ClearStreamBuffer(string streamId) => _inner.ClearStreamBuffer(streamId);
     public Task StopStream(string streamId) => _inner.StopStream(streamId);
     public List<string> GetActiveStreams() => _inner.GetActiveStreams();
     public bool IsStreamActive(string id) => _inner.IsStreamActive(id);

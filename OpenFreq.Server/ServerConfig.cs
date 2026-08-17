@@ -22,6 +22,9 @@ public class ServerConfig
     [JsonPropertyName("opusCompression")]
     public bool EnableOpusCompression { get; set; } = true;
 
+    [JsonPropertyName("dcsLineOfSight")]
+    public bool DcsLineOfSightEnabled { get; set; } = true;
+
     [JsonPropertyName("broadcastPeerUpdates")]
     public bool BroadcastPeerUpdates { get; set; } = true;
 }

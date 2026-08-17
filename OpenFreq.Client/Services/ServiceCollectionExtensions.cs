@@ -3,6 +3,7 @@ using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Services;
+using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services.Audio;
@@ -32,7 +33,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IOpenFreqService, OpenFreqService>();
         services.AddSingleton<IHotkeyService, HotkeyService>();
         services.AddSingleton<IConfigurationService, ConfigurationService>();
+        services.AddSingleton<DcsExportInstaller>();
         services.AddSingleton<IAcmiClientService, AcmiClientService>();
+        services.AddSingleton<IDcsExportService, DcsExportService>();
         services.AddSingleton<IFalconSharedMemoryService, FalconSharedMemoryService>();
         services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
         services.AddSingleton<IIvcMonitorService, IvcMonitorService>();

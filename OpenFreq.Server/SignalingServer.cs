@@ -686,6 +686,13 @@ public class SignalingServer
         await Task.WhenAll(broadcastTasks);
     }
 
+    public Task BroadcastServerSettingsAsync()
+    {
+        return BroadcastToAllChannels(
+            SignalingMessageFactory.CreateServerSettings(
+                _config.DcsLineOfSightEnabled));
+    }
+
     private async Task BroadcastToChannel(int frequencyKhz, string excludeClientId, SignalingMessage message)
     {
         var clients = _channelManager.GetClientsInChannel(frequencyKhz);
@@ -757,7 +764,7 @@ public class SignalingServer
     {
         await SendToClient(session,
             SignalingMessageFactory.CreateSuccess(message, _channelManager.GetAllChannelStates(), peerId, audioPort,
-                opusEnabled));
+                opusEnabled, _config.DcsLineOfSightEnabled));
     }
 
     private async Task SendChannelState(ClientSession session, int frequencyKhz, List<ChannelStateMessage.Peer> peers)

@@ -24,9 +24,13 @@ public class OpenFreqSettings
 
     public int BmsRadio1Pan { get; set; } // 0 == center
     public int BmsRadio2Pan { get; set; }
+    public Dictionary<string, int> DcsRadioPans { get; set; } = [];
 
     public HotkeyBinding? BmsSquelchUhfHotkey { get; set; }
     public HotkeyBinding? BmsSquelchVhfHotkey { get; set; }
+    public HotkeyBinding? DcsArc210PttHotkey { get; set; }
+    public HotkeyBinding? DcsArc164PttHotkey { get; set; }
+    public HotkeyBinding? DcsArc186PttHotkey { get; set; }
 
     // Window Position & Size
     public int? Left { get; set; }
@@ -41,6 +45,7 @@ public class OpenFreqSettings
     public string DisplayName { get; set; } = "Unnamed";
     public bool SidetoneEnabled { get; set; } = false;
     public bool MicNormalizationEnabled { get; set; } = true;
+    public double InputGain { get; set; } = 1.0;
     public double SidetoneVolume { get; set; } = 0.4;
     public double MasterVolume { get; set; } = 1.0;
     public double AmbientNoiseVolume { get; set; } = 1.0;

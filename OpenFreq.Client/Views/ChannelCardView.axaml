@@ -41,7 +41,7 @@
         <Panel>
             <!-- READ-ONLY VIEW (Default) -->
             <Grid ColumnDefinitions="*,Auto"
-                  RowDefinitions="Auto,Auto,Auto,Auto"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                   IsVisible="{Binding !IsEditing}">
 
                 <!-- Header Row: Channel Name + Toggle + Edit Button -->
@@ -120,9 +120,7 @@
                         <Panel>
                             <!-- Calculated Type - Only in GCI Mode -->
                             <TextBlock Text="{Binding Type}"
-                                       IsVisible="{Binding RadioStationData.Type,
-                                   Converter={StaticResource InvertedEnumToBoolConverter},
-                                   ConverterParameter={x:Static models:RadioStationData+RadioStationType.BMS}}"
+                                       IsVisible="{Binding IsEditable}"
                                        Classes="Body2"
                                        FontWeight="Bold"
                                        VerticalAlignment="Center" />
@@ -132,6 +130,14 @@
                                        IsVisible="{Binding RadioStationData.Type,
                                    Converter={StaticResource EnumToBoolConverter},
                                    ConverterParameter={x:Static models:RadioStationData+RadioStationType.BMS}}"
+                                       Classes="Body2"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+
+                            <TextBlock Text="DCS"
+                                       IsVisible="{Binding RadioStationData.Type,
+                                   Converter={StaticResource EnumToBoolConverter},
+                                   ConverterParameter={x:Static models:RadioStationData+RadioStationType.DCS}}"
                                        Classes="Body2"
                                        FontWeight="Bold"
                                        VerticalAlignment="Center" />
@@ -147,9 +153,7 @@
                             Padding="6,4"
                             Classes="Flat"
                             ToolTip.Tip="{Binding HasPttHotkey, Converter={StaticResource HotkeyTooltipConverter}}"
-                            IsEnabled="{Binding RadioStationData.Type, 
-                                 Converter={StaticResource InvertedEnumToBoolConverter}, 
-                                 ConverterParameter={x:Static models:RadioStationData+RadioStationType.BMS}}">
+                            IsEnabled="{Binding IsEditable}">
                         <StackPanel Orientation="Horizontal" Spacing="4">
                             <avalonia:MaterialIcon Kind="KeyboardOutline"
                                                    Width="18" Height="18" />
@@ -220,6 +224,18 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+
+                <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2"
+                            Spacing="4"
+                            Margin="0,10,0,0"
+                            IsVisible="{Binding ShowManualPanControl}">
+                    <TextBlock Text="PAN"
+                               Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1" />
+                    <controls1:AudioChannelSelector Pan="{Binding Pan}" />
+                </StackPanel>
             </Grid>
 
             <!-- ========================================== -->

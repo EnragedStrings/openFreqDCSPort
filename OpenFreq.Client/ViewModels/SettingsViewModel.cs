@@ -11,6 +11,7 @@ using Avalonia.Platform;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using OpenFreq.Client.Services.Interfaces;
 using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.Logging;
@@ -61,14 +62,37 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ModeIsBms))]
+    [NotifyPropertyChangedFor(nameof(ModeIsDcs))]
     [NotifyPropertyChangedFor(nameof(ModeIsGci))]
     [NotifyPropertyChangedFor(nameof(IsReadyToConnect))]
     private IOpenFreqService.Mode _connectionMode = IOpenFreqService.Mode.BMS;
 
+    public bool ModeIsBms
+    {
+        get => ConnectionMode == IOpenFreqService.Mode.BMS;
+        set
+        {
+            if (value) ConnectionMode = IOpenFreqService.Mode.BMS;
+        }
+    }
+
+    public bool ModeIsDcs
+    {
+        get => ConnectionMode == IOpenFreqService.Mode.DCS;
+        set
+        {
+            if (value) ConnectionMode = IOpenFreqService.Mode.DCS;
+        }
+    }
+
     public bool ModeIsGci
     {
         get => ConnectionMode == IOpenFreqService.Mode.GCI;
-        set => ConnectionMode = value ? IOpenFreqService.Mode.GCI : IOpenFreqService.Mode.BMS;
+        set
+        {
+            if (value) ConnectionMode = IOpenFreqService.Mode.GCI;
+        }
     }
 
     [ObservableProperty]
@@ -89,10 +113,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial double MasterVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool SidetoneEnabled { get; set; } = false;
     [ObservableProperty] public partial bool MicNormalizationEnabled { get; set; } = true;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(InputGainText))]
+    public partial double InputGain { get; set; } = 1.0;
     [ObservableProperty] public partial double SidetoneVolume { get; set; } = 0.4;
     [ObservableProperty] public partial double AmbientNoiseVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool AutoRecordInGameMode { get; set; } = false;
-    [ObservableProperty] public partial string RecordingPath { get; set; } = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "recordings");
+    [ObservableProperty] public partial string RecordingPath { get; set; } = AppDataPaths.ClientRecordingDirectory;
     /// <summary>False = capture to file, True = stream the capture mix to a playback device.</summary>
     [ObservableProperty] public partial bool StreamToDevice { get; set; } = false;
     /// <summary>Inverse of <see cref="StreamToDevice"/>, for the "Record to file" radio button.</summary>
@@ -115,6 +142,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IAudioService _audioService;
     private readonly IFalconRadioSharedMemoryService _falconRadioSharedMemoryService;
     private readonly IFalconSharedMemoryService _falconSharedMemoryService;
+    private readonly IDcsExportService _dcsExportService;
     private readonly IAcmiClientService _acmiClientService;
     private readonly IOpenFreqService _openFreqService;
     private readonly IHotkeyService _hotkeyService;
@@ -137,6 +165,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     public partial int BmsRadio2Pan { get; set; } = 0;
 
+    private Dictionary<string, int> _dcsRadioPans = new(StringComparer.OrdinalIgnoreCase);
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
     public partial HotkeyBinding? BmsUhfSquelchHotkey { get; set; }
@@ -150,6 +180,34 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     public string BmsVhfSquelchHotkeyDisplay =>
         BmsVhfSquelchHotkey?.DisplayName ?? "None";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DcsArc210PttHotkeyDisplay))]
+    public partial HotkeyBinding? DcsArc210PttHotkey { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DcsArc164PttHotkeyDisplay))]
+    public partial HotkeyBinding? DcsArc164PttHotkey { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DcsArc186PttHotkeyDisplay))]
+    public partial HotkeyBinding? DcsArc186PttHotkey { get; set; }
+
+    public string DcsArc210PttHotkeyDisplay => DcsArc210PttHotkey?.DisplayName ?? "None";
+
+    public string DcsArc164PttHotkeyDisplay => DcsArc164PttHotkey?.DisplayName ?? "None";
+
+    public string DcsArc186PttHotkeyDisplay => DcsArc186PttHotkey?.DisplayName ?? "None";
+
+    [ObservableProperty] public partial bool InputMeterEnabled { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MicInputLevelText))]
+    public partial double MicInputLevel { get; set; }
+
+    public string MicInputLevelText => $"{MicInputLevel:P0}";
+
+    public string InputGainText => $"{InputGain:P0}";
 
 
     // This is displayed in the Top Bar but shared throughout the app
@@ -168,6 +226,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         switch (value)
         {
             case IOpenFreqService.Mode.BMS:
+                _dcsExportService.Stop();
                 _falconSharedMemoryService.Start();
                 _falconRadioSharedMemoryService.Start();
                 _acmiClientService.DisconnectAsync().Wait(50);
@@ -175,9 +234,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 break;
             case IOpenFreqService.Mode.GCI:
                 Is3dMode = false;
+                _hotkeyService.ResumePttKeys();
+                _dcsExportService.Stop();
                 _falconSharedMemoryService.Stop();
                 _falconRadioSharedMemoryService.Stop();
                 _hotkeyService.UnregisterHotkeys(IHotkeyService.HotkeyType.SquelchToggle);
+                break;
+            case IOpenFreqService.Mode.DCS:
+                _hotkeyService.ResumePttKeys();
+                _falconSharedMemoryService.Stop();
+                _falconRadioSharedMemoryService.Stop();
+                _acmiClientService.DisconnectAsync().Wait(50);
+                _acmiClientService.Stop();
+                _hotkeyService.UnregisterHotkeys(IHotkeyService.HotkeyType.SquelchToggle);
+                _dcsExportService.Start();
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(value), value, null);
@@ -226,17 +296,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     public SettingsViewModel(ILogger<SettingsViewModel> logger, IAudioService audioService, IFalconRadioSharedMemoryService falconRadioSharedMemoryService,
         IFalconSharedMemoryService falconSharedMemoryService, IAcmiClientService acmiClientService,
-        IOpenFreqService openFreqService, IHotkeyService hotkeyService)
+        IOpenFreqService openFreqService, IHotkeyService hotkeyService, IDcsExportService dcsExportService)
     {
         _logger = logger;
         _audioService = audioService;
         _falconSharedMemoryService = falconSharedMemoryService;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
+        _dcsExportService = dcsExportService;
         _acmiClientService = acmiClientService;
         _openFreqService = openFreqService;
         _hotkeyService = hotkeyService;
         InitializeAudioDevices();
         InitializeBmsDetection();
+        _openFreqService.MicLevelChanged += OnMicLevelChanged;
     }
 
     private void InitializeAudioDevices()
@@ -259,7 +331,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnDisplayNameChanged(string value)
     {
-        if (ConnectionMode == IOpenFreqService.Mode.GCI && _openFreqService.IsAuthenticated)
+        if (ConnectionMode is IOpenFreqService.Mode.GCI or IOpenFreqService.Mode.DCS &&
+            _openFreqService.IsAuthenticated)
         {
             _ = Task.Run(async () =>
             {
@@ -365,6 +438,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnMicNormalizationEnabledChanged(bool value) => _openFreqService.MicNormalizationEnabled = value;
 
+    partial void OnInputMeterEnabledChanged(bool value) => _openFreqService.InputMeterEnabled = value;
+
+    partial void OnInputGainChanged(double value) => _openFreqService.InputGain = value;
+
     partial void OnSidetoneVolumeChanged(double value) => _openFreqService.SidetoneVolume = value;
 
     partial void OnAmbientNoiseVolumeChanged(double value) => _openFreqService.AmbientNoiseVolume = value;
@@ -417,6 +494,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnBmsRadio2PanChanged(int value) { }
 
+    private void OnMicLevelChanged(object? sender, MicLevelChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() => MicInputLevel = e.Peak);
+    }
+
     public void LoadFromSettings(OpenFreqSettings settings)
     {
         OpenFreqServerAddress = settings.OpenFreqServerAddress;
@@ -430,14 +512,21 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MapLayer = settings.MapLayer;
         BmsRadio1Pan = settings.BmsRadio1Pan;
         BmsRadio2Pan = settings.BmsRadio2Pan;
+        _dcsRadioPans = new Dictionary<string, int>(
+            settings.DcsRadioPans ?? new Dictionary<string, int>(),
+            StringComparer.OrdinalIgnoreCase);
+        DcsArc210PttHotkey = settings.DcsArc210PttHotkey;
+        DcsArc164PttHotkey = settings.DcsArc164PttHotkey;
+        DcsArc186PttHotkey = settings.DcsArc186PttHotkey;
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
+        InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
         MinimizeOnConnect = settings.MinimizeOnConnect;
         AmbientNoiseVolume = settings.AmbientNoiseVolume;
         AutoRecordInGameMode = settings.AutoRecordInGameMode;
-        // Keep the computed default ("recordings" next to the exe) when no path was saved.
+        // Keep the computed AppData default when no path was saved.
         if (!string.IsNullOrWhiteSpace(settings.RecordingPath))
             RecordingPath = settings.RecordingPath;
         StreamToDevice = settings.CaptureSink == IOpenFreqService.CaptureSink.Device;
@@ -620,11 +709,16 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MapLayer = MapLayer,
             BmsRadio1Pan = BmsRadio1Pan,
             BmsRadio2Pan = BmsRadio2Pan,
+            DcsRadioPans = new Dictionary<string, int>(_dcsRadioPans, StringComparer.OrdinalIgnoreCase),
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
+            DcsArc210PttHotkey = DcsArc210PttHotkey,
+            DcsArc164PttHotkey = DcsArc164PttHotkey,
+            DcsArc186PttHotkey = DcsArc186PttHotkey,
             MasterVolume = MasterVolume,
             SidetoneEnabled = SidetoneEnabled,
             MicNormalizationEnabled = MicNormalizationEnabled,
+            InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
             MinimizeOnConnect = MinimizeOnConnect,
             AmbientNoiseVolume = AmbientNoiseVolume,
@@ -646,6 +740,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MaximizedScreenX = _maximizedScreenX,
             MaximizedScreenY = _maximizedScreenY
         };
+    }
+
+    public int GetDcsRadioPan(string radioId) =>
+        _dcsRadioPans.TryGetValue(radioId, out var pan)
+            ? Math.Clamp(pan, -100, 100)
+            : 0;
+
+    public void SetDcsRadioPan(string radioId, int pan)
+    {
+        if (string.IsNullOrWhiteSpace(radioId))
+            return;
+
+        _dcsRadioPans[radioId] = Math.Clamp(pan, -100, 100);
     }
 
     private const int MaxAddressHistory = 10;
@@ -705,5 +812,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         _audioService.PlaybackDevicesChanged -= OnPlaybackDevicesChanged;
         _audioService.RecordingDevicesChanged -= OnRecordingDevicesChanged;
+        _openFreqService.MicLevelChanged -= OnMicLevelChanged;
+        _openFreqService.InputMeterEnabled = false;
     }
 }

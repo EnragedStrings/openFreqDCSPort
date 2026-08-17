@@ -54,7 +54,8 @@ public static class SignalingMessageFactory
         };
     }
 
-    public static SignalingMessage CreateSuccess(string message, SortedDictionary<int, List<PeerData>> peers, string? peerId = null, int? audioPort = null, bool opusEnabled = true)
+    public static SignalingMessage CreateSuccess(string message, SortedDictionary<int, List<PeerData>> peers,
+        string? peerId = null, int? audioPort = null, bool opusEnabled = true, bool dcsLineOfSightEnabled = true)
     {
         return new SignalingMessage
         {
@@ -66,6 +67,7 @@ public static class SignalingMessageFactory
                     PeerId = peerId,
                     AudioPort = audioPort,
                     OpusCompressionEnabled = opusEnabled,
+                    DcsLineOfSightEnabled = dcsLineOfSightEnabled,
                     FrequenciesPeers = peers
                 },
                 OpenFreqJsonContext.Default.SuccessMessage)
@@ -179,6 +181,20 @@ public static class SignalingMessageFactory
             Payload = JsonSerializer.SerializeToElement(
                 new ModeUpdateMessage { Is3d = is3d },
                 OpenFreqJsonContext.Default.ModeUpdateMessage)
+        };
+    }
+
+    public static SignalingMessage CreateServerSettings(bool dcsLineOfSightEnabled)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.ServerSettings,
+            Payload = JsonSerializer.SerializeToElement(
+                new ServerSettingsMessage
+                {
+                    DcsLineOfSightEnabled = dcsLineOfSightEnabled
+                },
+                OpenFreqJsonContext.Default.ServerSettingsMessage)
         };
     }
 

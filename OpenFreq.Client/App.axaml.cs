@@ -8,6 +8,7 @@ using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
 using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Services.Acmi;
+using OpenFreqClient.Services;
 using OpenFreqClient.Services.Interfaces;
 using OpenFreqClient.ViewModels;
 using OpenFreqClient.Views;
@@ -36,10 +37,15 @@ public partial class App : Application
             }
 
 #if WINDOWS
+            serviceProvider.GetRequiredService<DcsExportInstaller>().EnsureInstalled();
+#endif
+
+#if WINDOWS
         _services =
         [
             serviceProvider.GetRequiredService<IFalconRadioSharedMemoryService>(),
             serviceProvider.GetRequiredService<IFalconSharedMemoryService>(),
+            serviceProvider.GetRequiredService<IDcsExportService>(),
             serviceProvider.GetRequiredService<IAcmiClientService>(),
             serviceProvider.GetRequiredService<IHotkeyService>()
         ];
@@ -47,6 +53,7 @@ public partial class App : Application
             _services = new List<ILifecycleService>
             {
                 serviceProvider.GetRequiredService<IAcmiClientService>(),
+                serviceProvider.GetRequiredService<IDcsExportService>(),
                 serviceProvider.GetRequiredService<IHotkeyService>(),
             };
 #endif

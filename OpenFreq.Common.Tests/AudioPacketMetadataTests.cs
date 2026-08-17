@@ -44,7 +44,8 @@ public class AudioPacketMetadataTests
             ClientId = "c1",
             Frequencies =
             [
-                new FrequencyTransmission(251000, 25.0, 1.0, new Vector3(1, 2, 3), null, true)
+                new FrequencyTransmission(251000, 25.0, 1.0, new Vector3(1, 2, 3), null, true,
+                    dcsPosition: new Vector3(4, 5, 6))
             ]
         };
 
@@ -60,5 +61,9 @@ public class AudioPacketMetadataTests
         Assert.Equal(1, freq.Position.X);
         Assert.Equal(2, freq.Position.Y);
         Assert.Equal(3, freq.Position.Z);
+        Assert.NotNull(freq.DcsPosition);
+        Assert.Equal(4, freq.DcsPosition.X);
+        Assert.Equal(5, freq.DcsPosition.Y);
+        Assert.Equal(6, freq.DcsPosition.Z);
     }
 }

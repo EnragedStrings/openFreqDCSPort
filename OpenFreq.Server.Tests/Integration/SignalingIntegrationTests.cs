@@ -27,6 +27,33 @@ public class SignalingIntegrationTests
     }
 
     [Fact]
+    public async Task Authenticate_IncludesDcsLineOfSightSetting()
+    {
+        await using var server = await SignalingServerHarness.StartAsync(dcsLineOfSightEnabled: false);
+        await using var client = RtcClientHarness.Create(server, "Alice");
+
+        await client.ConnectAsync();
+
+        var auth = await client.Authenticated.WaitForAsync();
+        Assert.False(auth.DcsLineOfSightEnabled);
+    }
+
+    [Fact]
+    public async Task BroadcastServerSettings_NotifiesAuthenticatedClients()
+    {
+        await using var server = await SignalingServerHarness.StartAsync();
+        await using var client = RtcClientHarness.Create(server, "Alice");
+        await client.ConnectAsync();
+        await client.Authenticated.WaitForAsync();
+
+        server.Config.DcsLineOfSightEnabled = false;
+        await server.Server.BroadcastServerSettingsAsync();
+
+        var settings = await client.ServerSettings.WaitForAsync();
+        Assert.False(settings.DcsLineOfSightEnabled);
+    }
+
+    [Fact]
     public async Task Authenticate_WithEmptyServerPassword_AcceptsAnyPassword()
     {
         await using var server = await SignalingServerHarness.StartAsync(password: null);

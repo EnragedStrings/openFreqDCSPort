@@ -13,6 +13,7 @@ public class FrequencyTransmissionTests
         Assert.Equal(0.0, ft.TxPowerWatts);
         Assert.Equal(0.0, ft.Ppm);
         Assert.Null(ft.Position);
+        Assert.Null(ft.DcsPosition);
         Assert.Null(ft.Velocity);
         Assert.False(ft.In3d);
         Assert.Equal(AmbientNoiseType.None, ft.AmbientNoiseType);
@@ -23,6 +24,7 @@ public class FrequencyTransmissionTests
     {
         var pos = new Vector3(1, 2, 3);
         var vel = new Vector3(4, 5, 6);
+        var dcsPos = new Vector3(7, 8, 9);
 
         var ft = new FrequencyTransmission(
             khz: 251000,
@@ -30,12 +32,14 @@ public class FrequencyTransmissionTests
             ppm: 1.5,
             position: pos,
             velocity: vel,
+            dcsPosition: dcsPos,
             in3d: true);
 
         Assert.Equal(251000, ft.Khz);
         Assert.Equal(25.0, ft.TxPowerWatts);
         Assert.Equal(1.5, ft.Ppm);
         Assert.Same(pos, ft.Position);
+        Assert.Same(dcsPos, ft.DcsPosition);
         Assert.Same(vel, ft.Velocity);
         Assert.True(ft.In3d);
         Assert.Equal(AmbientNoiseType.None, ft.AmbientNoiseType);

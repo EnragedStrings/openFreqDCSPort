@@ -28,6 +28,7 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<PeerTransmissionEventArgs>? PeerTransmissionStateChanged;
     public event EventHandler<AudioDataEventArgs>? AudioDataReceived;
     public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusUpdateReceived;
+    public event EventHandler<ServerSettingsEventArgs>? ServerSettingsChanged;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
 
     private RtpAudioReceiver? _rtpReceiver;
@@ -384,7 +385,7 @@ public class OpenFreqRtcClient : IRtcClient
         _rtpSender!.MarkTransmitStartTime();
     }
 
-    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, AmbientNoiseType ambientNoiseType)> frequencies, bool in3d)
+    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -396,6 +397,7 @@ public class OpenFreqRtcClient : IRtcClient
                 position: freq.position,
                 velocity: freq.velocity,
                 ambientNoiseType: freq.ambientNoiseType,
+                dcsPosition: freq.dcsPosition,
                 in3d: in3d
             ));
         }
@@ -542,7 +544,7 @@ public class OpenFreqRtcClient : IRtcClient
                         _opusCompressionEnabled = success.OpusCompressionEnabled;
                         _logger.LogDebug("Opus compression enabled: " + _opusCompressionEnabled);
                         OnConnectionStateChanged(ConnectionState.Authenticated);
-                        OnAuthenticated(MyPeerId, success.FrequenciesPeers, AudioPort);
+                        OnAuthenticated(MyPeerId, success.FrequenciesPeers, AudioPort, success.DcsLineOfSightEnabled);
                     }
 
                     break;
@@ -621,6 +623,16 @@ public class OpenFreqRtcClient : IRtcClient
                     }
 
                     break;
+
+                case SignalingMessageTypes.ServerSettings:
+                    var serverSettings =
+                        SignalingMessageFactory.DeserializePayload<ServerSettingsMessage>(message.Payload);
+                    if (serverSettings != null)
+                    {
+                        OnServerSettingsChanged(serverSettings.DcsLineOfSightEnabled);
+                    }
+
+                    break;
             }
         }
         catch (Exception ex)
@@ -650,8 +662,9 @@ public class OpenFreqRtcClient : IRtcClient
     private void OnConnectionStateChanged(ConnectionState state, DisconnectReason reason = DisconnectReason.None) =>
         ConnectionStateChanged?.Invoke(this, new ConnectionStateChangedEventArgs(state, reason));
 
-    private void OnAuthenticated(string peerId, SortedDictionary<int, List<PeerData>> peers, int audioPort) =>
-        Authenticated?.Invoke(this, new AuthenticationEventArgs(peerId, peers, audioPort));
+    private void OnAuthenticated(string peerId, SortedDictionary<int, List<PeerData>> peers, int audioPort,
+        bool dcsLineOfSightEnabled) =>
+        Authenticated?.Invoke(this, new AuthenticationEventArgs(peerId, peers, audioPort, dcsLineOfSightEnabled));
 
     private void OnFrequencyJoined(int frequencyKhz, List<ChannelStateMessage.Peer> peers) =>
         FrequencyJoined?.Invoke(this, new FrequencyJoinedEventArgs(frequencyKhz, peers));
@@ -678,6 +691,10 @@ public class OpenFreqRtcClient : IRtcClient
 
     private void OnAllPeersStatusReceived(SortedDictionary<int, List<PeerData>> allPeersStatus) =>
         AllPeersStatusUpdateReceived?.Invoke(this, new AllPeersStatusEventArgs(allPeersStatus));
+
+    private void OnServerSettingsChanged(bool dcsLineOfSightEnabled) =>
+        ServerSettingsChanged?.Invoke(this,
+            new ServerSettingsEventArgs(dcsLineOfSightEnabled));
 
 
     private void OnError(string errorMessage) =>
@@ -741,15 +758,23 @@ public class AuthenticationEventArgs : EventArgs
 {
     public string PeerId { get; }
     public int AudioPort { get; }
+    public bool DcsLineOfSightEnabled { get; }
 
     public SortedDictionary<int, List<PeerData>> Peers { get; }
 
-    public AuthenticationEventArgs(string peerId, SortedDictionary<int, List<PeerData>> peers, int audioPort)
+    public AuthenticationEventArgs(string peerId, SortedDictionary<int, List<PeerData>> peers, int audioPort,
+        bool dcsLineOfSightEnabled = true)
     {
         PeerId = peerId;
         Peers = peers;
         AudioPort = audioPort;
+        DcsLineOfSightEnabled = dcsLineOfSightEnabled;
     }
+}
+
+public class ServerSettingsEventArgs(bool dcsLineOfSightEnabled) : EventArgs
+{
+    public bool DcsLineOfSightEnabled { get; } = dcsLineOfSightEnabled;
 }
 
 public class FrequencyJoinedEventArgs(int frequencyKhz, List<ChannelStateMessage.Peer> peers) : EventArgs

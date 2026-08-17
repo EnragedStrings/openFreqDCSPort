@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using OpenFreq.Client.Models.Dcs;
 using OpenFreq.Client.Models;
 using OpenFreqClient.Models;
 using OpenFreqClient.ViewModels;
@@ -16,6 +17,9 @@ namespace OpenFreqClient.Json;
 [JsonSerializable(typeof(MapPickerViewModel.NominatimResult))]
 [JsonSerializable(typeof(MapPickerViewModel.NominatimResult[]))]  // we need the array as well
 [JsonSerializable(typeof(HotkeyBinding))]
+[JsonSerializable(typeof(DcsExportPacket))]
+[JsonSerializable(typeof(DcsLosRequestPacket))]
+[JsonSerializable(typeof(DcsLosResponsePacket))]
 public partial class ClientJsonContext : JsonSerializerContext
 {
 }

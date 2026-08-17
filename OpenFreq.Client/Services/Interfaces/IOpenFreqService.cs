@@ -22,6 +22,9 @@ public interface IOpenFreqService : IDisposable
     bool Apply3dAudioEffects { get; set; }
     bool SidetoneEnabled { get; set; }
     bool MicNormalizationEnabled { get; set; }
+    bool InputMeterEnabled { get; set; }
+    double InputGain { get; set; }
+    bool DcsLineOfSightEnabled { get; set; }
     double SidetoneVolume { get; set; }
     double MasterVolume { get; set; }
     double AmbientNoiseVolume { get; set; }
@@ -64,6 +67,7 @@ public interface IOpenFreqService : IDisposable
     /// such as device switch failure or playback loss. Message is human-readable, no stack trace.
     /// </summary>
     event EventHandler<string>? AudioPlaybackErrorOccurred;
+    event EventHandler<MicLevelChangedEventArgs>? MicLevelChanged;
     event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
     event EventHandler<FrequencyTransmissionStatusEventArgs>? FrequencyTransmissionStatusChanged;
 
@@ -103,7 +107,8 @@ public interface IOpenFreqService : IDisposable
 
     public OpenFreqStatus Status { get; }
 
-    public void LoadHeightmap(string path, int width = 32768, int height = 32768, int bytesPerSample = 2);
+    public void LoadHeightmap(string path, int width = 32768, int height = 32768, int bytesPerSample = 2,
+        double? cellSizeMeters = null);
 
     /// <summary>
     /// Samples terrain elevation (meters MSL) at BMS heightmap coordinates. Null if no heightmap loaded.
@@ -115,6 +120,13 @@ public interface IOpenFreqService : IDisposable
     public enum Mode
     {
         GCI,
-        BMS
+        BMS,
+        DCS
     }
+}
+
+public class MicLevelChangedEventArgs(double rms, double peak) : EventArgs
+{
+    public double Rms { get; } = rms;
+    public double Peak { get; } = peak;
 }

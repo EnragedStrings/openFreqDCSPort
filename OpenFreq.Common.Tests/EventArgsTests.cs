@@ -19,6 +19,22 @@ public class EventArgsTests
         Assert.Equal("peer-1", e.PeerId);
         Assert.Same(peers, e.Peers);
         Assert.Equal(9988, e.AudioPort);
+        Assert.True(e.DcsLineOfSightEnabled);
+    }
+
+    [Fact]
+    public void AuthenticationEventArgs_AllowsDcsLineOfSightDisabled()
+    {
+        var peers = new SortedDictionary<int, List<PeerData>>();
+        var e = new AuthenticationEventArgs("peer-1", peers, 9988, dcsLineOfSightEnabled: false);
+        Assert.False(e.DcsLineOfSightEnabled);
+    }
+
+    [Fact]
+    public void ServerSettingsEventArgs_SetsDcsLineOfSight()
+    {
+        var e = new ServerSettingsEventArgs(dcsLineOfSightEnabled: false);
+        Assert.False(e.DcsLineOfSightEnabled);
     }
 
     [Fact]

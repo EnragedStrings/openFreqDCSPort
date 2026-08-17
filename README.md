@@ -107,6 +107,24 @@ powershell -ExecutionPolicy Bypass -File build/Publish-Client.ps1 -Installer
 powershell -ExecutionPolicy Bypass -File build/Publish-Server.ps1 -Installer
 ```
 
+### Windows DCS Dev Loop
+
+Use the source-run script when iterating on DCS integration so you do not need a
+new packaged `.exe` for every test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build/Run-DcsDev.ps1
+```
+
+Useful switches:
+
+- `-Watch` uses `dotnet watch run` for server and client
+- `-SkipSync` skips copying `DCS/OpenFreqDCS` into `Saved Games`
+- `-SkipServer` or `-SkipClient` launches only one side
+
+The script reuses `installer/windows/Install-DcsExport.ps1` so Lua export changes
+get copied into `Saved Games\DCS...\Mods\Services\OpenFreqDCS` before launch.
+
 ## Contributing
 
 Pull requests are welcome. Due to the complexity of the project, please keep them small. For bugfixes, please specify clear testing/repro cases.

@@ -35,7 +35,9 @@ public sealed class OwnVoiceRadioRenderer
     // ALC + AGC time constants are shared with the receive chain — see RadioPlayback.
     private readonly AttackDecayFilter _agc;
     private readonly HighPassFilter _highPass;
-    private readonly LowPassFilter _lowPass;
+    // Band-dependent high edge (see FastPathAudioSim.RadioBandConfig.VoiceBandwidth_Hz) --
+    // rebuilt in ApplyParams alongside _noise whenever the tuned frequency's band changes.
+    private LowPassFilter _lowPass;
     private readonly int _sampleRate;
 
     // Per-frequency background noise. Recreated when the tuned frequency changes.
@@ -79,8 +81,10 @@ public sealed class OwnVoiceRadioRenderer
         _relativePower = (float)Math.Pow(10, p.ReceivedSnrDb / 20.0);
         if (p.RadioFrequencyKHz != _noiseFreqKhz && p.RadioFrequencyKHz > 0)
         {
-            _noise = new BackgroundNoiseGenerator(_sampleRate, p.RadioFrequencyKHz);
+            var bandConfig = FastPathAudioSim.GetBandConfig(p.RadioFrequencyKHz);
+            _noise = new BackgroundNoiseGenerator(_sampleRate, p.RadioFrequencyKHz, bandConfig.Modulation);
             _noiseFreqKhz = p.RadioFrequencyKHz;
+            _lowPass = new LowPassFilter(bandConfig.VoiceBandwidth_Hz / _sampleRate, 6);
         }
     }
 

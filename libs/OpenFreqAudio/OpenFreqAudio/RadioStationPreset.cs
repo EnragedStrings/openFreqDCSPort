@@ -70,7 +70,7 @@ public class RadioStationPreset
         {
             BackgroundNoiseGenerator.RadioType.VHF_AM => TxPower_VHF_W,
             BackgroundNoiseGenerator.RadioType.UHF_AM => TxPower_UHF_W,
-            BackgroundNoiseGenerator.RadioType.UHF_FM => TxPower_UHF_W * 1.5, // FM typically uses more power
+            BackgroundNoiseGenerator.RadioType.FM => TxPower_UHF_W * 1.5, // FM typically uses more power
             _ => TxPower_VHF_W
         };
     }
@@ -84,7 +84,7 @@ public class RadioStationPreset
         {
             BackgroundNoiseGenerator.RadioType.VHF_AM => RxSensitivity_VHF_dBm,
             BackgroundNoiseGenerator.RadioType.UHF_AM => RxSensitivity_UHF_dBm,
-            BackgroundNoiseGenerator.RadioType.UHF_FM => RxSensitivity_UHF_dBm + 3.0, // FM has worse sensitivity (less negative)
+            BackgroundNoiseGenerator.RadioType.FM => RxSensitivity_UHF_dBm + 3.0, // FM has worse sensitivity (less negative)
             _ => RxSensitivity_VHF_dBm
         };
     }

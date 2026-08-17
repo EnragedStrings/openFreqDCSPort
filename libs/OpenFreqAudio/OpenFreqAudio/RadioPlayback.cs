@@ -111,9 +111,11 @@ public class RadioPlayback : IDisposable
         public CvsdColorationEffect CvsdEffect { get; } = new();
         public bool WasMatchedCipherActive { get; set; }
 
-        // Regardless of our sample rate, we want to band-pass between ~300 and 3000 khz
-        // to get our radio sound. Chain two filters
-        // (a high-pass to remove low freqs & DC, then a low-pass).
+        // Regardless of our sample rate, we want to band-pass our radio sound between a fixed
+        // ~300 Hz low edge and a band-dependent high edge (see FastPathAudioSim.RadioBandConfig.
+        // VoiceBandwidth_Hz) -- narrower bands (HF) sound audibly boxier/less clear than wider
+        // ones (VHF/UHF), matching how real voice-radio channel bandwidth scales with band.
+        // Chain two filters (a high-pass to remove low freqs & DC, then a low-pass).
         // This fits our needs better than alternatives:
         //
         // - A single-Butterworth bandpass either has to be relatively low-order
@@ -121,10 +123,21 @@ public class RadioPlayback : IDisposable
         //   it only positive values from our envelope.
         //
         // - An equivalent FIR filter needs > 512 taps, adding delays of 5ms and up.
-        public HighPassFilter HighPass { get; } =
-            new HighPassFilter(300.0 / SampleRate, 3);
-        public LowPassFilter LowPass { get; } =
-            new LowPassFilter(3000.0 / SampleRate, 6);
+        public HighPassFilter HighPass { get; }
+        public LowPassFilter LowPass { get; }
+
+        // AM vs FM: drives the capture effect on co-channel transmitters and the noise
+        // threshold/knee below (see the mixing loop), plus the noise generator's hiss
+        // character. See FastPathAudioSim.bandConfigs for which real bands are which.
+        public ModulationType Modulation { get; }
+
+        public RadioConfig(int frequencyKhz)
+        {
+            var bandConfig = FastPathAudioSim.GetBandConfig(frequencyKhz);
+            HighPass = new HighPassFilter(300.0 / SampleRate, 3);
+            LowPass = new LowPassFilter(bandConfig.VoiceBandwidth_Hz / SampleRate, 6);
+            Modulation = bandConfig.Modulation;
+        }
 
         // AGC gain; varies as a low-pass of the received signal
         // according to attack and decay params below.
@@ -917,13 +930,13 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig();
+                slot = new RadioConfig(frequencyKHz);
                 _slots[key] = slot;
             }
 
             if (slot.NoiseGenerator == null)
             {
-                slot.NoiseGenerator = new BackgroundNoiseGenerator(SampleRate, frequencyKHz);
+                slot.NoiseGenerator = new BackgroundNoiseGenerator(SampleRate, frequencyKHz, slot.Modulation);
                 _logger.LogInformation("TuneFrequency {Frequency:F3} MHz", frequencyKHz / 1000.0);
             }
 
@@ -956,7 +969,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig();
+                slot = new RadioConfig(frequencyKHz);
                 _slots[key] = slot;
             }
             slot.SquelchLevel = squelchLevel;
@@ -971,7 +984,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig();
+                slot = new RadioConfig(frequencyKHz);
                 _slots[key] = slot;
             }
             slot.Enc = enc;
@@ -988,7 +1001,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig();
+                slot = new RadioConfig(frequencyKHz);
                 _slots[key] = slot;
             }
             // Headroom up to 4x (+12 dB)
@@ -1011,7 +1024,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig();
+                slot = new RadioConfig(frequencyKHz);
                 _slots[key] = slot;
             }
             slot.Pan = Math.Clamp(pan, -100, 100);
@@ -1111,6 +1124,31 @@ public class RadioPlayback : IDisposable
 
             Bass.ChannelStop(streamToStop);
             Bass.StreamFree(streamToStop);
+        }
+    }
+
+    /// <summary>
+    /// FM receivers (frequency discriminators) "capture" onto the strongest co-channel signal
+    /// and largely suppress weaker ones, unlike AM's envelope detector which mixes/beats them
+    /// together (see the big comment above this method's caller). Modeled as a soft power-ratio
+    /// gate rather than a hard winner-take-all: transmitters within ~1 dB of the strongest are
+    /// only lightly suppressed (matching the real "picket fencing"/motorboating you hear when
+    /// two FM signals are nearly equal strength); anything much weaker fades out sharply.
+    /// Mutates <paramref name="relativePowers"/> in place; <paramref name="maxPower"/> must
+    /// already be the max of that list (callers compute it anyway for the noise-threshold calc).
+    /// </summary>
+    private static void ApplyFmCaptureEffect(List<float> relativePowers, float maxPower)
+    {
+        if (maxPower <= 0f) return;
+
+        const float captureRatioDb = 1.0f; // half-suppression point below the strongest signal
+        const float steepnessPerDb = 2.5f;
+
+        for (int k = 0; k < relativePowers.Count; ++k)
+        {
+            float deltaDb = 20f * MathF.Log10(Math.Max(relativePowers[k], 1e-6f) / maxPower); // <= 0
+            float weight = 1f / (1f + MathF.Exp(-(deltaDb + captureRatioDb) * steepnessPerDb));
+            relativePowers[k] *= weight;
         }
     }
 
@@ -1423,14 +1461,41 @@ public class RadioPlayback : IDisposable
                         // we'd have a single signal with a fixed phase (45 deg).
                         var noiseGen = slot.NoiseGenerator;
 
+                        // FM vs AM (constant for this whole chunk, computed once from the
+                        // per-transmitter powers above): FM receivers capture onto the strongest
+                        // co-channel signal instead of mixing weaker ones in (ApplyFmCaptureEffect
+                        // mutates relativePowers directly), and FM is quieter than AM above a
+                        // threshold SNR but noisier below it (the classic FM "cliff") instead of
+                        // AM's smooth linear noise-vs-SNR curve. AM (fmNoiseScale stays 1) is
+                        // completely unaffected by any of this.
+                        float fmNoiseScale = 1f;
+                        if (slot.Modulation == ModulationType.FM && numStreams > 0)
+                        {
+                            float maxPower = 0f;
+                            for (int k = 0; k < relativePowers.Count; ++k)
+                                maxPower = Math.Max(maxPower, relativePowers[k]);
+
+                            if (numStreams > 1)
+                                ApplyFmCaptureEffect(relativePowers, maxPower);
+
+                            if (maxPower > 0f)
+                            {
+                                float snrDb = 20f * MathF.Log10(maxPower);
+                                const float thresholdDb = 8f;  // knee position
+                                const float steepness = 0.35f; // dB^-1, controls how sharp the cliff is
+                                float t = 1f / (1f + MathF.Exp(-(thresholdDb - snrDb) * steepness));
+                                fmNoiseScale = 0.15f + t * 2.35f; // ~0.15x well above threshold, ~2.5x well below
+                            }
+                        }
+
                         if (numStreams > 0)
                         {
                             // Calculate E[n] for each sample n.
                             for (int n = 0; n < samples; ++n)
                             {
                                 // Start with our noise.
-                                double i = noiseGen?.NextSample() ?? 0.0;
-                                double q = noiseGen?.NextSample() ?? 0.0;
+                                double i = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
+                                double q = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
                                 // Real aircraft radios don't have 100% modulation.
                                 // A bunch of the standards are paywalled, but those I've found
                                 // suggest minimum specs are 85% modulation, with 90-95% being common.

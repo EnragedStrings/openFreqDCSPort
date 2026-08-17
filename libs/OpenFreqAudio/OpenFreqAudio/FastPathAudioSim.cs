@@ -102,9 +102,36 @@ namespace OpenFreqAudio
                 diffractionDb: 3.0,
                 modulation: ModulationType.AM),
 
+            // HF (2-30 MHz): real HF voice channels are narrower than VHF/UHF (classic SSB/AM
+            // ~2.5 kHz vs ~3 kHz), giving the boxier, less-clear sound HF is known for. This
+            // models that narrower passband only -- it does NOT model skywave/ionospheric
+            // propagation, which is the bigger real-world reason HF sounds worse at range.
             new RadioBandConfig(
-                bandName: "VHF",
+                bandName: "HF",
+                freqMinKhz: 2000,
+                freqMaxKhz: 29999,
+                bandwidth: 2500.0f,
+                diffractionDb: 3.0,
+                modulation: ModulationType.AM
+            ),
+
+            // Real-world VHF splits by use: 30-108 MHz is tactical/land-mobile FM (SINCGARS,
+            // ARC-201, ARC-186 in FM mode); 108-200 MHz is civil/military aviation AM (VOR/ILS
+            // starts at 108 MHz, ATC and ARC-210/ARC-186 AM-mode comms live above it). Split so
+            // AM/FM modeling (capture effect, noise threshold, hiss character) lines up with
+            // which real radios actually land in each range.
+            new RadioBandConfig(
+                bandName: "VHF-FM",
                 freqMinKhz: 30000,
+                freqMaxKhz: 107999,
+                bandwidth: 3000.0f,
+                diffractionDb: 3.0, // Better diffraction than UHF
+                modulation: ModulationType.FM
+            ),
+
+            new RadioBandConfig(
+                bandName: "VHF-AM",
+                freqMinKhz: 108000,
                 freqMaxKhz: 199999,
                 bandwidth: 3000.0f,
                 diffractionDb: 3.0, // Better diffraction than UHF
@@ -151,6 +178,26 @@ namespace OpenFreqAudio
 
             // Default fallback to VHF-like characteristics if frequency doesn't match any band
             return bandConfigs[0];
+        }
+
+        /// <summary>
+        /// Radio horizon distance (meters) between two stations at the given MSL heights, using
+        /// the standard geometric-horizon-with-refraction model: d = sqrt(2*R_eff*h) per side,
+        /// R_eff = 4/3 * true Earth radius (standard atmospheric refraction assumption). Summing
+        /// each side's horizon distance gives the max distance at which the two stations can see
+        /// each other over the curve of the Earth, independent of terrain masking.
+        /// Equivalent to the classic aviation/radar approximation d_NM = 1.23*sqrt(h_ft): with
+        /// R_eff in meters and h in feet converted to meters, sqrt(2*R_eff*h) in meters divides
+        /// out to 1.23*sqrt(h_ft) nautical miles -- same physics, expressed in SI units here so
+        /// callers already working in meters don't need a unit round-trip.
+        /// </summary>
+        public static double CalculateRadioHorizonMeters(double txHeightMeters, double rxHeightMeters)
+        {
+            const double effectiveEarthRadiusMeters = EarthRadius * 4.0 / 3.0;
+            var txHeight = Math.Max(2.0, txHeightMeters);
+            var rxHeight = Math.Max(2.0, rxHeightMeters);
+            return Math.Sqrt(2.0 * effectiveEarthRadiusMeters * txHeight) +
+                   Math.Sqrt(2.0 * effectiveEarthRadiusMeters * rxHeight);
         }
 
         public double PixelsToMeters(double pixelDistance)

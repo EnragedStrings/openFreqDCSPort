@@ -34,12 +34,12 @@ public class BackgroundNoiseGenerator
     {
         VHF_AM,
         UHF_AM,
-        UHF_FM
+        FM
     }
 
     private RadioType _radioType;
 
-    public BackgroundNoiseGenerator(int sampleRate, int frequencyKhz)
+    public BackgroundNoiseGenerator(int sampleRate, int frequencyKhz, ModulationType modulation = ModulationType.AM)
     {
         _sampleRate = sampleRate;
         _rng = new Random(Environment.TickCount);
@@ -51,7 +51,9 @@ public class BackgroundNoiseGenerator
             _pinkNoiseSum += _pinkNoiseDice[i];
         }
 
-        _radioType = frequencyKhz < 200000 ? RadioType.VHF_AM : RadioType.UHF_AM; // 200 MHz = 200000 kHz
+        _radioType = modulation == ModulationType.FM
+            ? RadioType.FM
+            : frequencyKhz < 200000 ? RadioType.VHF_AM : RadioType.UHF_AM; // 200 MHz = 200000 kHz
     }
 
     /// <summary>
@@ -72,13 +74,13 @@ public class BackgroundNoiseGenerator
         {
             RadioType.VHF_AM => GenerateVHFNoise(),
             RadioType.UHF_AM => GenerateUHFNoise(),
-            RadioType.UHF_FM => GenerateFMNoise(),
+            RadioType.FM => GenerateFMNoise(),
             _ => GenerateUHFNoise()
         };
 
         // For AM: no modulation, just straight noise
         // For FM: use modulation
-        if (_radioType == RadioType.UHF_FM)
+        if (_radioType == RadioType.FM)
         {
             double dt = 1.0 / _sampleRate;
             _modulationPhase += 2.0 * Math.PI * ModulationFrequency * dt;
@@ -165,7 +167,7 @@ public class BackgroundNoiseGenerator
     }
 
     /// <summary>
-    /// Generate UHF/FM style noise: smooth white noise/hiss (future use)
+    /// Generate FM style noise: smooth white noise/hiss, no crackle/pop character
     /// </summary>
     private float GenerateFMNoise()
     {

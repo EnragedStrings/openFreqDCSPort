@@ -1184,20 +1184,11 @@ public class OpenFreqService : IOpenFreqService
                 var velocity = GetOwnVelocity(frequencyKhz, txSlotId);
                 var dcsPosition = GetOwnDcsLocalPosition(frequencyKhz, txSlotId);
 
-                if (RadioStationPreset.IsVHF(frequencyKhz))
-                {
-                    frequenciesData.Add((frequencyKhz,
-                        radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
-                        radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
-                }
-                else
-                {
-                    frequenciesData.Add((frequencyKhz,
-                        radioStationData.RadioStation.Preset.TxPower_UHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
-                        radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
-                }
+                var txPowerWatts = radioStationData.RadioStation.Preset.GetTxPower(GetRadioType(frequencyKhz));
+                frequenciesData.Add((frequencyKhz,
+                    txPowerWatts, radioStationData.RadioStation.Ppm,
+                    position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
+                    radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
             }
 
             if (frequenciesData.Count == 0)
@@ -1730,13 +1721,22 @@ public class OpenFreqService : IOpenFreqService
         return ApplyDcsLineOfSightLoss(audioParams, dcsLineOfSight);
     }
 
+    // AM/FM-aware radio-type classification, shared by TX power and RX sensitivity lookups
+    // below: FM (see FastPathAudioSim.bandConfigs for which real bands are FM) typically runs
+    // more TX power and has worse RX sensitivity than AM at the same band, per
+    // RadioStationPreset.GetTxPower/GetRxSensitivity.
+    private static BackgroundNoiseGenerator.RadioType GetRadioType(int frequencyKhz) =>
+        FastPathAudioSim.GetBandConfig(frequencyKhz).Modulation == ModulationType.FM
+            ? BackgroundNoiseGenerator.RadioType.FM
+            : RadioStationPreset.IsVHF(frequencyKhz)
+                ? BackgroundNoiseGenerator.RadioType.VHF_AM
+                : BackgroundNoiseGenerator.RadioType.UHF_AM;
+
     private static double GetReceiverSensitivityDb(int frequencyKhz, TunedFrequencyData? receiverData)
     {
         if (receiverData != null)
         {
-            return RadioStationPreset.IsVHF(frequencyKhz)
-                ? receiverData.RadioStation.Preset.RxSensitivity_VHF_dBm
-                : receiverData.RadioStation.Preset.RxSensitivity_UHF_dBm;
+            return receiverData.RadioStation.Preset.GetRxSensitivity(GetRadioType(frequencyKhz));
         }
 
         return RadioStationPreset.IsVHF(frequencyKhz) ? -113.0d : -107.0d;
@@ -1799,7 +1799,7 @@ public class OpenFreqService : IOpenFreqService
         if (distanceNm > 220.0d)
             extraLossDb += (distanceNm - 220.0d) * 0.75d;
 
-        var horizonMeters = CalculateRadioHorizonMeters(ownDcsPosition.Y, remote.Y);
+        var horizonMeters = FastPathAudioSim.CalculateRadioHorizonMeters(ownDcsPosition.Y, remote.Y);
         if (horizonMeters > 1.0d)
         {
             var horizonRatio = distanceMeters / horizonMeters;
@@ -1821,15 +1821,6 @@ public class OpenFreqService : IOpenFreqService
 
         if (audioParams.ReceivedSnrDb <= -18.0f)
             audioParams.SignalBlocked = true;
-    }
-
-    private static double CalculateRadioHorizonMeters(double txAltitudeMsl, double rxAltitudeMsl)
-    {
-        const double effectiveEarthRadiusMeters = 6378000.0d * 4.0d / 3.0d;
-        var txHeight = Math.Max(2.0d, txAltitudeMsl);
-        var rxHeight = Math.Max(2.0d, rxAltitudeMsl);
-        return Math.Sqrt(2.0d * effectiveEarthRadiusMeters * txHeight) +
-               Math.Sqrt(2.0d * effectiveEarthRadiusMeters * rxHeight);
     }
 
     private static void ApplyAttenuation(AudioParams audioParams, double attenuationDb)

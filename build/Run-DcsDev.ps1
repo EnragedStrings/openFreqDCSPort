@@ -29,10 +29,6 @@ if (!$SkipSync) {
     & (Join-Path $repoRoot "installer\windows\Install-DcsExport.ps1") `
         -SourceRoot $SourceRoot `
         -SavedGamesNames $SavedGamesNames
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "DCS export sync failed with exit code $LASTEXITCODE"
-    }
 }
 
 $runner = if ($Watch) { "watch run" } else { "run" }

@@ -97,6 +97,13 @@ public interface IOpenFreqService : IDisposable
 
     void SetSquelch(int frequencyKhz, Guid slotId, bool isSquelchClosed);
 
+    /// <summary>
+    /// Configure KY-58/COMSEC encryption and HAVE QUICK state for a tuned radio slot. Applies to
+    /// both what this slot transmits (attached to outgoing <see cref="OpenFreq.Common.FrequencyTransmission"/>)
+    /// and how it receives (gates/decodes incoming transmissions per the TRANSEC/COMSEC layering).
+    /// </summary>
+    void SetEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable);
+
     public enum OpenFreqStatus
     {
         Connected,

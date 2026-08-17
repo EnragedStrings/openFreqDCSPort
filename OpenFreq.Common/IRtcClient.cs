@@ -42,7 +42,7 @@ public interface IRtcClient : IDisposable
     void SendAudio(
         Memory<short> pcmData,
         List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-            Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)> frequencies,
+            Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)> frequencies,
         bool in3d);
 }
 

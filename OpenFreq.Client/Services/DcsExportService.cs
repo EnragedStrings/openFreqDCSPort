@@ -482,7 +482,10 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         Math.Abs(oldRadio.Volume - newRadio.Volume) > 0.01d ||
         oldRadio.IsOn != newRadio.IsOn ||
         oldRadio.Ptt != newRadio.Ptt ||
-        oldRadio.Name != newRadio.Name;
+        oldRadio.Name != newRadio.Name ||
+        oldRadio.Enc != newRadio.Enc ||
+        oldRadio.EncKey != newRadio.EncKey ||
+        oldRadio.HqOn != newRadio.HqOn;
 
     private void ChangeState(ServiceState newState)
     {

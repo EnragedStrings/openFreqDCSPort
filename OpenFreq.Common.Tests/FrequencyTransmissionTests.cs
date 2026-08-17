@@ -59,4 +59,23 @@ public class FrequencyTransmissionTests
         Assert.Null(ft.Position);
         Assert.Null(ft.Velocity);
     }
+
+    [Fact]
+    public void DefaultConstructor_EncryptionFieldsDefaultToClear()
+    {
+        var ft = new FrequencyTransmission();
+        Assert.False(ft.Enc);
+        Assert.Equal(0, ft.EncKey);
+        Assert.False(ft.HqOn);
+    }
+
+    [Fact]
+    public void Constructor_EncryptionFields_Preserved()
+    {
+        var ft = new FrequencyTransmission(251000, 10, 0, null, null, false,
+            enc: true, encKey: 4, hqOn: true);
+        Assert.True(ft.Enc);
+        Assert.Equal(4, ft.EncKey);
+        Assert.True(ft.HqOn);
+    }
 }

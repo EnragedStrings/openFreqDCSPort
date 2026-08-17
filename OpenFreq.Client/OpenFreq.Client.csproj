@@ -23,6 +23,9 @@
         <EmbeddedResource Include="..\DCS\OpenFreqDCS\**\*">
             <LogicalName>DCS/OpenFreqDCS/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
         </EmbeddedResource>
+        <EmbeddedResource Include="Assets\AudioEffects\*.wav">
+            <LogicalName>AudioEffects/%(Filename)%(Extension)</LogicalName>
+        </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ($([MSBuild]::IsOSPlatform('Windows')) And '$(RuntimeIdentifier)' == '')">

@@ -357,21 +357,43 @@ end
 local function tryGetArc210DisplayFrequencyFromIndicator(indicatorId)
     local values, raw = getListIndicatorValues(indicatorId)
     if not values then
-        return nil, raw, indicatorId
+        return nil, raw, indicatorId, nil
     end
 
     local mhz = tonumber(values.freq_label_mhz)
     local khz = tonumber(values.freq_label_khz)
     if not mhz or not khz then
-        return nil, raw, indicatorId
+        return nil, raw, indicatorId, values
     end
 
     local frequency = (mhz * 1000000) + (khz * 1000)
     if frequency <= 1000 then
-        return nil, raw, indicatorId
+        return nil, raw, indicatorId, values
     end
 
-    return frequency, raw, indicatorId
+    return frequency, raw, indicatorId, values
+end
+
+-- KY-58/COMSEC state for the ARC-210, read from the same list_indication values used for its
+-- frequency display. comsec_submode: "PT" = plain text, "CT" = cipher text, "CT-TD" = cipher
+-- text with Have Quick (time data) frequency hopping. Mirrors DCS-SRS's A10C2.lua interpretation
+-- of indicator 18.
+local function getArc210ComsecState(values)
+    if not values or not values.comsec_submode then
+        return false, nil, false
+    end
+
+    local submode = values.comsec_submode
+    local encKey = tonumber(values.ky_submode_label)
+
+    if submode == "CT" then
+        return true, encKey, false
+    elseif submode == "CT-TD" then
+        return true, encKey, true
+    end
+
+    -- "PT" (plain text) or any other/unrecognized submode
+    return false, encKey, false
 end
 
 local function scanArc210DisplayIndicator()
@@ -407,9 +429,9 @@ local function getArc210DisplayFrequencyHz()
     local tried = {}
 
     if OpenFreqDCS.arc210IndicatorId then
-        local frequency, raw, indicatorId = tryGetArc210DisplayFrequencyFromIndicator(OpenFreqDCS.arc210IndicatorId)
+        local frequency, raw, indicatorId, values = tryGetArc210DisplayFrequencyFromIndicator(OpenFreqDCS.arc210IndicatorId)
         if frequency then
-            return frequency, raw, indicatorId
+            return frequency, raw, indicatorId, values
         end
         tried[OpenFreqDCS.arc210IndicatorId] = true
     end
@@ -417,11 +439,11 @@ local function getArc210DisplayFrequencyHz()
     if type(configuredIds) == "table" then
         for _, indicatorId in ipairs(configuredIds) do
             if type(indicatorId) == "number" and not tried[indicatorId] then
-                local frequency, raw, foundIndicatorId = tryGetArc210DisplayFrequencyFromIndicator(indicatorId)
+                local frequency, raw, foundIndicatorId, values = tryGetArc210DisplayFrequencyFromIndicator(indicatorId)
                 if frequency then
                     OpenFreqDCS.arc210IndicatorId = foundIndicatorId
                     OpenFreqDCS.arc210IndicatorScanSummary = "configured:" .. tostring(foundIndicatorId)
-                    return frequency, raw, foundIndicatorId
+                    return frequency, raw, foundIndicatorId, values
                 end
                 tried[indicatorId] = true
             end
@@ -434,7 +456,7 @@ local function getArc210DisplayFrequencyHz()
         return scanArc210DisplayIndicator()
     end
 
-    return nil, nil, nil
+    return nil, nil, nil, nil
 end
 
 local function getDeviceModulation(device, fallback)
@@ -521,7 +543,7 @@ local function buildA10C2Radios()
     local arc210Frequency, arc210RawFrequency, arc210IsOn = getDeviceFrequencyHz(arc210, 5000, requireDevicePower)
     local arc164Frequency, arc164RawFrequency, arc164IsOn = getDeviceFrequencyHz(arc164, 5000, requireDevicePower)
     local arc186Frequency, arc186RawFrequency, arc186IsOn = getDeviceFrequencyHz(arc186, 5000, requireDevicePower)
-    local arc210DisplayFrequency, arc210DisplayRaw, arc210DisplayIndicator = getArc210DisplayFrequencyHz()
+    local arc210DisplayFrequency, arc210DisplayRaw, arc210DisplayIndicator, arc210DisplayValues = getArc210DisplayFrequencyHz()
     local arc210DialFrequency = getArc210DialFrequencyHz(mainPanel)
     local arc164DialFrequency = getArc164DialFrequencyHz(mainPanel)
     if arc210DisplayFrequency then
@@ -531,6 +553,42 @@ local function buildA10C2Radios()
     end
     if arc164DialFrequency then
         arc164Frequency = arc164DialFrequency
+    end
+
+    -- ARC-210 built-in COMSEC (independent of the shared external KY-58 unit below)
+    local arc210Enc, arc210EncKey, arc210HqOn = getArc210ComsecState(arc210DisplayValues)
+
+    -- KY-58 Radio Encryption: shared external unit, switchable between the ARC-164 (UHF) and
+    -- ARC-186 (VHF-FM). Mirrors DCS-SRS's A10C2.lua cockpit argument mapping (784 power/OP,
+    -- 783 mode/zeroize, 781 crad selector, 782 key channel, 149 EMER selector, 167 UHF freq
+    -- mode selector) rather than reverse-engineering new argument IDs.
+    local uhfFreqModeSelector = getSelectorIndex(mainPanel, 167, 0.1)
+    local ky58Power = getArgument(mainPanel, 784, 0)
+    local ky58Mode = getArgument(mainPanel, 783, 0)
+    local arc164Enc, arc164EncKey = false, nil
+    local arc186Enc, arc186EncKey = false, nil
+
+    if ky58Power and ky58Power > 0.5 and ky58Mode == 0 then
+        -- Mode switch set to OP and powered on
+        local cradSelector = getArgument(mainPanel, 781, 0)
+        local emerSelector = getSelectorIndex(mainPanel, 149, 0.1)
+        local channel = getSelectorIndex(mainPanel, 782, 0.1)
+        channel = channel and (channel + 1) or nil
+
+        -- crad/2 (VHF-FM): matches DCS-SRS's condition verbatim, including its own comment
+        -- ("encryption disabled when EMER AM/FM selected") even though the >= 2 check reads as
+        -- the opposite at a glance — this is the proven-working cockpit argument behavior.
+        local targetsArc186 = roundToStep(cradSelector or 0, 0.1) == 0.2 and emerSelector ~= nil and emerSelector >= 2
+        -- crad/1 (UHF): disabled when the UHF frequency-mode selector is set to GRD (index 2)
+        local targetsArc164 = cradSelector == 0 and uhfFreqModeSelector ~= 2
+
+        if targetsArc186 and channel then
+            arc186Enc = true
+            arc186EncKey = channel
+        elseif targetsArc164 and channel then
+            arc164Enc = true
+            arc164EncKey = channel
+        end
     end
 
     local now = callGlobal("LoGetModelTime", 0)
@@ -547,16 +605,24 @@ local function buildA10C2Radios()
         ))
     end
 
+    local arc210Modulation = getDeviceModulation(arc210, 0)
+    if arc210HqOn then
+        arc210Modulation = 4 -- Have Quick
+    end
+
     return {
         {
             slot = 1,
             name = "ARC-210",
             frequencyHz = arc210Frequency,
             secondaryFrequencyHz = getArc210GuardHz(mainPanel),
-            modulation = getDeviceModulation(arc210, 0),
+            modulation = arc210Modulation,
             volume = getVolume(mainPanel, 238, 225, 226),
             isOn = getDevicePower(arc210, arc210Frequency, arc210IsOn),
-            ptt = ptt.arc210
+            ptt = ptt.arc210,
+            enc = arc210Enc,
+            encKey = arc210EncKey,
+            hqOn = arc210HqOn
         },
         {
             slot = 2,
@@ -566,7 +632,10 @@ local function buildA10C2Radios()
             modulation = getDeviceModulation(arc164, 0),
             volume = getVolume(mainPanel, 171, 238, 227, 228),
             isOn = getDevicePower(arc164, arc164Frequency, arc164IsOn),
-            ptt = ptt.arc164
+            ptt = ptt.arc164,
+            enc = arc164Enc,
+            encKey = arc164EncKey,
+            hqOn = false
         },
         {
             slot = 3,
@@ -576,7 +645,10 @@ local function buildA10C2Radios()
             modulation = getDeviceModulation(arc186, 1),
             volume = getVolume(mainPanel, 147, 238, 223, 224),
             isOn = getDevicePower(arc186, arc186Frequency, arc186IsOn),
-            ptt = ptt.arc186
+            ptt = ptt.arc186,
+            enc = arc186Enc,
+            encKey = arc186EncKey,
+            hqOn = false
         }
     }
 end

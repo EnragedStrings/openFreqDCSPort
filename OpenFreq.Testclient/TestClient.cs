@@ -293,10 +293,11 @@ public class TestClientWrapper : IDisposable
         Marshal.Copy(buffer, audioData, 0, audioData.Length);
         // Send complete frame to all transmitting frequencies
         var transmitData = new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position,
-            Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)>();
+            Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey,
+            bool hqOn)>();
         foreach (var frequency in _isTransmitting.Keys)
         {
-            transmitData.Add((frequency, 50, 0, new Vector3(), null, null, AmbientNoiseType.None));
+            transmitData.Add((frequency, 50, 0, new Vector3(), null, null, AmbientNoiseType.None, false, 0, false));
         }
         _client.SendAudio(audioData, transmitData, false);
 

@@ -13,6 +13,13 @@ public class DcsRadioState
     public bool IsOn { get; set; }
     public bool Ptt { get; set; }
 
+    /// <summary>KY-58/COMSEC encryption engaged for this radio.</summary>
+    public bool Enc { get; set; }
+    /// <summary>Encryption key channel (1-6). 0 = none/not applicable.</summary>
+    public int EncKey { get; set; }
+    /// <summary>HAVE QUICK frequency-hopping engaged for this radio.</summary>
+    public bool HqOn { get; set; }
+
     public int FrequencyKhz => (int)Math.Round(FrequencyHz / 1000d);
     public int SecondaryFrequencyKhz => (int)Math.Round(SecondaryFrequencyHz / 1000d);
 
@@ -27,7 +34,10 @@ public class DcsRadioState
             Modulation = Modulation,
             Volume = Volume,
             IsOn = IsOn,
-            Ptt = Ptt
+            Ptt = Ptt,
+            Enc = Enc,
+            EncKey = EncKey,
+            HqOn = HqOn
         };
     }
 }

@@ -385,7 +385,7 @@ public class OpenFreqRtcClient : IRtcClient
         _rtpSender!.MarkTransmitStartTime();
     }
 
-    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)> frequencies, bool in3d)
+    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)> frequencies, bool in3d)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -398,7 +398,10 @@ public class OpenFreqRtcClient : IRtcClient
                 velocity: freq.velocity,
                 ambientNoiseType: freq.ambientNoiseType,
                 dcsPosition: freq.dcsPosition,
-                in3d: in3d
+                in3d: in3d,
+                enc: freq.enc,
+                encKey: freq.encKey,
+                hqOn: freq.hqOn
             ));
         }
 

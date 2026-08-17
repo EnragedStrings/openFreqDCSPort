@@ -135,6 +135,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 if (!string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId))
                     _settings.SetDcsRadioPan(dcsChannel.DcsRadioId, m.Pan);
             });
+        WeakReferenceMessenger.Default.Register<ChannelEncryptionUpdateMessage>(this,
+            (r, m) => _openFreqService.SetEncryption(m.FrequencyKhz, m.ChannelId, m.Enc, m.EncKey, m.HqOn,
+                m.CryptoCapable));
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationSelectionRequestedMessage>(this,
             (r, m) => SelectedLocation = Locations.FirstOrDefault(g => g.Id == m.LocationId));
     }
@@ -581,19 +584,26 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             frequencyKhz: radio.FrequencyKhz,
             shouldBeJoined: IsUsableDcsRadio(radio),
             volume: radio.Volume,
-            allowTransmit: true);
+            allowTransmit: true,
+            enc: radio.Enc,
+            encKey: radio.EncKey,
+            hqOn: radio.HqOn);
 
+        // Guard is a fixed emergency frequency, never encrypted.
         SyncDcsChannelOnUiThread(
             key: GetDcsRadioKey(radio, secondary: true),
             name: $"{radio.Name} Guard",
             frequencyKhz: radio.SecondaryFrequencyKhz,
             shouldBeJoined: IsUsableDcsRadio(radio) && radio.SecondaryFrequencyKhz > 0,
             volume: radio.Volume,
-            allowTransmit: false);
+            allowTransmit: false,
+            enc: false,
+            encKey: 0,
+            hqOn: false);
     }
 
     private void SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,
-        double volume, bool allowTransmit)
+        double volume, bool allowTransmit, bool enc, int encKey, bool hqOn)
     {
         if (DcsLocation == null) return;
 
@@ -623,6 +633,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         channel.Name = name;
         channel.FrequencyKhz = targetFrequencyKhz;
+        channel.CryptoCapable = true;
+        channel.Enc = enc;
+        channel.EncKey = encKey;
+        channel.HqOn = hqOn;
 
         if (!allowTransmit)
         {

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,6 +43,12 @@ public class OpenFreqService : IOpenFreqService
     {
         public RadioStationData RadioStation { get; set; } = radioStation;
         public bool IsEnabled { get; set; } = isEnabled;
+
+        // KY-58/COMSEC + HAVE QUICK state for this slot, used to tag outgoing transmissions.
+        // (Receive-side gating lives entirely in IPlaybackService/RadioPlayback.)
+        public bool Enc { get; set; }
+        public int EncKey { get; set; }
+        public bool HqOn { get; set; }
     }
 
     // Keyed by (frequencyKhz, slotId) so multiple radio sets can tune the same frequency independently.
@@ -384,6 +391,9 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.SidetoneVolume = (float)SidetoneVolume;
         _playbackService.AmbientNoiseVolume = (float)AmbientNoiseVolume;
         _playbackService.OwnVoiceSfxEnabled = ApplyOwnVoiceSfx;
+        _playbackService.SetEncryptionToneAssets(
+            LoadEmbeddedAudioAsset("AudioEffects/KY_58_TX.wav"),
+            LoadEmbeddedAudioAsset("AudioEffects/KY_58_RX.wav"));
         _isInitialized = true;
 
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
@@ -720,6 +730,10 @@ public class OpenFreqService : IOpenFreqService
             return;
         }
 
+        // "Modified PTT tone": local cue that this transmission is encrypted.
+        if (tunedFrequencyData.Enc)
+            _playbackService.PlayTxTone();
+
         // Whether we're transitioning from idle → transmitting (i.e. first active TX).
         bool wasIdle = _activeTransmissionsAndMutedFrequencies.IsEmpty;
 
@@ -914,6 +928,18 @@ public class OpenFreqService : IOpenFreqService
         _playbackService?.SetSquelchLevel(frequencyKhz, slotId, isSquelchClosed ? 1f : 0f);
     }
 
+    public void SetEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
+    {
+        if (_tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData))
+        {
+            tunedFrequencyData.Enc = enc;
+            tunedFrequencyData.EncKey = encKey;
+            tunedFrequencyData.HqOn = hqOn;
+        }
+
+        _playbackService?.SetSlotEncryption(frequencyKhz, slotId, enc, encKey, hqOn, cryptoCapable);
+    }
+
     public void SetOwnPositionMode(IOpenFreqService.Mode newMode)
     {
         if (newMode == OwnPositionMode) return;
@@ -1103,7 +1129,7 @@ public class OpenFreqService : IOpenFreqService
             // Send to ALL active frequencies
             var frequenciesData =
                 new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-                    Vector3? dcsPosition, AmbientNoiseType ambientNoiseType)>();
+                    Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)>();
 
             // List of frequencies that got disabled in the meantime
             var disabledFrequencies = new List<int>();
@@ -1133,13 +1159,15 @@ public class OpenFreqService : IOpenFreqService
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_VHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType));
+                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
+                        radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
                 }
                 else
                 {
                     frequenciesData.Add((frequencyKhz,
                         radioStationData.RadioStation.Preset.TxPower_UHF_W, radioStationData.RadioStation.Ppm,
-                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType));
+                        position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
+                        radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
                 }
             }
 
@@ -1329,6 +1357,20 @@ public class OpenFreqService : IOpenFreqService
             default:
                 return null;
         }
+    }
+
+    /// <summary>Loads a bundled encryption tone asset embedded via the AudioEffects/ logical name
+    /// prefix (see OpenFreq.Client.csproj). Returns null if not found — encryption tones are then
+    /// simply skipped rather than the app failing to start.</summary>
+    private static byte[]? LoadEmbeddedAudioAsset(string logicalName)
+    {
+        var assembly = typeof(OpenFreqService).Assembly;
+        using var stream = assembly.GetManifestResourceStream(logicalName);
+        if (stream == null) return null;
+
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ms.ToArray();
     }
 
     private void OnPlaybackUserFacingError(string message)
@@ -1566,7 +1608,8 @@ public class OpenFreqService : IOpenFreqService
             var ambientNoiseType = Apply3dAudioEffects ? frequencyTransmission.AmbientNoiseType : AmbientNoiseType.None;
 
             // Push audio data immediately
-            _playbackService?.PushAudioData(streamId, e.AudioData, ambientNoiseType);
+            _playbackService?.PushAudioData(streamId, e.AudioData, ambientNoiseType,
+                frequencyTransmission.Enc, frequencyTransmission.EncKey, frequencyTransmission.HqOn);
         }
     }
 

@@ -123,6 +123,30 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public bool ShowManualPanControl =>
         RadioStationData.Type == RadioStationData.RadioStationType.DCS;
 
+    /// <summary>KY-58/COMSEC encryption engaged. Synced automatically from the cockpit for DCS
+    /// channels; user-editable for manually-created (GCI/stationary/BMS) channels.</summary>
+    [ObservableProperty] public partial bool Enc { get; set; }
+
+    /// <summary>Encryption key channel (1-6). 0 = none.</summary>
+    [ObservableProperty] public partial int EncKey { get; set; } = 1;
+
+    /// <summary>Selectable key channels for the manual encryption key picker.</summary>
+    public static int[] EncKeyOptions { get; } = [1, 2, 3, 4, 5, 6];
+
+    /// <summary>HAVE QUICK frequency-hopping engaged.</summary>
+    [ObservableProperty] public partial bool HqOn { get; set; }
+
+    /// <summary>Whether this channel can decrypt/encrypt at all. Defaults to true — both DCS
+    /// channels (the cockpit has a KY-58/COMSEC panel) and manually-created GCI/stationary
+    /// channels (assumed to represent a station with compatible secure comms gear) can attempt
+    /// to decrypt; <see cref="Enc"/>/<see cref="EncKey"/> determine whether they actually do.</summary>
+    [ObservableProperty] public partial bool CryptoCapable { get; set; } = true;
+
+    /// <summary>Only DCS-sourced channels sync Enc/EncKey/HqOn/CryptoCapable automatically; other
+    /// types expose them as user-editable controls.</summary>
+    public bool ShowManualEncryptionControls =>
+        RadioStationData.Type != RadioStationData.RadioStationType.DCS;
+
     [ObservableProperty] public partial bool IsSquelchEnabled { get; set; } = true;
 
     // Store original values when entering edit mode
@@ -320,6 +344,17 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Send(new ChannelPanUpdateMessage(Id, FrequencyKhz, value));
     }
 
+    partial void OnEncChanged(bool value) => SendEncryptionUpdate();
+    partial void OnEncKeyChanged(int value) => SendEncryptionUpdate();
+    partial void OnHqOnChanged(bool value) => SendEncryptionUpdate();
+    partial void OnCryptoCapableChanged(bool value) => SendEncryptionUpdate();
+
+    private void SendEncryptionUpdate()
+    {
+        WeakReferenceMessenger.Default.Send(
+            new ChannelEncryptionUpdateMessage(Id, FrequencyKhz, Enc, EncKey, HqOn, CryptoCapable));
+    }
+
     private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
@@ -436,4 +471,20 @@ public class ChannelPanUpdateMessage(Guid channelId, int frequencyKhz, int pan)
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
     public int Pan { get; } = pan;
+}
+
+public class ChannelEncryptionUpdateMessage(
+    Guid channelId,
+    int frequencyKhz,
+    bool enc,
+    int encKey,
+    bool hqOn,
+    bool cryptoCapable)
+{
+    public Guid ChannelId { get; } = channelId;
+    public int FrequencyKhz { get; } = frequencyKhz;
+    public bool Enc { get; } = enc;
+    public int EncKey { get; } = encKey;
+    public bool HqOn { get; } = hqOn;
+    public bool CryptoCapable { get; } = cryptoCapable;
 }

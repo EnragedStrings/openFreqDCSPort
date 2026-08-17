@@ -34,12 +34,16 @@ public interface IPlaybackService
     void SetSquelchLevel(int frequencyKhz, Guid slotId, float squelchLevel);
     void SetFrequencyVolume(int frequencyKhz, Guid slotId, float volume);
     void SetFrequencyPan(int frequencyKhz, Guid slotId, int pan);
+    void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable);
+    void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes);
+    void PlayTxTone();
 
     void AddTransmittingFrequencies(IEnumerable<int> frequencies);
     void RemoveTransmittingFrequencies(IEnumerable<int> frequencies);
 
     void StartPushStream(string streamId, int sampleRate, int channels, AudioParams audioParams);
-    bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None);
+    bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None,
+        bool enc = false, int encKey = 0, bool hqOn = false);
     void UpdateStreamParams(string streamId, AudioParams newParams);
     void ClearStreamBuffer(string streamId);
     Task StopStream(string streamId);
@@ -93,6 +97,11 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
         => _inner.SetFrequencyVolume(frequencyKhz, slotId, volume);
     public void SetFrequencyPan(int frequencyKhz, Guid slotId, int pan)
         => _inner.SetFrequencyPan(frequencyKhz, slotId, pan);
+    public void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
+        => _inner.SetSlotEncryption(frequencyKhz, slotId, enc, encKey, hqOn, cryptoCapable);
+    public void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes)
+        => _inner.SetEncryptionToneAssets(txWavBytes, rxWavBytes);
+    public void PlayTxTone() => _inner.PlayTxTone();
 
     public void AddTransmittingFrequencies(IEnumerable<int> frequencies)
         => _inner.AddTransmittingFrequencies(frequencies);
@@ -101,8 +110,9 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
 
     public void StartPushStream(string streamId, int sampleRate, int channels, AudioParams audioParams)
         => _inner.StartPushStream(streamId, sampleRate, channels, audioParams);
-    public bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None)
-        => _inner.PushAudioData(streamId, audioData, ambientNoise);
+    public bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None,
+        bool enc = false, int encKey = 0, bool hqOn = false)
+        => _inner.PushAudioData(streamId, audioData, ambientNoise, enc, encKey, hqOn);
     public void UpdateStreamParams(string streamId, AudioParams newParams)
         => _inner.UpdateStreamParams(streamId, newParams);
     public void ClearStreamBuffer(string streamId) => _inner.ClearStreamBuffer(streamId);

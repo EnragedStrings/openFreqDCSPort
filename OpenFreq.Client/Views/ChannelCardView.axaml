@@ -144,6 +144,25 @@
                         </Panel>
                     </Border>
 
+                    <!-- Encryption / HAVE QUICK Badge -->
+                    <Border Background="{DynamicResource MaterialPrimaryLightBrush}"
+                            CornerRadius="4"
+                            Padding="8,4"
+                            IsVisible="{Binding Enc}"
+                            ToolTip.Tip="KY-58/COMSEC encrypted">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock Text="{Binding EncKey, StringFormat=ENC {0}}"
+                                       Classes="Body2"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="HQ"
+                                       IsVisible="{Binding HqOn}"
+                                       Classes="Body2"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- Clickable Hotkey Button - Click to set/change hotkey -->
                     <Button Command="{Binding BeginCaptureHotkeyCommand}"
 
@@ -285,6 +304,24 @@
                         <controls1:AudioChannelSelector Pan="{Binding Pan}" />
                     </StackPanel>
                 </Grid>
+
+                <!-- Encryption / HAVE QUICK — manual channels only (DCS channels sync automatically) -->
+                <StackPanel Spacing="6" IsVisible="{Binding ShowManualEncryptionControls}">
+                    <TextBlock Text="ENCRYPTION"
+                               Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <CheckBox Content="Encrypted" IsChecked="{Binding Enc}" />
+                        <ComboBox ItemsSource="{Binding EncKeyOptions}"
+                                  SelectedItem="{Binding EncKey}"
+                                  Width="70"
+                                  IsEnabled="{Binding Enc}"
+                                  ToolTip.Tip="KY-58 key channel (1-6)" />
+                        <CheckBox Content="HAVE QUICK" IsChecked="{Binding HqOn}" />
+                    </StackPanel>
+                </StackPanel>
 
                 <!-- Quick Presets -->
                 <StackPanel Spacing="6">

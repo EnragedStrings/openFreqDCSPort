@@ -115,6 +115,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public partial double MasterVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool SidetoneEnabled { get; set; } = false;
     [ObservableProperty] public partial bool MicNormalizationEnabled { get; set; } = true;
+
+    /// <summary>When true, per-channel Volume/Squelch controls in the UI override the
+    /// cockpit-driven values for DCS/BMS channels. When false (default), cockpit controls win
+    /// and manual per-channel controls are disabled for those channels.</summary>
+    [ObservableProperty] public partial bool DcsManualRadioControlOverride { get; set; } = false;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(InputGainText))]
     [NotifyPropertyChangedFor(nameof(InputGainDb))]
@@ -550,6 +555,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MinimizeOnConnect = settings.MinimizeOnConnect;
         AmbientNoiseVolume = settings.AmbientNoiseVolume;
         AutoRecordInGameMode = settings.AutoRecordInGameMode;
+        DcsManualRadioControlOverride = settings.DcsManualRadioControlOverride;
         // Keep the computed AppData default when no path was saved.
         if (!string.IsNullOrWhiteSpace(settings.RecordingPath))
             RecordingPath = settings.RecordingPath;
@@ -747,6 +753,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MinimizeOnConnect = MinimizeOnConnect,
             AmbientNoiseVolume = AmbientNoiseVolume,
             AutoRecordInGameMode = AutoRecordInGameMode,
+            DcsManualRadioControlOverride = DcsManualRadioControlOverride,
             RecordingPath = RecordingPath,
             CaptureSink = StreamToDevice
                 ? IOpenFreqService.CaptureSink.Device

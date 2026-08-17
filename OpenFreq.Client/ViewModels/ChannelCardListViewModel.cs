@@ -138,6 +138,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Register<ChannelEncryptionUpdateMessage>(this,
             (r, m) => _openFreqService.SetEncryption(m.FrequencyKhz, m.ChannelId, m.Enc, m.EncKey, m.HqOn,
                 m.CryptoCapable));
+        WeakReferenceMessenger.Default.Register<ChannelVolumeUpdateMessage>(this,
+            (r, m) => _openFreqService.SetVolume(m.FrequencyKhz, m.ChannelId, (float)m.Volume));
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationSelectionRequestedMessage>(this,
             (r, m) => SelectedLocation = Locations.FirstOrDefault(g => g.Id == m.LocationId));
     }
@@ -659,7 +661,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                     .Wait(TimeSpan.FromMilliseconds(500));
             }
 
-            _openFreqService.SetVolume(channel.FrequencyKhz, channel.Id, (float)volume);
+            // Cockpit drives volume by default; the manual-override setting lets the channel's
+            // own Volume control (see ChannelCardViewModel) take over instead. Squelch has no
+            // known DCS cockpit source yet, so it stays UI-driven regardless of this setting.
+            if (!_settings.DcsManualRadioControlOverride)
+            {
+                channel.Volume = volume;
+            }
             _openFreqService.SetPan(channel.FrequencyKhz, channel.Id, channel.Pan);
         }
         else if (channel.ConnectionStatus == Channel.ChannelConnectionStatus.Connected)

@@ -41,7 +41,7 @@
         <Panel>
             <!-- READ-ONLY VIEW (Default) -->
             <Grid ColumnDefinitions="*,Auto"
-                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                   IsVisible="{Binding !IsEditing}">
 
                 <!-- Header Row: Channel Name + Toggle + Edit Button -->
@@ -194,12 +194,13 @@
                       Margin="0,5,0,0"
                       IsVisible="{Binding Settings.Is3dMode}">
 
-                    <!-- Numeric signal + SNR readout, for debugging -->
+                    <!-- Numeric signal + SNR readout, for debugging. Shown for every channel type
+                         (including DCS/BMS, which are IsEditable=false) — this isn't an editing
+                         control, so it shouldn't be gated on editability. -->
                     <StackPanel Grid.Column="0"
                                 Orientation="Horizontal"
                                 Spacing="10"
-                                VerticalAlignment="Center"
-                                IsVisible="{Binding IsEditable}">
+                                VerticalAlignment="Center">
                         <TextBlock Text="{Binding SignalStrengthReceivedDb, StringFormat={}{0:F0} dBm}"
                                    FontSize="11"
                                    FontWeight="SemiBold"
@@ -210,8 +211,11 @@
                                    Foreground="{DynamicResource SystemAccentColor}" />
                     </StackPanel>
 
-                    <!-- Squelch Indicator - Only visible when connected -->
+                    <!-- Squelch toggle. Gated the same as Volume: no DCS cockpit squelch reading
+                         exists yet, so "cockpit default" is just squelch-on until that's added;
+                         the manual-override setting still governs whether the user can change it. -->
                     <Button Grid.Column="1" Command="{Binding ToggleSquelchCommand}"
+                            IsEnabled="{Binding CanAdjustRadioControls}"
                             BorderBrush="{DynamicResource MaterialDividerBrush}"
                             BorderThickness="1"
                             CornerRadius="4"
@@ -244,6 +248,26 @@
                                FontWeight="SemiBold"
                                LetterSpacing="1" />
                     <controls1:AudioChannelSelector Pan="{Binding Pan}" />
+                </StackPanel>
+
+                <!-- Volume: cockpit-driven by default for DCS channels (see the "Manual
+                     volume/squelch override" setting); always adjustable for manual channels. -->
+                <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2"
+                            Spacing="4"
+                            Margin="0,10,0,0">
+                    <TextBlock Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1">
+                        <Run Text="VOLUME " />
+                        <Run Text="{Binding VolumeDb, StringFormat={}{0:F1} dB}" />
+                    </TextBlock>
+                    <Slider Minimum="-40" Maximum="12"
+                            Value="{Binding VolumeDb}"
+                            TickFrequency="1"
+                            IsSnapToTickEnabled="False"
+                            IsEnabled="{Binding CanAdjustRadioControls}"
+                            ToolTip.Tip="Enable &quot;Manual volume/squelch override&quot; in Settings to adjust this for DCS-synced channels" />
                 </StackPanel>
             </Grid>
 
@@ -294,6 +318,23 @@
                         <controls1:AudioChannelSelector Pan="{Binding Pan}" />
                     </StackPanel>
                 </Grid>
+
+                <!-- Volume: cockpit-driven by default for DCS channels; always adjustable for
+                     manual channels. See the "Manual volume/squelch override" setting. -->
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="Caption"
+                               Opacity="0.55"
+                               FontWeight="SemiBold"
+                               LetterSpacing="1">
+                        <Run Text="VOLUME " />
+                        <Run Text="{Binding VolumeDb, StringFormat={}{0:F1} dB}" />
+                    </TextBlock>
+                    <Slider Minimum="-40" Maximum="12"
+                            Value="{Binding VolumeDb}"
+                            TickFrequency="1"
+                            IsSnapToTickEnabled="False"
+                            IsEnabled="{Binding CanAdjustRadioControls}" />
+                </StackPanel>
 
                 <!-- Encryption / HAVE QUICK — manual channels only (DCS channels sync automatically) -->
                 <StackPanel Spacing="6" IsVisible="{Binding ShowManualEncryptionControls}">

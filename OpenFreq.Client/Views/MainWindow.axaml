@@ -507,6 +507,21 @@
                                 <controls:Card>
                                     <StackPanel Margin="16">
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="VolumeHigh"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Radio Controls" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Manual volume/squelch override"
+                                                  IsChecked="{Binding Settings.DcsManualRadioControlOverride}"
+                                                  ToolTip.Tip="Off (default): the DCS cockpit volume knob controls each radio's volume. On: each channel's own Volume/Squelch controls take effect instead." />
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                             <avalonia:MaterialIcon Kind="KeyboardOutline"
                                                                    Width="16" Height="16"
                                                                    Margin="0,0,8,0"

@@ -56,4 +56,9 @@ public class OpenFreqSettings
     public bool ApplyOwnVoiceSfx { get; set; } = true;
     public bool? DarkMode { get; set; }
     public bool MinimizeOnConnect { get; set; } = true;
+
+    /// <summary>When true, manual per-channel Volume/Squelch controls in the UI take effect for
+    /// DCS/BMS-synced channels instead of the cockpit-driven values. Default false: cockpit
+    /// controls win.</summary>
+    public bool DcsManualRadioControlOverride { get; set; } = false;
 }

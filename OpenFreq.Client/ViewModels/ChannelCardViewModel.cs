@@ -126,6 +126,28 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public bool ShowManualPanControl =>
         RadioStationData.Type == RadioStationData.RadioStationType.DCS;
 
+    /// <summary>Linear volume gain (1.0 = unity/0 dB). For DCS/BMS channels this is normally
+    /// driven by the cockpit volume knob (see ChannelCardListViewModel.SyncDcsChannelOnUiThread);
+    /// it's only user-editable when <see cref="CanAdjustRadioControls"/> is true.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VolumeDb))]
+    public partial double Volume { get; set; } = 1.0;
+
+    /// <summary>Volume in dB (0 dB = unity), for the UI slider. Backed by <see cref="Volume"/>.</summary>
+    public double VolumeDb
+    {
+        get => Volume <= 0.0001 ? -80.0 : 20.0 * Math.Log10(Volume);
+        set => Volume = Math.Pow(10.0, value / 20.0);
+    }
+
+    /// <summary>Whether the Volume/Squelch controls are user-editable right now. Non-DCS channels
+    /// (GCI/stationary/BMS) have no cockpit to drive them and are always adjustable; DCS channels
+    /// are cockpit-driven by default and only become adjustable when the user has explicitly
+    /// enabled the manual-override setting.</summary>
+    public bool CanAdjustRadioControls =>
+        RadioStationData.Type != RadioStationData.RadioStationType.DCS ||
+        (Settings?.DcsManualRadioControlOverride ?? false);
+
     /// <summary>KY-58/COMSEC encryption engaged. Synced automatically from the cockpit for DCS
     /// channels; user-editable for manually-created (GCI/stationary/BMS) channels.</summary>
     [ObservableProperty] public partial bool Enc { get; set; }
@@ -348,6 +370,11 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Send(new ChannelPanUpdateMessage(Id, FrequencyKhz, value));
     }
 
+    partial void OnVolumeChanged(double value)
+    {
+        WeakReferenceMessenger.Default.Send(new ChannelVolumeUpdateMessage(Id, FrequencyKhz, value));
+    }
+
     partial void OnEncChanged(bool value) => SendEncryptionUpdate();
     partial void OnEncKeyChanged(int value) => SendEncryptionUpdate();
     partial void OnHqOnChanged(bool value) => SendEncryptionUpdate();
@@ -363,6 +390,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     {
         if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
             OnPropertyChanged(nameof(ShowManualPanControl));
+        if (e.PropertyName == nameof(SettingsViewModel.DcsManualRadioControlOverride))
+            OnPropertyChanged(nameof(CanAdjustRadioControls));
     }
 
     [RelayCommand]
@@ -475,6 +504,13 @@ public class ChannelPanUpdateMessage(Guid channelId, int frequencyKhz, int pan)
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
     public int Pan { get; } = pan;
+}
+
+public class ChannelVolumeUpdateMessage(Guid channelId, int frequencyKhz, double volume)
+{
+    public Guid ChannelId { get; } = channelId;
+    public int FrequencyKhz { get; } = frequencyKhz;
+    public double Volume { get; } = volume;
 }
 
 public class ChannelEncryptionUpdateMessage(

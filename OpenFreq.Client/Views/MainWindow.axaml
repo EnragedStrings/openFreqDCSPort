@@ -519,6 +519,149 @@
                                     </StackPanel>
                                 </controls:Card>
 
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="KeyboardOutline"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="DCS PTT Bindings" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <TextBlock Classes="InputLabel" Margin="0,0,0,8" TextWrapping="Wrap"
+                                                   Text="Global across every aircraft: Radio 1 always keys whichever radio is your first one, whether that's the A-10's ARC-210, the F-16's ARC-164, or the C-130's UHF1 -- same as a HOTAS button binding in real life. You can also bind a radio's PTT directly from its channel card once you're in the aircraft." />
+
+                                        <Grid ColumnDefinitions="70,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                                              RowSpacing="6">
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Radio 1" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="0" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio1PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio1PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio1PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="0" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio1PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Radio 2" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="1" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio2PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio2PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio2PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="1" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio2PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Radio 3" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="2" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio3PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio3PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio3PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="2" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio3PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Radio 4" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="3" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio4PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio4PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio4PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="3" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio4PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Radio 5" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="4" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio5PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio5PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio5PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="4" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio5PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Radio 6" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="5" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio6PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio6PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio6PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="5" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio6PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+
+                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Radio 7" VerticalAlignment="Center" Classes="InputLabel" Margin="0" />
+                                            <Button Grid.Row="6" Grid.Column="1"
+                                                    Command="{Binding BeginCaptureDcsRadio7PttHotkeyCommand}"
+                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    ToolTip.Tip="{Binding Settings.DcsRadio7PttHotkeyDisplay}">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="16" Height="16" />
+                                                    <TextBlock Text="{Binding Settings.DcsRadio7PttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Row="6" Grid.Column="2" Content="Clear"
+                                                    Command="{Binding ClearDcsRadio7PttHotkeyCommand}"
+                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+                                        </Grid>
+                                    </StackPanel>
+                                </controls:Card>
+
                                 <controls1:RecordingSettingsCard />
 
                                 <controls:Card>

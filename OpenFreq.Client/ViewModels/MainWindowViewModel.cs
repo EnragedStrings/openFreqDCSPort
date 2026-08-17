@@ -955,6 +955,56 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    // Seven global DCS TX PTT keybind slots -- see SettingsViewModel.DcsRadio1PttHotkey etc.
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio1PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio1PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio2PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio2PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio3PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio3PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio4PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio4PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio5PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio5PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio6PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio6PttHotkey = binding);
+
+    [RelayCommand]
+    private Task BeginCaptureDcsRadio7PttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.DcsRadio7PttHotkey = binding);
+
+    [RelayCommand]
+    private void ClearDcsRadio1PttHotkey() => Settings.DcsRadio1PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio2PttHotkey() => Settings.DcsRadio2PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio3PttHotkey() => Settings.DcsRadio3PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio4PttHotkey() => Settings.DcsRadio4PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio5PttHotkey() => Settings.DcsRadio5PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio6PttHotkey() => Settings.DcsRadio6PttHotkey = null;
+
+    [RelayCommand]
+    private void ClearDcsRadio7PttHotkey() => Settings.DcsRadio7PttHotkey = null;
+
     private async Task CaptureSettingsHotkeyAsync(Action<HotkeyBinding?> assign)
     {
         IsCapturingHotkey = true;

@@ -197,6 +197,64 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private Dictionary<string, int> _dcsRadioPans = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, HotkeyBinding> _dcsPttHotkeys = new(StringComparer.OrdinalIgnoreCase);
 
+    // Seven global TX PTT keybind slots, keyed by radio position (1-7, the max radio count across
+    // supported aircraft -- the C-130J-30, see DCS/README.md's "Supported aircraft" table).
+    // "Radio N" always means the same keybind regardless of which aircraft is active -- e.g.
+    // Radio 1 is the A-10's ARC-210 AND the F-16's ARC-164 AND the C-130's UHF1, whichever you're
+    // currently flying -- matching how a HOTAS button binding works in real life. Backed by the
+    // same _dcsPttHotkeys dictionary the per-channel-card PTT capture button (see
+    // ChannelCardListViewModel) already reads/writes, keyed by
+    // ChannelCardListViewModel.GetDcsRadioKey (just the slot number as a string), so editing a
+    // slot here or capturing it directly on a channel card both affect the same binding.
+    public HotkeyBinding? DcsRadio1PttHotkey
+    {
+        get => GetDcsPttHotkey("1");
+        set { SetDcsPttHotkey("1", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio1PttHotkeyDisplay)); }
+    }
+    public string DcsRadio1PttHotkeyDisplay => DcsRadio1PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio2PttHotkey
+    {
+        get => GetDcsPttHotkey("2");
+        set { SetDcsPttHotkey("2", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio2PttHotkeyDisplay)); }
+    }
+    public string DcsRadio2PttHotkeyDisplay => DcsRadio2PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio3PttHotkey
+    {
+        get => GetDcsPttHotkey("3");
+        set { SetDcsPttHotkey("3", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio3PttHotkeyDisplay)); }
+    }
+    public string DcsRadio3PttHotkeyDisplay => DcsRadio3PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio4PttHotkey
+    {
+        get => GetDcsPttHotkey("4");
+        set { SetDcsPttHotkey("4", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio4PttHotkeyDisplay)); }
+    }
+    public string DcsRadio4PttHotkeyDisplay => DcsRadio4PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio5PttHotkey
+    {
+        get => GetDcsPttHotkey("5");
+        set { SetDcsPttHotkey("5", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio5PttHotkeyDisplay)); }
+    }
+    public string DcsRadio5PttHotkeyDisplay => DcsRadio5PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio6PttHotkey
+    {
+        get => GetDcsPttHotkey("6");
+        set { SetDcsPttHotkey("6", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio6PttHotkeyDisplay)); }
+    }
+    public string DcsRadio6PttHotkeyDisplay => DcsRadio6PttHotkey?.DisplayName ?? "None";
+
+    public HotkeyBinding? DcsRadio7PttHotkey
+    {
+        get => GetDcsPttHotkey("7");
+        set { SetDcsPttHotkey("7", value); OnPropertyChanged(); OnPropertyChanged(nameof(DcsRadio7PttHotkeyDisplay)); }
+    }
+    public string DcsRadio7PttHotkeyDisplay => DcsRadio7PttHotkey?.DisplayName ?? "None";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
     public partial HotkeyBinding? BmsUhfSquelchHotkey { get; set; }

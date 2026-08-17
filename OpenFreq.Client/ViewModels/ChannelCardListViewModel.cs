@@ -203,6 +203,40 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                          .Where(c => c.BmsRadioType == RadioType.Radio2))
                 ch.Pan = _settings.BmsRadio2Pan;
         }
+        else if (e.PropertyName is nameof(SettingsViewModel.DcsRadio1PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio2PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio3PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio4PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio5PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio6PttHotkey)
+                 or nameof(SettingsViewModel.DcsRadio7PttHotkey))
+        {
+            ApplyDcsPttHotkeysOnUiThread();
+        }
+    }
+
+    /// <summary>Pushes the 7 global PTT keybind slots (SettingsViewModel.DcsRadio1PttHotkey etc.)
+    /// down to any currently-visible DCS channel cards -- needed because a channel's PttHotKey is
+    /// otherwise only set once, at creation (see SyncDcsChannelOnUiThread), so a keybind edited in
+    /// Settings while already sitting in a matching aircraft wouldn't otherwise take effect until
+    /// the next resync.</summary>
+    private void ApplyDcsPttHotkeysOnUiThread()
+    {
+        if (DcsLocation == null) return;
+
+        void Apply()
+        {
+            foreach (var channel in DcsLocation.Channels)
+            {
+                if (channel.DcsRadioId == null) continue;
+                channel.PttHotKey = _settings.GetDcsPttHotkey(channel.DcsRadioId);
+            }
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+            Apply();
+        else
+            Dispatcher.UIThread.Post(Apply);
     }
 
     private void OnAllLocationsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -767,7 +801,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     // Scoped by unit so aircraft with overlapping slot numbers (e.g. every aircraft's first
     // radio is slot 1) don't collide in persisted settings (pan, PTT hotkey).
-    private string GetDcsRadioKey(DcsRadioState radio) => $"{_dcsExportService.Unit}:{radio.Slot}";
+    // Slot-only (not aircraft-scoped): "Radio 1" is meant to mean the same thing -- same channel
+    // card, same pan, same PTT keybind -- whichever aircraft you're in, matching how a HOTAS
+    // button binding works in real life. This also reuses one channel card per slot across an
+    // aircraft switch instead of creating a parallel, orphaned set per aircraft.
+    private static string GetDcsRadioKey(DcsRadioState radio) => radio.Slot.ToString();
 
     private void OnBmsPttChanged(object? sender, RadioPttChangedEventArgs e)
     {

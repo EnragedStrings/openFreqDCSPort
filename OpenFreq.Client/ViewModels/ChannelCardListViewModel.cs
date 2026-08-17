@@ -117,6 +117,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _dcsExportService = dcsExportService;
         _settings = settingsViewModel;
         _settings.PropertyChanged += OnSettingsChanged;
+        SyncGlobalPttHotkeyRegistration();
 
         // Subscribe to BMS Frequency update messages
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
@@ -213,6 +214,30 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         {
             ApplyDcsPttHotkeysOnUiThread();
         }
+        else if (e.PropertyName == nameof(SettingsViewModel.GlobalPttHotkey))
+        {
+            SyncGlobalPttHotkeyRegistration();
+        }
+    }
+
+    private HotkeyBinding? _registeredGlobalPttHotkey;
+
+    /// <summary>Keeps the global PTT keybind (see IHotkeyService.GlobalPttChannelId and
+    /// LocationViewModel.OnHotkeyPressed/OnHotkeyReleased, which resolve it to whichever channel
+    /// is currently selected) registered with the hotkey service in sync with Settings, since
+    /// registration needs the actual old binding to unregister -- Settings only exposes the
+    /// current value.</summary>
+    private void SyncGlobalPttHotkeyRegistration()
+    {
+        if (_registeredGlobalPttHotkey != null)
+            _hotkeyService.UnregisterHotkey(IHotkeyService.HotkeyType.Ptt, _registeredGlobalPttHotkey,
+                IHotkeyService.GlobalPttChannelId);
+
+        _registeredGlobalPttHotkey = _settings.GlobalPttHotkey;
+
+        if (_registeredGlobalPttHotkey != null)
+            _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.Ptt, _registeredGlobalPttHotkey,
+                IHotkeyService.GlobalPttChannelId);
     }
 
     /// <summary>Pushes the 7 global PTT keybind slots (SettingsViewModel.DcsRadio1PttHotkey etc.)
@@ -603,7 +628,31 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private void OnDcsAircraftChanged(object? sender, DcsAircraftChangedEventArgs e)
     {
         if (!_settings.ModeIsDcs || DcsLocation == null) return;
-        Dispatcher.UIThread.Post(() => DcsLocation.Name = GetDcsLocationName(e.NewUnit));
+        Dispatcher.UIThread.Post(() =>
+        {
+            DcsLocation.Name = GetDcsLocationName(e.NewUnit);
+            RemoveDcsChannelsNotInCurrentAircraft();
+        });
+    }
+
+    /// <summary>Channel cards are identified by slot number alone (see GetDcsRadioKey) so they're
+    /// reused across aircraft switches -- but that means a slot the new aircraft doesn't have at
+    /// all (e.g. slot 3 when switching from the A-10's 3 radios to the F-16's 2) would otherwise
+    /// never get told to go away; DcsExportService only fires a per-radio "off" update for slots
+    /// that still exist, and this one no longer does. Runs after AircraftChanged, by which point
+    /// DcsExportService.ApplyPacket has already applied the new aircraft's radio set (see
+    /// DcsExportService.cs's ApplyPacket -- stale-slot removal happens before AircraftChanged
+    /// fires), so _dcsExportService.GetRadios() here already reflects it.</summary>
+    private void RemoveDcsChannelsNotInCurrentAircraft()
+    {
+        if (DcsLocation == null) return;
+
+        var liveSlots = _dcsExportService.GetRadios().Select(r => r.Slot.ToString()).ToHashSet();
+        foreach (var channel in DcsLocation.Channels.ToList())
+        {
+            if (channel.DcsRadioId != null && !liveSlots.Contains(channel.DcsRadioId))
+                WeakReferenceMessenger.Default.Send(new ChannelDeleteRequestedMessage(channel.Id, channel.FrequencyKhz));
+        }
     }
 
     private void OnDcsRadioChanged(object? sender, DcsRadioChangedEventArgs e)

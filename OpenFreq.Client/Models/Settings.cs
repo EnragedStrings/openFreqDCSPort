@@ -35,6 +35,11 @@ public class OpenFreqSettings
     public HotkeyBinding? BmsSquelchUhfHotkey { get; set; }
     public HotkeyBinding? BmsSquelchVhfHotkey { get; set; }
 
+    /// <summary>Transmits on whichever channel is currently selected (click a channel card to
+    /// select it -- see LocationViewModel.SelectedChannel), instead of one fixed radio. Separate
+    /// from each channel's own PttHotKey/DcsPttHotkeys.</summary>
+    public HotkeyBinding? GlobalPttHotkey { get; set; }
+
     // Window Position & Size
     public int? Left { get; set; }
     public int? Top { get; set; }

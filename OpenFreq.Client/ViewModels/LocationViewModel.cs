@@ -57,6 +57,20 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial ObservableCollection<ChannelCardViewModel> Channels { get; set; } = [];
 
+    /// <summary>The channel clicked most recently in this location -- target of the global PTT
+    /// keybind (see IHotkeyService.GlobalPttChannelId and OnHotkeyPressed/OnHotkeyReleased
+    /// below). Independent per location; selecting a channel in one location doesn't affect
+    /// another's selection.</summary>
+    [ObservableProperty] public partial ChannelCardViewModel? SelectedChannel { get; set; }
+
+    public void SelectChannel(ChannelCardViewModel channel)
+    {
+        if (SelectedChannel == channel) return;
+        if (SelectedChannel != null) SelectedChannel.IsSelected = false;
+        SelectedChannel = channel;
+        channel.IsSelected = true;
+    }
+
     // UI Properties
     [ObservableProperty] public partial double Latitude { get; set; }
     [ObservableProperty] public partial double Longitude { get; set; }
@@ -272,6 +286,7 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
         if (vm != null)
         {
+            if (SelectedChannel == vm) SelectedChannel = null;
             Dispatcher.UIThread.Post(() =>
             {
                 Channels.Remove(vm);
@@ -291,7 +306,9 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         {
             foreach (var channelId in e.ChannelIds)
             {
-                var channel = Channels.FirstOrDefault(c => c.Id == channelId);
+                var channel = channelId == IHotkeyService.GlobalPttChannelId
+                    ? SelectedChannel
+                    : Channels.FirstOrDefault(c => c.Id == channelId);
 
                 if (e.Type == IHotkeyService.HotkeyType.Ptt)
                 {
@@ -326,7 +343,9 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         {
             foreach (var channelId in e.ChannelIds)
             {
-                var channel = Channels.FirstOrDefault(c => c.Id == channelId);
+                var channel = channelId == IHotkeyService.GlobalPttChannelId
+                    ? SelectedChannel
+                    : Channels.FirstOrDefault(c => c.Id == channelId);
                 if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected)
                 {
                     await _openFreqService.StopTransmissionAsync(channel.FrequencyKhz);

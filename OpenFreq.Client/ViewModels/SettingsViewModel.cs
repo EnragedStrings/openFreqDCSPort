@@ -269,6 +269,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public string BmsVhfSquelchHotkeyDisplay =>
         BmsVhfSquelchHotkey?.DisplayName ?? "None";
 
+    /// <summary>Transmits on whichever channel is currently selected, instead of one fixed
+    /// radio -- see LocationViewModel.SelectedChannel and IHotkeyService.GlobalPttChannelId.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GlobalPttHotkeyDisplay))]
+    public partial HotkeyBinding? GlobalPttHotkey { get; set; }
+
+    public string GlobalPttHotkeyDisplay => GlobalPttHotkey?.DisplayName ?? "None";
+
     [ObservableProperty] public partial bool InputMeterEnabled { get; set; }
 
     [ObservableProperty]
@@ -588,6 +596,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _dcsPttHotkeys = new Dictionary<string, HotkeyBinding>(
             settings.DcsPttHotkeys ?? new Dictionary<string, HotkeyBinding>(),
             StringComparer.OrdinalIgnoreCase);
+        GlobalPttHotkey = settings.GlobalPttHotkey;
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
@@ -784,6 +793,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             BmsRadio2Pan = BmsRadio2Pan,
             DcsRadioPans = new Dictionary<string, int>(_dcsRadioPans, StringComparer.OrdinalIgnoreCase),
             DcsPttHotkeys = new Dictionary<string, HotkeyBinding>(_dcsPttHotkeys, StringComparer.OrdinalIgnoreCase),
+            GlobalPttHotkey = GlobalPttHotkey,
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
             MasterVolume = MasterVolume,

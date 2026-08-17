@@ -13,6 +13,11 @@ namespace OpenFreqClient.Services.Interfaces;
 /// </summary>
 public interface IHotkeyService : IDisposable, ILifecycleService
 {
+    /// <summary>Sentinel "channel id" used to register the global PTT keybind (transmits on
+    /// whichever channel is currently selected -- see LocationViewModel.SelectedChannel/
+    /// SelectChannel) instead of one specific channel. Never a real ChannelCardViewModel.Id.</summary>
+    public static readonly Guid GlobalPttChannelId = new("11111111-1111-1111-1111-111111111111");
+
     // Events for hotkey press/release
     event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed;
     event EventHandler<HotkeyReleasedEventArgs>? HotkeyReleased;

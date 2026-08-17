@@ -29,12 +29,21 @@
             <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
             <Setter Property="BorderThickness" Value="2" />
         </Style>
+        <!-- Currently-selected radio: target of the global PTT keybind. Drawn thinner than
+             .transmitting so an actively-transmitting card still reads as the more urgent state
+             when both apply. -->
+        <Style Selector="controls|Card.selected">
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryHueMidBrush}" />
+            <Setter Property="BorderThickness" Value="2" />
+        </Style>
     </UserControl.Styles>
 
-    <!-- Main Card -->
+    <!-- Main Card. Clicking anywhere on the card (that isn't its own interactive control, e.g.
+         the buttons/sliders below) selects it as the target for the global PTT keybind; it does
+         NOT transmit. Use the dedicated PTT button below to hold-to-talk on this specific radio. -->
     <controls:Card Padding="16"
-                   PointerPressed="OnPttStart"
-                   PointerReleased="OnPttStop"
+                   PointerPressed="OnCardPointerPressed"
+                   Classes.selected="{Binding IsSelected}"
                    Background="{Binding ConnectionStatus, Converter={StaticResource ChannelStatusToColorConverter}}">
 
         <!-- Wrapper Panel for both view modes -->
@@ -86,6 +95,24 @@
                             Orientation="Horizontal"
                             Spacing="8"
                             Margin="0,0,0,12">
+
+                    <!-- Hold to transmit on this radio specifically. Separate from clicking the
+                         card (which selects it for the global PTT keybind instead) and from this
+                         radio's own PTT hotkey (Hotkey button below): three independent ways to
+                         key this radio. -->
+                    <Button PointerPressed="OnPttStart"
+                            PointerReleased="OnPttStop"
+                            BorderBrush="{DynamicResource MaterialDividerBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="6,4"
+                            Classes="Flat"
+                            ToolTip.Tip="Hold to transmit on this radio">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <avalonia:MaterialIcon Kind="Microphone" Width="18" Height="18" />
+                            <TextBlock Text="PTT" Classes="Body2" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <!-- Connection Status with Dot Indicator -->
                     <Button Margin="0, 0, 0, 0"

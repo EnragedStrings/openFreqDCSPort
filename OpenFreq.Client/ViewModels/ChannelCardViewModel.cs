@@ -98,6 +98,11 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial bool IsEditing { get; set; }
 
+    /// <summary>Whether this is the currently-selected radio -- the target of the global PTT
+    /// keybind (see LocationViewModel.SelectedChannel/SelectChannel). Set by clicking the card;
+    /// distinct from transmitting.</summary>
+    [ObservableProperty] public partial bool IsSelected { get; set; }
+
     [ObservableProperty] private bool _channelWasChanged;
 
     // Hotkey binding
@@ -329,6 +334,11 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     {
         WeakReferenceMessenger.Default.Send(new ChannelDeleteRequestedMessage(Id, FrequencyKhz));
     }
+
+    /// <summary>Makes this the target of the global PTT keybind (see
+    /// LocationViewModel.SelectedChannel). Called when the card itself is clicked; does not
+    /// transmit -- use the card's dedicated PTT button or this radio's own PTT hotkey for that.</summary>
+    public void Select() => _parentLocationViewModel.SelectChannel(this);
 
     public void StartTransmission()
     {

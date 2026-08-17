@@ -1005,6 +1005,13 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [RelayCommand]
     private void ClearDcsRadio7PttHotkey() => Settings.DcsRadio7PttHotkey = null;
 
+    [RelayCommand]
+    private Task BeginCaptureGlobalPttHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.GlobalPttHotkey = binding);
+
+    [RelayCommand]
+    private void ClearGlobalPttHotkey() => Settings.GlobalPttHotkey = null;
+
     private async Task CaptureSettingsHotkeyAsync(Action<HotkeyBinding?> assign)
     {
         IsCapturingHotkey = true;

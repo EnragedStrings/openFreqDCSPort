@@ -39,6 +39,12 @@ public partial class ChannelCardView : UserControl
         }
     }
 
+    private void OnCardPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is ChannelCardViewModel vm && !vm.IsEditing)
+            vm.Select();
+    }
+
     private void OnPttStart(object? sender, PointerPressedEventArgs e)
     {
         if (DataContext is ChannelCardViewModel vm && !vm.IsEditing)

@@ -26,11 +26,14 @@ public class OpenFreqSettings
     public int BmsRadio2Pan { get; set; }
     public Dictionary<string, int> DcsRadioPans { get; set; } = [];
 
+    // Keyed by "{unit}:{slot}" (see ChannelCardListViewModel.GetDcsRadioKey) so bindings from
+    // different aircraft with overlapping slot numbers don't collide. One dictionary in place of
+    // fixed per-radio properties since different aircraft have different radio counts (the A-10's
+    // 3 radios were the only ones this ever needed to support before multi-aircraft support).
+    public Dictionary<string, HotkeyBinding> DcsPttHotkeys { get; set; } = [];
+
     public HotkeyBinding? BmsSquelchUhfHotkey { get; set; }
     public HotkeyBinding? BmsSquelchVhfHotkey { get; set; }
-    public HotkeyBinding? DcsArc210PttHotkey { get; set; }
-    public HotkeyBinding? DcsArc164PttHotkey { get; set; }
-    public HotkeyBinding? DcsArc186PttHotkey { get; set; }
 
     // Window Position & Size
     public int? Left { get; set; }

@@ -4,7 +4,7 @@ namespace OpenFreq.Client.Models.Dcs;
 
 public class DcsRadioState
 {
-    public DcsRadioSlot Slot { get; set; }
+    public int Slot { get; set; }
     public string Name { get; set; } = string.Empty;
     public long FrequencyHz { get; set; }
     public long SecondaryFrequencyHz { get; set; }

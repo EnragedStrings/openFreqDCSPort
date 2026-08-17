@@ -13,6 +13,15 @@ OpenFreqDCSConfig.a10c2.trustDevicePower = OpenFreqDCSConfig.a10c2.trustDevicePo
 OpenFreqDCSConfig.a10c2.arc210IndicatorIds = OpenFreqDCSConfig.a10c2.arc210IndicatorIds or { 18 }
 OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax = OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax or 100
 
+OpenFreqDCSConfig.f16c = OpenFreqDCSConfig.f16c or {}
+OpenFreqDCSConfig.f16c.enabled = OpenFreqDCSConfig.f16c.enabled ~= false
+
+OpenFreqDCSConfig.c130j = OpenFreqDCSConfig.c130j or {}
+OpenFreqDCSConfig.c130j.enabled = OpenFreqDCSConfig.c130j.enabled ~= false
+
+OpenFreqDCSConfig.uh60l = OpenFreqDCSConfig.uh60l or {}
+OpenFreqDCSConfig.uh60l.enabled = OpenFreqDCSConfig.uh60l.enabled ~= false
+
 OpenFreqDCSConfig.los = OpenFreqDCSConfig.los or {}
 OpenFreqDCSConfig.los.enabled = OpenFreqDCSConfig.los.enabled ~= false
 OpenFreqDCSConfig.los.requestPort = OpenFreqDCSConfig.los.requestPort or 34322

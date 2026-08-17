@@ -470,8 +470,23 @@ local function getDeviceModulation(device, fallback)
     return fallback
 end
 
-local function getDevicePower(device, frequencyHz, knownIsOn)
-    if not (config.a10c2 and config.a10c2.trustDevicePower == true) then
+-- Some radios (e.g. the UH-60L's ARC-201/ARC-186) don't reflect their tuned frequency through the
+-- device's own get_frequency() reliably; the aircraft instead exposes it as a named export
+-- parameter. Mirrors DCS-SRS's get_param_handle(name):get() usage for those radios.
+local function getParam(name, fallback)
+    local ok, handle = pcall(get_param_handle, name)
+    if not ok or not handle then
+        return fallback
+    end
+    local ok2, value = pcall(function() return handle:get() end)
+    if ok2 and type(value) == "number" then
+        return value
+    end
+    return fallback
+end
+
+local function getDevicePower(device, frequencyHz, knownIsOn, trustDevicePower)
+    if trustDevicePower ~= true then
         return frequencyHz > 1000
     end
 
@@ -637,7 +652,7 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = getArc210GuardHz(mainPanel),
             modulation = arc210Modulation,
             volume = getVolume(mainPanel, 238, 225, 226),
-            isOn = not arc210PowerKnobOff and getDevicePower(arc210, arc210Frequency, arc210IsOn),
+            isOn = not arc210PowerKnobOff and getDevicePower(arc210, arc210Frequency, arc210IsOn, requireDevicePower),
             ptt = ptt.arc210,
             enc = arc210Enc,
             encKey = arc210EncKey,
@@ -652,7 +667,7 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = 0, -- GRD retunes the primary frequency instead; see getArc210GuardHz comment
             modulation = getDeviceModulation(arc164, 0),
             volume = getVolume(mainPanel, 171, 238, 227, 228),
-            isOn = not arc164PowerKnobOff and getDevicePower(arc164, arc164Frequency, arc164IsOn),
+            isOn = not arc164PowerKnobOff and getDevicePower(arc164, arc164Frequency, arc164IsOn, requireDevicePower),
             ptt = ptt.arc164,
             enc = arc164Enc,
             encKey = arc164EncKey,
@@ -667,7 +682,7 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = 0,
             modulation = getDeviceModulation(arc186, 1),
             volume = getVolume(mainPanel, 147, 238, 223, 224),
-            isOn = not arc186PowerKnobOff and getDevicePower(arc186, arc186Frequency, arc186IsOn),
+            isOn = not arc186PowerKnobOff and getDevicePower(arc186, arc186Frequency, arc186IsOn, requireDevicePower),
             ptt = ptt.arc186,
             enc = arc186Enc,
             encKey = arc186EncKey,
@@ -675,6 +690,260 @@ local function buildA10C2Radios()
             squelchOn = arc186SquelchOn,
             toneOn = arc186ToneOn
         }
+    }
+end
+
+-- F-16C Viper (+ F-16D/Barak variants, aliased in the dispatch table below onto this same
+-- builder). Argument IDs mirror DCS-SRS's F16C.lua module.
+local function buildF16Radios()
+    local mainPanel = getMainPanel()
+
+    local uhf = getDevice(36)
+    local vhf = getDevice(38)
+
+    local uhfFrequency, uhfRawFrequency, uhfIsOn = getDeviceFrequencyHz(uhf, 5000, false)
+    local vhfFrequency, vhfRawFrequency, vhfIsOn = getDeviceFrequencyHz(vhf, 5000, false)
+
+    -- UHF backup-panel guard: function selector (417) index 2 = BOTH (listen guard as well as
+    -- the tuned frequency). Only covers the simple backup-panel path -- when UHF is instead
+    -- driven through the UFC, guard state isn't read here (falls back to 0); a known v1
+    -- simplification, see DCS/README.md.
+    local uhfBackupFunction = getSelectorIndex(mainPanel, 417, 0.1)
+    local uhfGuardHz = (uhfBackupFunction == 2 and uhfFrequency > 1000) and 243000000 or 0
+
+    -- KY-58: 707 power button, 705 mode switch (0.1 = "C" ciphered), 706 key channel,
+    -- 701 selects which radio it's wired to (>0.5 = UHF/CRAD1, <-0.5 = VHF/CRAD2).
+    local ky58Power = roundToStep(getArgument(mainPanel, 707, 0), 0.1)
+    local ky58Mode = roundToStep(getArgument(mainPanel, 705, 0), 0.1)
+    local uhfEnc, uhfEncKey = false, nil
+    local vhfEnc, vhfEncKey = false, nil
+
+    if ky58Power == 0.5 and ky58Mode == 0.1 then
+        local channel = getSelectorIndex(mainPanel, 706, 0.1)
+        local cipherSwitch = roundToStep(getArgument(mainPanel, 701, 0), 1)
+        if channel and channel > 0 and channel < 7 then
+            if cipherSwitch > 0.5 then
+                uhfEnc, uhfEncKey = true, channel
+            elseif cipherSwitch < -0.5 then
+                vhfEnc, vhfEncKey = true, channel
+            end
+        end
+    end
+
+    local now = callGlobal("LoGetModelTime", 0)
+    local debugSeconds = numberOr(config.debugSeconds, 1)
+    if config.debugRadios ~= false and (OpenFreqDCS.nextRadioDebugTime == nil or now >= OpenFreqDCS.nextRadioDebugTime) then
+        OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
+        writeDebug(string.format(
+            "F-16C radios: UHF freq=%s raw=%s on=%s guard=%s enc=%s encKey=%s | VHF freq=%s raw=%s on=%s enc=%s encKey=%s | ky58Power=%s ky58Mode=%s",
+            textOr(uhfFrequency), textOr(uhfRawFrequency), textOr(uhfIsOn), textOr(uhfGuardHz), textOr(uhfEnc), textOr(uhfEncKey),
+            textOr(vhfFrequency), textOr(vhfRawFrequency), textOr(vhfIsOn), textOr(vhfEnc), textOr(vhfEncKey),
+            textOr(ky58Power), textOr(ky58Mode)))
+    end
+
+    -- No known cockpit PTT argument -- DCS-SRS itself doesn't attempt one for the Viper
+    -- (capabilities.dcsPtt = false in its F16C.lua) and relies on a user-bound key/joystick
+    -- trigger instead. OpenFreq's existing PTT hotkey binding covers these radios; ptt stays
+    -- false here rather than guessing at an unverified argument.
+    return {
+        {
+            slot = 1,
+            name = "ARC-164 UHF",
+            frequencyHz = uhfFrequency,
+            secondaryFrequencyHz = uhfGuardHz,
+            modulation = getDeviceModulation(uhf, 0),
+            volume = getVolume(mainPanel, 430),
+            isOn = getDevicePower(uhf, uhfFrequency, uhfIsOn, false),
+            ptt = false,
+            enc = uhfEnc,
+            encKey = uhfEncKey,
+            hqOn = false,
+            squelchOn = true,
+            toneOn = false
+        },
+        {
+            slot = 2,
+            name = "ARC-222 VHF",
+            frequencyHz = vhfFrequency,
+            secondaryFrequencyHz = 0,
+            modulation = getDeviceModulation(vhf, 0),
+            volume = getVolume(mainPanel, 431),
+            isOn = getDevicePower(vhf, vhfFrequency, vhfIsOn, false),
+            ptt = false,
+            enc = vhfEnc,
+            encKey = vhfEncKey,
+            hqOn = false,
+            squelchOn = true,
+            toneOn = false
+        }
+    }
+end
+
+-- UH-60L Black Hawk (+ UH-60L_DAP, MH-60R). Argument IDs mirror DCS-SRS's UH60L.lua module.
+-- ARC-201 FM1/FM2 and ARC-186 frequencies are read via named export parameters rather than
+-- get_frequency() -- DCS-SRS found the raw device call unreliable for these three radios on
+-- this airframe and uses get_param_handle() instead (see getParam above); ARC-164 doesn't need
+-- that workaround. Plain intercom isn't exported -- OpenFreq doesn't route intercom traffic.
+local function buildUH60Radios()
+    local mainPanel = getMainPanel()
+    local dcPower = getArgument(mainPanel, 17, 0) > 0
+    local icsMasterVolume = getArgument(mainPanel, 401, 1)
+
+    local fm1Device = getDevice(6)
+    local fm1On = dcPower and getArgument(mainPanel, 601, 0) > 0.01
+    local fm1Frequency = fm1On and getParam("ARC201FM1param", 0) or 0
+    local fm1Modulation = fm1On and getParam("ARC201_FM1_MODULATION", 1) or 1
+    local fm1Volume = fm1On and (getArgument(mainPanel, 604, 1) * icsMasterVolume * getArgument(mainPanel, 403, 1)) or 0
+
+    local arc164Device = getDevice(5)
+    local arc164On = dcPower and getArgument(mainPanel, 50, 0) > 0
+    local arc164Frequency = arc164On and numberOr(callMethod(arc164Device, "get_frequency", 0), 0) or 0
+    local arc164Volume = arc164On and (getArgument(mainPanel, 51, 1) * icsMasterVolume * getArgument(mainPanel, 404, 1)) or 0
+    local arc164GuardHz = arc164On and 243000000 or 0
+
+    local arc186On = dcPower and getArgument(mainPanel, 419, 0) > 0
+    local arc186Frequency = arc186On and getParam("ARC186param", 0) or 0
+    local arc186Volume = arc186On and (getArgument(mainPanel, 410, 1) * icsMasterVolume * getArgument(mainPanel, 405, 1)) or 0
+    local arc186GuardHz = arc186On and 121500000 or 0
+
+    local fm2Device = getDevice(10)
+    local fm2On = dcPower and getArgument(mainPanel, 701, 0) > 0.01
+    local fm2Frequency = fm2On and getParam("ARC201FM2param", 0) or 0
+    local fm2Modulation = fm2On and getParam("ARC201_FM2_MODULATION", 1) or 1
+    local fm2Volume = fm2On and (getArgument(mainPanel, 704, 1) * icsMasterVolume * getArgument(mainPanel, 406, 1)) or 0
+
+    -- Radio transmit selector (400) is a continuous rocker: 0=ICS, 1=FM1, 2=UHF, 3=VHF, 4=FM2
+    -- (rounded the same way DCS-SRS does: round(arg*5, 0.1)). A separate trigger (82) keys
+    -- whichever radio is currently selected.
+    local selected = dcPower and roundToStep(getArgument(mainPanel, 400, 0) * 5, 0.1) or -1
+    local trigger = getArgument(mainPanel, 82, 0) > 0
+    local ptt = {
+        fm1 = trigger and selected == 1,
+        arc164 = trigger and selected == 2,
+        arc186 = trigger and selected == 3,
+        fm2 = trigger and selected == 4
+    }
+
+    local now = callGlobal("LoGetModelTime", 0)
+    local debugSeconds = numberOr(config.debugSeconds, 1)
+    if config.debugRadios ~= false and (OpenFreqDCS.nextRadioDebugTime == nil or now >= OpenFreqDCS.nextRadioDebugTime) then
+        OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
+        writeDebug(string.format(
+            "UH-60L radios: dcPower=%s selected=%s trigger=%s | FM1 freq=%s on=%s vol=%s ptt=%s | ARC164 freq=%s on=%s vol=%s ptt=%s | ARC186 freq=%s on=%s vol=%s ptt=%s | FM2 freq=%s on=%s vol=%s ptt=%s",
+            textOr(dcPower), textOr(selected), textOr(trigger),
+            textOr(fm1Frequency), textOr(fm1On), textOr(fm1Volume), textOr(ptt.fm1),
+            textOr(arc164Frequency), textOr(arc164On), textOr(arc164Volume), textOr(ptt.arc164),
+            textOr(arc186Frequency), textOr(arc186On), textOr(arc186Volume), textOr(ptt.arc186),
+            textOr(fm2Frequency), textOr(fm2On), textOr(fm2Volume), textOr(ptt.fm2)))
+    end
+
+    return {
+        {
+            slot = 1, name = "ARC-201 FM (Pilot)", frequencyHz = fm1Frequency, secondaryFrequencyHz = 0,
+            modulation = fm1Modulation, volume = fm1Volume, isOn = fm1On, ptt = ptt.fm1,
+            enc = false, encKey = nil, hqOn = false, squelchOn = true, toneOn = false
+        },
+        {
+            slot = 2, name = "ARC-164 UHF", frequencyHz = arc164Frequency, secondaryFrequencyHz = arc164GuardHz,
+            modulation = 0, volume = arc164Volume, isOn = arc164On, ptt = ptt.arc164,
+            enc = false, encKey = nil, hqOn = false, squelchOn = true, toneOn = false
+        },
+        {
+            slot = 3, name = "ARC-186 VHF", frequencyHz = arc186Frequency, secondaryFrequencyHz = arc186GuardHz,
+            modulation = 0, volume = arc186Volume, isOn = arc186On, ptt = ptt.arc186,
+            enc = false, encKey = nil, hqOn = false, squelchOn = true, toneOn = false
+        },
+        {
+            slot = 4, name = "ARC-201 FM (Copilot)", frequencyHz = fm2Frequency, secondaryFrequencyHz = 0,
+            modulation = fm2Modulation, volume = fm2Volume, isOn = fm2On, ptt = ptt.fm2,
+            enc = false, encKey = nil, hqOn = false, squelchOn = true, toneOn = false
+        }
+    }
+end
+
+-- C-130J-30 (Airplane Simulation Company). Argument IDs mirror DCS-SRS's C130J30.lua module,
+-- pilot/left-seat panel only -- DCS's export API has no reliable way to tell which crew seat
+-- the player currently occupies, so volume/PTT always reads the pilot panel regardless of seat.
+-- A known v1 limitation for anyone flying from the right or jump seat; see DCS/README.md.
+-- Intercom and PVT aren't exported for the same reason as UH-60. The SAT/ARC-210 device (91) is
+-- flagged upstream by DCS-SRS as "not implemented yet" as of when this was ported -- treat its
+-- readings as best-effort and verify with debugArgScan before relying on it.
+local function buildC130Radios()
+    local mainPanel = getMainPanel()
+
+    local devices = {
+        uhf1 = getDevice(7), uhf2 = getDevice(9),
+        vhf1 = getDevice(6), vhf2 = getDevice(8),
+        hf1 = getDevice(10), hf2 = getDevice(11),
+        sat = getDevice(91)
+    }
+
+    local function radioFreqMod(device)
+        local freq = numberOr(callMethod(device, "get_frequency", 0), 0)
+        local modulation = getDeviceModulation(device, 0)
+        return freq, modulation
+    end
+
+    local uhf1Freq, uhf1Mod = radioFreqMod(devices.uhf1)
+    local uhf2Freq, uhf2Mod = radioFreqMod(devices.uhf2)
+    local vhf1Freq, vhf1Mod = radioFreqMod(devices.vhf1)
+    local vhf2Freq, vhf2Mod = radioFreqMod(devices.vhf2)
+    local hf1Freq, hf1Mod = radioFreqMod(devices.hf1)
+    local hf2Freq, hf2Mod = radioFreqMod(devices.hf2)
+    local satFreq, satMod = radioFreqMod(devices.sat)
+
+    -- Pilot/left-seat volume panel (1355 master, paired PULL/ROTARY args per radio).
+    local masterVolume = getArgument(mainPanel, 1355, 1)
+    local function panelVolume(pullId, rotaryId)
+        return getArgument(mainPanel, pullId, 1) * getArgument(mainPanel, rotaryId, 1) * masterVolume
+    end
+
+    local uhf1Volume = panelVolume(222, 223)
+    local uhf2Volume = panelVolume(224, 225)
+    local vhf1Volume = panelVolume(212, 213)
+    local vhf2Volume = panelVolume(214, 215)
+    local hf1Volume = panelVolume(206, 207)
+    local hf2Volume = panelVolume(208, 209)
+    local satVolume = panelVolume(216, 217)
+
+    -- TX selector (294) is a continuous rocker covering 9 positions (ICS, UHF1, UHF2, VHF1,
+    -- VHF2, HF1, HF2, SAT, PVT); rounding it to 0-8 lines up 1-7 with this builder's slot
+    -- numbers directly (ICS=0 and PVT=8 fall outside 1-7 and are correctly never selected here).
+    -- PTT rocker (291): forward(1) = key the selected radio, back(-1) = intercom, center = released.
+    local txSelected = math.floor(getArgument(mainPanel, 294, 0) * 9 + 0.5)
+    local pttRocker = getArgument(mainPanel, 291, 0)
+    local keyed = pttRocker > 0.5
+    local function isSelected(index) return keyed and txSelected == index end
+
+    local now = callGlobal("LoGetModelTime", 0)
+    local debugSeconds = numberOr(config.debugSeconds, 1)
+    if config.debugRadios ~= false and (OpenFreqDCS.nextRadioDebugTime == nil or now >= OpenFreqDCS.nextRadioDebugTime) then
+        OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
+        writeDebug(string.format(
+            "C-130J-30 radios: txSelected=%s pttRocker=%s | UHF1 freq=%s vol=%s | UHF2 freq=%s vol=%s | VHF1 freq=%s vol=%s | VHF2 freq=%s vol=%s | HF1 freq=%s vol=%s | HF2 freq=%s vol=%s | SAT freq=%s vol=%s",
+            textOr(txSelected), textOr(pttRocker),
+            textOr(uhf1Freq), textOr(uhf1Volume), textOr(uhf2Freq), textOr(uhf2Volume),
+            textOr(vhf1Freq), textOr(vhf1Volume), textOr(vhf2Freq), textOr(vhf2Volume),
+            textOr(hf1Freq), textOr(hf1Volume), textOr(hf2Freq), textOr(hf2Volume),
+            textOr(satFreq), textOr(satVolume)))
+    end
+
+    local function radio(slot, name, freq, modulation, volume, selectedIndex)
+        return {
+            slot = slot, name = name, frequencyHz = freq, secondaryFrequencyHz = 0,
+            modulation = modulation, volume = volume, isOn = freq > 1000, ptt = isSelected(selectedIndex),
+            enc = false, encKey = nil, hqOn = false, squelchOn = true, toneOn = false
+        }
+    end
+
+    return {
+        radio(1, "UHF1", uhf1Freq, uhf1Mod, uhf1Volume, 1),
+        radio(2, "UHF2", uhf2Freq, uhf2Mod, uhf2Volume, 2),
+        radio(3, "VHF1", vhf1Freq, vhf1Mod, vhf1Volume, 3),
+        radio(4, "VHF2", vhf2Freq, vhf2Mod, vhf2Volume, 4),
+        radio(5, "HF1", hf1Freq, hf1Mod, hf1Volume, 5),
+        radio(6, "HF2", hf2Freq, hf2Mod, hf2Volume, 6),
+        radio(7, "SAT (ARC-210)", satFreq, satMod, satVolume, 7)
     }
 end
 
@@ -998,12 +1267,36 @@ function OpenFreqDCS.processLosRequests()
     end
 end
 
+-- Dispatch table of supported aircraft, keyed by the DCS internal unit name (selfData.Name).
+-- Each entry's build() has the exact same signature/return shape (see buildA10C2Radios), so
+-- adding another aircraft is just: write one buildXRadios() function, add one entry here, and
+-- add one enabled-flag block to OpenFreqDCSConfig.lua. See DCS/README.md for the full recipe.
+local aircraftBuilders = {
+    ["A-10C_2"] = { configKey = "a10c2", build = buildA10C2Radios },
+
+    ["F-16C_50"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_50_NS"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_52_NS"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_50"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_52"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_Barak_40"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16D_Barak_30"] = { configKey = "f16c", build = buildF16Radios },
+    ["F-16I"] = { configKey = "f16c", build = buildF16Radios },
+
+    ["C-130J-30"] = { configKey = "c130j", build = buildC130Radios },
+
+    ["UH-60L"] = { configKey = "uh60l", build = buildUH60Radios },
+    ["UH-60L_DAP"] = { configKey = "uh60l", build = buildUH60Radios },
+}
+
 local function buildPacket(modelTime)
     local selfData = callGlobal("LoGetSelfData", nil)
     local theater = detectTheater()
-    local isA10C2 = boolOr(config.a10c2 and config.a10c2.enabled, true)
-        and selfData ~= nil
-        and selfData.Name == "A-10C_2"
+
+    local aircraft = selfData and aircraftBuilders[selfData.Name] or nil
+    local aircraftEnabled = aircraft
+        and boolOr(config[aircraft.configKey] and config[aircraft.configKey].enabled, true)
+    local inSupportedAircraft = aircraftEnabled == true
 
     local latLongAlt = selfData and selfData.LatLongAlt or {}
     local position = selfData and selfData.Position or nil
@@ -1011,8 +1304,8 @@ local function buildPacket(modelTime)
     local heading = selfData and selfData.Heading or nil
 
     local radios = {}
-    if isA10C2 then
-        radios = buildA10C2Radios()
+    if inSupportedAircraft then
+        radios = aircraft.build()
     end
 
     local heightmap = pumpHeightmap(theater)
@@ -1025,8 +1318,8 @@ local function buildPacket(modelTime)
         unit = selfData and selfData.Name or "",
         unitName = selfData and selfData.UnitName or "",
         playerName = callGlobal("LoGetPilotName", ""),
-        isInAircraft = isA10C2,
-        isInGame = isA10C2 and position ~= nil,
+        isInAircraft = inSupportedAircraft,
+        isInGame = inSupportedAircraft and position ~= nil,
         latitude = numberOr(latLongAlt.Lat, 0),
         longitude = numberOr(latLongAlt.Long, 0),
         altitudeMsl = numberOr(latLongAlt.Alt, 0),

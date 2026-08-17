@@ -26,7 +26,7 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     double? HeadingRadians { get; }
     DcsHeightmapInfo? HeightmapInfo { get; }
 
-    DcsRadioState? GetRadio(DcsRadioSlot slot);
+    DcsRadioState? GetRadio(int slot);
     IReadOnlyList<DcsRadioState> GetRadios();
     DcsLineOfSightResult? RequestLineOfSight(string key, DcsVector3 remotePosition);
 

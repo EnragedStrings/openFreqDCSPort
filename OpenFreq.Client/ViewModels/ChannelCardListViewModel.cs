@@ -42,15 +42,28 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private readonly SettingsViewModel _settings;
 
     private const string BmsLocationName = "BMS Channels";
-    private const string DcsLocationName = "DCS A-10C II Radios";
 
-    // ARC-210 TR+G ("guard") monitoring: the only DCS radio that listens on 243.0 simultaneously
-    // with its tuned frequency, so unlike guard on the other radios it isn't representable as a
-    // regular tuned channel and instead gets joined silently in the background, with no card of
-    // its own. See SyncArc210GuardMonitorOnUiThread.
-    private const int Arc210GuardFrequencyKhz = 243000;
-    private readonly Guid _arc210GuardSlotId = Guid.NewGuid();
-    private bool _arc210GuardJoined;
+    // Friendly display names for the DCS location card, keyed by DCS internal unit name (see
+    // OpenFreqDCS.lua's aircraftBuilders table). Falls back to the raw unit string for any
+    // aircraft OpenFreqDCS.lua doesn't build radios for yet.
+    private static readonly Dictionary<string, string> DcsAircraftDisplayNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["A-10C_2"] = "A-10C II",
+        ["F-16C_50"] = "F-16C Viper",
+        ["C-130J-30"] = "C-130J Super Hercules",
+        ["UH-60L"] = "UH-60L Black Hawk"
+    };
+
+    private static string GetDcsLocationName(string unit) =>
+        "DCS " + (!string.IsNullOrWhiteSpace(unit) && DcsAircraftDisplayNames.TryGetValue(unit, out var name)
+            ? name
+            : "Radios");
+
+    // Simultaneous guard monitoring (e.g. the A-10's ARC-210 TR+G, the UH-60's ARC-164/ARC-186):
+    // joined/left silently in the background per radio key rather than as its own channel card.
+    // See SyncGuardMonitorOnUiThread.
+    private readonly Dictionary<string, Guid> _guardMonitorSlotIds = new();
+    private readonly Dictionary<string, int> _guardMonitorJoinedFrequencyKhz = new();
     public LocationViewModel? FalconLocation { get; private set; }
     public LocationViewModel? DcsLocation { get; private set; }
 
@@ -118,6 +131,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _dcsExportService.ToneChanged += OnDcsToneChanged;
         _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
         _dcsExportService.StateChanged += OnDcsStateChanged;
+        _dcsExportService.AircraftChanged += OnDcsAircraftChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChangedForCallsigns;
@@ -143,6 +157,13 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 var dcsChannel = DcsLocation?.Channels.FirstOrDefault(c => c.Id == m.ChannelId);
                 if (!string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId))
                     _settings.SetDcsRadioPan(dcsChannel.DcsRadioId, m.Pan);
+            });
+        WeakReferenceMessenger.Default.Register<ChannelPttHotkeyUpdateMessage>(this,
+            (r, m) =>
+            {
+                var dcsChannel = DcsLocation?.Channels.FirstOrDefault(c => c.Id == m.ChannelId);
+                if (!string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId))
+                    _settings.SetDcsPttHotkey(dcsChannel.DcsRadioId, m.Hotkey);
             });
         WeakReferenceMessenger.Default.Register<ChannelEncryptionUpdateMessage>(this,
             (r, m) => _openFreqService.SetEncryption(m.FrequencyKhz, m.ChannelId, m.Enc, m.EncKey, m.HqOn,
@@ -181,12 +202,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             foreach (var ch in FalconLocation.Channels
                          .Where(c => c.BmsRadioType == RadioType.Radio2))
                 ch.Pan = _settings.BmsRadio2Pan;
-        }
-        else if (e.PropertyName is nameof(SettingsViewModel.DcsArc210PttHotkey)
-                 or nameof(SettingsViewModel.DcsArc164PttHotkey)
-                 or nameof(SettingsViewModel.DcsArc186PttHotkey))
-        {
-            ApplyDcsPttHotkeysOnUiThread();
         }
     }
 
@@ -540,7 +555,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     {
         if (DcsLocation == null)
         {
-            DcsLocation = CreateLocation(DcsLocationName, RadioStationPresets.FighterGeneric,
+            DcsLocation = CreateLocation(GetDcsLocationName(_dcsExportService.Unit), RadioStationPresets.FighterGeneric,
                 RadioStationData.RadioStationType.DCS);
             DcsLocation.EditMode = false;
             SelectedLocation = DcsLocation;
@@ -549,6 +564,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         if (!AllLocations.Contains(DcsLocation))
             AllLocations.Add(DcsLocation);
+    }
+
+    private void OnDcsAircraftChanged(object? sender, DcsAircraftChangedEventArgs e)
+    {
+        if (!_settings.ModeIsDcs || DcsLocation == null) return;
+        Dispatcher.UIThread.Post(() => DcsLocation.Name = GetDcsLocationName(e.NewUnit));
     }
 
     private void OnDcsRadioChanged(object? sender, DcsRadioChangedEventArgs e)
@@ -615,10 +636,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private void SyncDcsRadioOnUiThread(DcsRadioState radio)
     {
-        if (DcsLocation == null || radio.Slot == DcsRadioSlot.Intercom) return;
+        if (DcsLocation == null) return;
 
+        var key = GetDcsRadioKey(radio);
         SyncDcsChannelOnUiThread(
-            key: GetDcsRadioKey(radio),
+            key: key,
             name: radio.Name,
             frequencyKhz: radio.FrequencyKhz,
             shouldBeJoined: IsUsableDcsRadio(radio),
@@ -629,37 +651,46 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             hqOn: radio.HqOn,
             squelchOn: radio.SquelchOn);
 
-        if (radio.Slot == DcsRadioSlot.Arc210)
-            SyncArc210GuardMonitorOnUiThread(radio);
+        SyncGuardMonitorOnUiThread(radio, key);
     }
 
-    /// <summary>The ARC-210 is the only DCS radio with true simultaneous guard monitoring
-    /// (TR+G): it listens on 243.0 in addition to its tuned frequency without retuning away
-    /// from it. That doesn't map to a regular tuned channel, so it's joined/left silently here
-    /// instead of getting its own channel card. <see cref="DcsRadioState.SecondaryFrequencyHz"/>
-    /// is 0 unless TR+G mode is currently selected (see OpenFreqDCS.lua's getArc210GuardHz).</summary>
-    private void SyncArc210GuardMonitorOnUiThread(DcsRadioState radio)
+    /// <summary>Some radios (the A-10's ARC-210 in TR+G, the UH-60's ARC-164/ARC-186) listen on a
+    /// guard frequency simultaneously with their tuned frequency, without retuning away from it.
+    /// That doesn't map to a regular tuned channel, so it's joined/left silently here instead of
+    /// getting its own channel card. <see cref="DcsRadioState.SecondaryFrequencyHz"/> is 0 unless
+    /// that radio is currently guarding (see each aircraft's buildXRadios() in OpenFreqDCS.lua).
+    /// Tracked per radio key since one aircraft can have more than one simultaneously-guarding
+    /// radio at different guard frequencies (e.g. the UH-60's UHF and VHF radios).</summary>
+    private void SyncGuardMonitorOnUiThread(DcsRadioState radio, string radioKey)
     {
         if (DcsLocation == null || !_openFreqService.IsAuthenticated) return;
 
-        var shouldMonitor = IsUsableDcsRadio(radio) && radio.SecondaryFrequencyKhz > 0;
+        var guardFrequencyKhz = radio.SecondaryFrequencyKhz;
+        var shouldMonitor = IsUsableDcsRadio(radio) && guardFrequencyKhz > 0;
+
         if (shouldMonitor)
         {
-            if (!_arc210GuardJoined)
+            if (!_guardMonitorSlotIds.TryGetValue(radioKey, out var slotId))
             {
-                _openFreqService.JoinFrequencyAsync(Arc210GuardFrequencyKhz, _arc210GuardSlotId,
-                        DcsLocation.RadioStationData)
-                    .Wait(TimeSpan.FromMilliseconds(500));
-                _openFreqService.SetSquelch(Arc210GuardFrequencyKhz, _arc210GuardSlotId, isSquelchClosed: true);
-                _arc210GuardJoined = true;
+                slotId = Guid.NewGuid();
+                _guardMonitorSlotIds[radioKey] = slotId;
             }
-            _openFreqService.SetVolume(Arc210GuardFrequencyKhz, _arc210GuardSlotId, (float)radio.Volume);
+
+            if (!_guardMonitorJoinedFrequencyKhz.ContainsKey(radioKey))
+            {
+                _openFreqService.JoinFrequencyAsync(guardFrequencyKhz, slotId, DcsLocation.RadioStationData)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+                _openFreqService.SetSquelch(guardFrequencyKhz, slotId, isSquelchClosed: true);
+                _guardMonitorJoinedFrequencyKhz[radioKey] = guardFrequencyKhz;
+            }
+            _openFreqService.SetVolume(guardFrequencyKhz, slotId, (float)radio.Volume);
         }
-        else if (_arc210GuardJoined)
+        else if (_guardMonitorJoinedFrequencyKhz.TryGetValue(radioKey, out var joinedFrequencyKhz) &&
+                 _guardMonitorSlotIds.TryGetValue(radioKey, out var slotId))
         {
-            _openFreqService.LeaveFrequencyAsync(Arc210GuardFrequencyKhz, _arc210GuardSlotId)
+            _openFreqService.LeaveFrequencyAsync(joinedFrequencyKhz, slotId)
                 .Wait(TimeSpan.FromMilliseconds(500));
-            _arc210GuardJoined = false;
+            _guardMonitorJoinedFrequencyKhz.Remove(radioKey);
         }
     }
 
@@ -676,6 +707,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             channel.DcsRadioId = key;
             channel.IsEditable = false;
             channel.Pan = _settings.GetDcsRadioPan(key);
+            // Only set on creation, same as Pan above -- afterward it's the user's own capture
+            // via the channel card's PTT button (see ChannelPttHotkeyUpdateMessage), which
+            // persists back through _settings so it survives the next DCS resync.
+            channel.PttHotKey = allowTransmit ? _settings.GetDcsPttHotkey(key) : null;
         }
 
         var oldFrequencyKhz = channel.FrequencyKhz;
@@ -698,15 +733,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         channel.Enc = enc;
         channel.EncKey = encKey;
         channel.HqOn = hqOn;
-
-        if (!allowTransmit)
-        {
-            channel.PttHotKey = null;
-        }
-        else
-        {
-            channel.PttHotKey = GetDcsPttHotkey(key);
-        }
 
         if (!_openFreqService.IsAuthenticated) return;
 
@@ -739,40 +765,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private static bool IsUsableDcsRadio(DcsRadioState radio) =>
         radio.IsOn && radio.FrequencyKhz > IDcsExportService.RadioOffFrequencyKhz;
 
-    private static string GetDcsRadioKey(DcsRadioState radio) => radio.Slot.ToString();
-
-    private HotkeyBinding? GetDcsPttHotkey(string radioKey) =>
-        Enum.TryParse<DcsRadioSlot>(radioKey, out var slot) ? GetDcsPttHotkey(slot) : null;
-
-    private HotkeyBinding? GetDcsPttHotkey(DcsRadioSlot slot) => slot switch
-    {
-        DcsRadioSlot.Arc210 => _settings.DcsArc210PttHotkey,
-        DcsRadioSlot.Arc164 => _settings.DcsArc164PttHotkey,
-        DcsRadioSlot.Arc186 => _settings.DcsArc186PttHotkey,
-        _ => null
-    };
-
-    private void ApplyDcsPttHotkeysOnUiThread()
-    {
-        if (DcsLocation == null)
-            return;
-
-        void Apply()
-        {
-            foreach (var channel in DcsLocation.Channels)
-            {
-                if (channel.DcsRadioId == null)
-                    continue;
-
-                channel.PttHotKey = GetDcsPttHotkey(channel.DcsRadioId);
-            }
-        }
-
-        if (Dispatcher.UIThread.CheckAccess())
-            Apply();
-        else
-            Dispatcher.UIThread.Post(Apply);
-    }
+    // Scoped by unit so aircraft with overlapping slot numbers (e.g. every aircraft's first
+    // radio is slot 1) don't collide in persisted settings (pan, PTT hotkey).
+    private string GetDcsRadioKey(DcsRadioState radio) => $"{_dcsExportService.Unit}:{radio.Slot}";
 
     private void OnBmsPttChanged(object? sender, RadioPttChangedEventArgs e)
     {

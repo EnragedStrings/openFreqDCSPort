@@ -22,7 +22,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     private static readonly TimeSpan LosResultTtl = TimeSpan.FromSeconds(2);
     private readonly object _stateLock = new();
     private readonly object _udpSendLock = new();
-    private readonly ConcurrentDictionary<DcsRadioSlot, DcsRadioState> _radios = new();
+    private readonly ConcurrentDictionary<int, DcsRadioState> _radios = new();
     private readonly ConcurrentDictionary<string, DcsLineOfSightResult> _losResults = new();
     private readonly ConcurrentDictionary<string, DateTime> _losLastRequestUtc = new();
     private CancellationTokenSource? _cts;
@@ -133,7 +133,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     public event EventHandler<DcsAircraftChangedEventArgs>? AircraftChanged;
     public event EventHandler<DcsHeightmapChangedEventArgs>? HeightmapChanged;
 
-    public DcsRadioState? GetRadio(DcsRadioSlot slot)
+    public DcsRadioState? GetRadio(int slot)
     {
         return _radios.TryGetValue(slot, out var radio) ? radio.Clone() : null;
     }
@@ -425,7 +425,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 ChangeState(ServiceState.Connected);
         }
 
-        var seenRadios = new HashSet<DcsRadioSlot>();
+        var seenRadios = new HashSet<int>();
         foreach (var newRadio in packet.Radios)
         {
             var normalized = NormalizeRadio(newRadio);

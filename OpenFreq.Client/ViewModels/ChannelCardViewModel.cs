@@ -288,6 +288,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         {
             _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.Ptt, newValue, Id);
         }
+
+        WeakReferenceMessenger.Default.Send(new ChannelPttHotkeyUpdateMessage(Id, newValue));
     }
 
     partial void OnSquelchHotKeyChanging(HotkeyBinding? oldValue, HotkeyBinding? newValue)
@@ -503,6 +505,12 @@ public class ChannelPanUpdateMessage(Guid channelId, int frequencyKhz, int pan)
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
     public int Pan { get; } = pan;
+}
+
+public class ChannelPttHotkeyUpdateMessage(Guid channelId, HotkeyBinding? hotkey)
+{
+    public Guid ChannelId { get; } = channelId;
+    public HotkeyBinding? Hotkey { get; } = hotkey;
 }
 
 public class ChannelVolumeUpdateMessage(Guid channelId, int frequencyKhz, double volume)

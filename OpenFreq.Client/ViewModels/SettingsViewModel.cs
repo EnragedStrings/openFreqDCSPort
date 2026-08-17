@@ -195,6 +195,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public partial int BmsRadio2Pan { get; set; } = 0;
 
     private Dictionary<string, int> _dcsRadioPans = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, HotkeyBinding> _dcsPttHotkeys = new(StringComparer.OrdinalIgnoreCase);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BmsUhfSquelchHotkeyDisplay))]
@@ -209,24 +210,6 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     public string BmsVhfSquelchHotkeyDisplay =>
         BmsVhfSquelchHotkey?.DisplayName ?? "None";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(DcsArc210PttHotkeyDisplay))]
-    public partial HotkeyBinding? DcsArc210PttHotkey { get; set; }
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(DcsArc164PttHotkeyDisplay))]
-    public partial HotkeyBinding? DcsArc164PttHotkey { get; set; }
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(DcsArc186PttHotkeyDisplay))]
-    public partial HotkeyBinding? DcsArc186PttHotkey { get; set; }
-
-    public string DcsArc210PttHotkeyDisplay => DcsArc210PttHotkey?.DisplayName ?? "None";
-
-    public string DcsArc164PttHotkeyDisplay => DcsArc164PttHotkey?.DisplayName ?? "None";
-
-    public string DcsArc186PttHotkeyDisplay => DcsArc186PttHotkey?.DisplayName ?? "None";
 
     [ObservableProperty] public partial bool InputMeterEnabled { get; set; }
 
@@ -544,9 +527,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _dcsRadioPans = new Dictionary<string, int>(
             settings.DcsRadioPans ?? new Dictionary<string, int>(),
             StringComparer.OrdinalIgnoreCase);
-        DcsArc210PttHotkey = settings.DcsArc210PttHotkey;
-        DcsArc164PttHotkey = settings.DcsArc164PttHotkey;
-        DcsArc186PttHotkey = settings.DcsArc186PttHotkey;
+        _dcsPttHotkeys = new Dictionary<string, HotkeyBinding>(
+            settings.DcsPttHotkeys ?? new Dictionary<string, HotkeyBinding>(),
+            StringComparer.OrdinalIgnoreCase);
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
@@ -742,11 +725,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             BmsRadio1Pan = BmsRadio1Pan,
             BmsRadio2Pan = BmsRadio2Pan,
             DcsRadioPans = new Dictionary<string, int>(_dcsRadioPans, StringComparer.OrdinalIgnoreCase),
+            DcsPttHotkeys = new Dictionary<string, HotkeyBinding>(_dcsPttHotkeys, StringComparer.OrdinalIgnoreCase),
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
-            DcsArc210PttHotkey = DcsArc210PttHotkey,
-            DcsArc164PttHotkey = DcsArc164PttHotkey,
-            DcsArc186PttHotkey = DcsArc186PttHotkey,
             MasterVolume = MasterVolume,
             SidetoneEnabled = SidetoneEnabled,
             MicNormalizationEnabled = MicNormalizationEnabled,
@@ -786,6 +767,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             return;
 
         _dcsRadioPans[radioId] = Math.Clamp(pan, -100, 100);
+    }
+
+    public HotkeyBinding? GetDcsPttHotkey(string radioId) =>
+        _dcsPttHotkeys.GetValueOrDefault(radioId);
+
+    public void SetDcsPttHotkey(string radioId, HotkeyBinding? hotkey)
+    {
+        if (string.IsNullOrWhiteSpace(radioId))
+            return;
+
+        if (hotkey == null)
+            _dcsPttHotkeys.Remove(radioId);
+        else
+            _dcsPttHotkeys[radioId] = hotkey;
     }
 
     private const int MaxAddressHistory = 10;

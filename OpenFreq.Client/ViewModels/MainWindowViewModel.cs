@@ -955,27 +955,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
-    [RelayCommand]
-    private Task BeginCaptureDcsArc210PttHotkeyAsync() =>
-        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc210PttHotkey = binding);
-
-    [RelayCommand]
-    private Task BeginCaptureDcsArc164PttHotkeyAsync() =>
-        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc164PttHotkey = binding);
-
-    [RelayCommand]
-    private Task BeginCaptureDcsArc186PttHotkeyAsync() =>
-        CaptureSettingsHotkeyAsync(binding => Settings.DcsArc186PttHotkey = binding);
-
-    [RelayCommand]
-    private void ClearDcsArc210PttHotkey() => Settings.DcsArc210PttHotkey = null;
-
-    [RelayCommand]
-    private void ClearDcsArc164PttHotkey() => Settings.DcsArc164PttHotkey = null;
-
-    [RelayCommand]
-    private void ClearDcsArc186PttHotkey() => Settings.DcsArc186PttHotkey = null;
-
     private async Task CaptureSettingsHotkeyAsync(Action<HotkeyBinding?> assign)
     {
         IsCapturingHotkey = true;

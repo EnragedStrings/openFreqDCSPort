@@ -220,10 +220,10 @@
                                             <Run Text="Input Gain: " />
                                             <Run Text="{Binding Settings.InputGainText}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="4"
-                                                Value="{Binding Settings.InputGain}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True"
+                                        <Slider Minimum="-40" Maximum="20"
+                                                Value="{Binding Settings.InputGainDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False"
                                                 Margin="0,0,0,4" />
                                         <CheckBox Content="Normalize mic level"
                                                   IsChecked="{Binding Settings.MicNormalizationEnabled}"
@@ -255,12 +255,12 @@
 
                                         <TextBlock Classes="InputLabel" Margin="0,4,0,4">
                                             <Run Text="Master Volume: " />
-                                            <Run Text="{Binding Settings.MasterVolume, StringFormat={}{0:P0}}" />
+                                            <Run Text="{Binding Settings.MasterVolumeDb, StringFormat={}{0:F1} dB}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="2"
-                                                Value="{Binding Settings.MasterVolume}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True" />
+                                        <Slider Minimum="-40" Maximum="12"
+                                                Value="{Binding Settings.MasterVolumeDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False" />
                                     </StackPanel>
                                 </controls:Card>
 
@@ -459,10 +459,10 @@
                                             <Run Text="Input Gain: " />
                                             <Run Text="{Binding Settings.InputGainText}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="4"
-                                                Value="{Binding Settings.InputGain}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True"
+                                        <Slider Minimum="-40" Maximum="20"
+                                                Value="{Binding Settings.InputGainDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False"
                                                 Margin="0,0,0,4" />
                                         <CheckBox Content="Normalize mic level"
                                                   IsChecked="{Binding Settings.MicNormalizationEnabled}"
@@ -494,12 +494,12 @@
 
                                         <TextBlock Classes="InputLabel" Margin="0,4,0,4">
                                             <Run Text="Master Volume: " />
-                                            <Run Text="{Binding Settings.MasterVolume, StringFormat={}{0:P0}}" />
+                                            <Run Text="{Binding Settings.MasterVolumeDb, StringFormat={}{0:F1} dB}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="2"
-                                                Value="{Binding Settings.MasterVolume}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True"
+                                        <Slider Minimum="-40" Maximum="12"
+                                                Value="{Binding Settings.MasterVolumeDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False"
                                                 Margin="0,0,0,8" />
                                     </StackPanel>
                                 </controls:Card>
@@ -835,10 +835,10 @@
                                             <Run Text="Input Gain: " />
                                             <Run Text="{Binding Settings.InputGainText}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="4"
-                                                Value="{Binding Settings.InputGain}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True"
+                                        <Slider Minimum="-40" Maximum="20"
+                                                Value="{Binding Settings.InputGainDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False"
                                                 Margin="0,0,0,4" />
                                         <CheckBox Content="Normalize mic level"
                                                   IsChecked="{Binding Settings.MicNormalizationEnabled}"
@@ -870,12 +870,12 @@
 
                                         <TextBlock Classes="InputLabel" Margin="0,4,0,4">
                                             <Run Text="Master Volume: " />
-                                            <Run Text="{Binding Settings.MasterVolume, StringFormat={}{0:P0}}" />
+                                            <Run Text="{Binding Settings.MasterVolumeDb, StringFormat={}{0:F1} dB}" />
                                         </TextBlock>
-                                        <Slider Minimum="0" Maximum="2"
-                                                Value="{Binding Settings.MasterVolume}"
-                                                TickFrequency="0.05"
-                                                IsSnapToTickEnabled="True"
+                                        <Slider Minimum="-40" Maximum="12"
+                                                Value="{Binding Settings.MasterVolumeDb}"
+                                                TickFrequency="1"
+                                                IsSnapToTickEnabled="False"
                                                 Margin="0,0,0,12"/>
                                     </StackPanel>
                                 </controls:Card>

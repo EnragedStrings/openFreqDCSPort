@@ -145,7 +145,7 @@ public class OpenFreqService : IOpenFreqService
             {
                 WeakReferenceMessenger.Default.Send(
                     new SignalStrengthTracker.SignalStrengthUpdateMessage(frequencyKhz, strengthData.StrengthPercent,
-                        strengthData.SnrDb));
+                        strengthData.SnrDb, strengthData.ReceivedDb));
             },
             updateIntervalMs: 100, // UI update rate
             signalTimeoutMs: 500 // How long until "no signal"
@@ -224,7 +224,7 @@ public class OpenFreqService : IOpenFreqService
     public double InputGain
     {
         get => field;
-        set => field = Math.Clamp(value, 0.0d, 4.0d);
+        set => field = Math.Clamp(value, 0.0d, 10.0d); // +20 dB ceiling
     } = 1.0d;
 
     public bool DcsLineOfSightEnabled { get; set; } = true;

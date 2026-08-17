@@ -83,7 +83,10 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public string? DcsRadioId { get; set; }
 
     [ObservableProperty] public partial double SignalStrengthPercent { get; set; }
-    [ObservableProperty] public partial double SignalStrengthDbm { get; set; }
+    /// <summary>Received signal-to-noise ratio, in dB.</summary>
+    [ObservableProperty] public partial double SignalStrengthSnrDb { get; set; }
+    /// <summary>Received signal level, in dBm.</summary>
+    [ObservableProperty] public partial double SignalStrengthReceivedDb { get; set; }
 
     [ObservableProperty]
     public partial Channel.ChannelConnectionStatus ConnectionStatus { get; set; } =
@@ -196,7 +199,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
                 if (FrequencyKhz == m.FrequencyKhz)
                 {
                     SignalStrengthPercent = m.StrengthPercent;
-                    SignalStrengthDbm = m.SnrDb;
+                    SignalStrengthSnrDb = m.SnrDb;
+                    SignalStrengthReceivedDb = m.ReceivedDb;
                 }
             });
     }

@@ -16,13 +16,18 @@ public class SignalStrengthTracker : IDisposable
     private readonly ConcurrentDictionary<int, bool> _squelchStates = new();
     private readonly Timer _updateTimer;
     private readonly Timer _noiseTimer;
-    private readonly Action<int, (float StrengthPercent, float SnrDb)> _onSignalStrengthChanged;
+    private readonly Action<int, (float StrengthPercent, float SnrDb, float ReceivedDb)> _onSignalStrengthChanged;
     private readonly Random _random = new();
     private float _noisePhase;
+
+    // Noise floor shown when squelch is open but nothing is being received — not a real
+    // measurement, just a plausible "quiet receiver" baseline for the numeric readout.
+    private const float NoiseFloorReceivedDb = -110f;
 
     private class SignalStrengthData
     {
         public float SnrDb { get; set; }
+        public float ReceivedDb { get; set; }
         public float Strength { get; set; }
         public DateTime LastUpdate { get; set; }
     }
@@ -31,7 +36,7 @@ public class SignalStrengthTracker : IDisposable
     public int SignalTimeoutMs { get; }
 
     public SignalStrengthTracker(
-        Action<int, (float StrengthPercent, float SnrDb)> onSignalStrengthChanged,
+        Action<int, (float StrengthPercent, float SnrDb, float ReceivedDb)> onSignalStrengthChanged,
         int updateIntervalMs = 200,
         int signalTimeoutMs = 200,
         int noiseUpdateIntervalMs = 200)
@@ -63,12 +68,14 @@ public class SignalStrengthTracker : IDisposable
             new SignalStrengthData
             {
                 SnrDb = audioParams.ReceivedSnrDb,
+                ReceivedDb = audioParams.ReceivedDb,
                 Strength = strength,
                 LastUpdate = DateTime.UtcNow
             },
             (_, existing) =>
             {
                 existing.SnrDb = audioParams.ReceivedSnrDb;
+                existing.ReceivedDb = audioParams.ReceivedDb;
                 existing.Strength = strength;
                 existing.LastUpdate = DateTime.UtcNow;
                 return existing;
@@ -136,12 +143,14 @@ public class SignalStrengthTracker : IDisposable
                     new SignalStrengthData
                     {
                         SnrDb = variation, // ~0 dB ±1.5
+                        ReceivedDb = NoiseFloorReceivedDb + variation,
                         Strength = strength, // 0-3% strength at noise floor
                         LastUpdate = DateTime.UtcNow
                     },
                     (_, existing) =>
                     {
                         existing.SnrDb = variation;
+                        existing.ReceivedDb = NoiseFloorReceivedDb + variation;
                         existing.Strength = strength;
                         existing.LastUpdate = DateTime.UtcNow;
                         return existing;
@@ -166,28 +175,31 @@ public class SignalStrengthTracker : IDisposable
 
             bool hasRecentTransmission = data != null && (now - data.LastUpdate) <= timeout;
 
-            float strength, snrDb;
+            float strength, snrDb, receivedDb;
 
             if (hasRecentTransmission)
             {
                 // Active transmission or recent noise update
                 strength = data!.Strength;
                 snrDb = data.SnrDb;
+                receivedDb = data.ReceivedDb;
             }
             else if (squelchOpen)
             {
                 // Squelch open, no transmission - show noise floor
                 strength = 0f;
                 snrDb = 0f; // At noise floor
+                receivedDb = NoiseFloorReceivedDb;
             }
             else
             {
                 // Squelch closed - no display
                 strength = 0f;
                 snrDb = 0f;
+                receivedDb = NoiseFloorReceivedDb;
             }
 
-            _onSignalStrengthChanged(frequencyKhz, (strength, snrDb));
+            _onSignalStrengthChanged(frequencyKhz, (strength, snrDb, receivedDb));
         }
     }
 
@@ -235,12 +247,14 @@ public class SignalStrengthTracker : IDisposable
         public int FrequencyKhz { get; }
         public float StrengthPercent { get; } // 0-100
         public float SnrDb { get; }
+        public float ReceivedDb { get; }
 
-        public SignalStrengthUpdateMessage(int frequencyKhz, float strengthPercent, float snrDb)
+        public SignalStrengthUpdateMessage(int frequencyKhz, float strengthPercent, float snrDb, float receivedDb)
         {
             FrequencyKhz = frequencyKhz;
             StrengthPercent = strengthPercent;
             SnrDb = snrDb;
+            ReceivedDb = receivedDb;
         }
     }
 }

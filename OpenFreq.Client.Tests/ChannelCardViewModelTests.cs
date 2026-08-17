@@ -29,10 +29,12 @@ public class ChannelCardViewModelTests
         var vm = CreateVm();
 
         WeakReferenceMessenger.Default.Send(
-            new SignalStrengthTracker.SignalStrengthUpdateMessage(Freq, strengthPercent: 0.75f, snrDb: 12.5f));
+            new SignalStrengthTracker.SignalStrengthUpdateMessage(Freq, strengthPercent: 0.75f, snrDb: 12.5f,
+                receivedDb: -75f));
 
         Assert.Equal(0.75, vm.SignalStrengthPercent, precision: 3);
-        Assert.Equal(12.5, vm.SignalStrengthDbm, precision: 3);
+        Assert.Equal(12.5, vm.SignalStrengthSnrDb, precision: 3);
+        Assert.Equal(-75, vm.SignalStrengthReceivedDb, precision: 3);
     }
 
     [Fact]
@@ -41,9 +43,11 @@ public class ChannelCardViewModelTests
         var vm = CreateVm(Freq);
 
         WeakReferenceMessenger.Default.Send(
-            new SignalStrengthTracker.SignalStrengthUpdateMessage(Freq + 1000, strengthPercent: 0.9f, snrDb: 20f));
+            new SignalStrengthTracker.SignalStrengthUpdateMessage(Freq + 1000, strengthPercent: 0.9f, snrDb: 20f,
+                receivedDb: -60f));
 
         Assert.Equal(0, vm.SignalStrengthPercent);
-        Assert.Equal(0, vm.SignalStrengthDbm);
+        Assert.Equal(0, vm.SignalStrengthSnrDb);
+        Assert.Equal(0, vm.SignalStrengthReceivedDb);
     }
 }

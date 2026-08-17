@@ -15,10 +15,15 @@ namespace OpenFreqAudio;
 /// </summary>
 public sealed class CvsdColorationEffect
 {
-    private const float StepMin = 0.02f;
-    private const float StepMax = 0.35f;
-    private const float StepGrow = 1.5f;
-    private const float StepDecay = 0.985f;
+    private const float StepMin = 0.015f;
+    private const float StepMax = 0.12f;
+    private const float StepGrow = 1.3f;
+    private const float StepDecay = 0.98f;
+
+    // Blended with the dry signal rather than replacing it outright — a full-strength quantizer
+    // read as harsh static rather than a subtle "digital" grain. Tune this (0 = no effect,
+    // 1 = original full-strength quantizer) to taste.
+    private const float WetMix = 0.4f;
 
     private float _step = StepMin;
     private float _quantized;
@@ -33,6 +38,6 @@ public sealed class CvsdColorationEffect
             _step = Math.Max(StepMin, _step * StepDecay);
 
         _quantized += Math.Sign(error) * _step;
-        return _quantized;
+        return sample * (1f - WetMix) + _quantized * WetMix;
     }
 }

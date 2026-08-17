@@ -47,13 +47,26 @@ namespace OpenFreqAudio.Tests
         }
 
         [Fact]
-        public void Classify_ClearTxCipherRx_IsWrongKey()
+        public void Classify_CipherToCryptoCapableButNotEncrypted_IsPassiveCiphertext_NotWrongKey()
         {
-            // No documented distinction from the wrong-key case (see design notes).
+            // Crypto-capable but not switched to cipher mode never attempts synchronization, so
+            // it behaves like an ordinary receiver (continuous ciphertext texture) rather than
+            // going through the sync-fail beep/burst/mute sequence.
+            var (matched, wrongKey, passive) = KySecureReceiveState.Classify(
+                slotEnc: false, slotEncKey: 0, slotCryptoCapable: true, streamEnc: true, streamEncKey: 1);
+            Assert.False(matched);
+            Assert.False(wrongKey);
+            Assert.True(passive);
+        }
+
+        [Fact]
+        public void Classify_ClearTxEncryptedRx_IsPlainPass()
+        {
+            // An encrypted (KY-58-engaged) receiver can still hear clear traffic normally.
             var (matched, wrongKey, passive) = KySecureReceiveState.Classify(
                 slotEnc: true, slotEncKey: 1, slotCryptoCapable: true, streamEnc: false, streamEncKey: 0);
             Assert.False(matched);
-            Assert.True(wrongKey);
+            Assert.False(wrongKey);
             Assert.False(passive);
         }
 

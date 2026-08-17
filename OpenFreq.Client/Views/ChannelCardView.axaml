@@ -188,40 +188,30 @@
 
                 </StackPanel>
 
-                <!-- Signal Strength & Squelch Indicator Row -->
+                <!-- Signal/SNR Readout & Squelch Indicator Row -->
                 <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
                       ColumnDefinitions="*,Auto"
-                      RowDefinitions="Auto,Auto"
                       Margin="0,5,0,0"
                       IsVisible="{Binding Settings.Is3dMode}">
 
-                    <!-- Signal Label with Value -->
-                    <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                    <!-- Numeric signal + SNR readout, for debugging -->
+                    <StackPanel Grid.Column="0"
                                 Orientation="Horizontal"
-                                Spacing="8"
-                                Margin="0,0,0,6">
-                        <TextBlock Text="Signal Strength"
-                                   FontSize="11"
-                                   Opacity="0.6" />
-                        <TextBlock Text="{Binding SignalStrengthDbm, StringFormat={}{0:F0} dB SNR}"
+                                Spacing="10"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding IsEditable}">
+                        <TextBlock Text="{Binding SignalStrengthReceivedDb, StringFormat={}{0:F0} dBm}"
                                    FontSize="11"
                                    FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SystemAccentColor}"
-                                   IsVisible="{Binding IsEditable}" />
+                                   Foreground="{DynamicResource SystemAccentColor}" />
+                        <TextBlock Text="{Binding SignalStrengthSnrDb, StringFormat={}SNR {0:F1} dB}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SystemAccentColor}" />
                     </StackPanel>
 
-                    <!-- Signal Strength Progress Bar -->
-                    <ProgressBar Grid.Row="1" Grid.Column="0"
-                                 Value="{Binding SignalStrengthPercent}"
-                                 Maximum="100"
-                                 Height="6"
-                                 Margin="0,0,8,0"
-                                 CornerRadius="3"
-                                 Foreground="{DynamicResource SystemAccentColor}"
-                                 Background="{DynamicResource MaterialDividerBrush}" />
-
                     <!-- Squelch Indicator - Only visible when connected -->
-                    <Button Grid.Row="1" Grid.Column="1" Command="{Binding ToggleSquelchCommand}"
+                    <Button Grid.Column="1" Command="{Binding ToggleSquelchCommand}"
                             BorderBrush="{DynamicResource MaterialDividerBrush}"
                             BorderThickness="1"
                             CornerRadius="4"

@@ -49,23 +49,30 @@ public sealed class KySecureReceiveState
 
     /// <summary>
     /// Classify a (receiving slot, transmitting stream) pair into the three COMSEC outcomes the
-    /// state machine cares about. TX-clear/RX-clear is intentionally excluded here — the caller
-    /// only invokes this once it already knows at least one side is encrypted.
+    /// state machine cares about.
     /// </summary>
     public static (bool matchedCipher, bool wrongKey, bool passiveCiphertext) Classify(
         bool slotEnc, int slotEncKey, bool slotCryptoCapable, bool streamEnc, int streamEncKey)
     {
         if (!streamEnc)
         {
-            // TX clear, RX set to cipher: no documented distinction from the wrong-key case.
-            return slotEnc ? (false, true, false) : (false, false, false);
+            // Clear transmission: always intelligible, regardless of the receiver's own crypto
+            // state — a KY-58-engaged radio can still hear plain traffic on the same frequency
+            // (real KY-58 hardware passes plaintext audio through in PT mode), it just can't go
+            // the other way: an unencrypted listener can never make sense of cipher traffic.
+            return (false, false, false);
         }
 
-        if (!slotCryptoCapable)
+        // Encrypted transmission. Two distinct "can't understand it" cases, matching real KY-58
+        // behavior:
+        //  - no KY-58 hardware at all, or present but not switched to cipher mode: neither one
+        //    ever attempts synchronization, so there's no sync-fail sequence — just the raw
+        //    digital ciphertext waveform passing straight through, continuously.
+        //  - switched to cipher mode and actively attempting to decrypt, but with the wrong key:
+        //    synchronization is attempted and fails, producing the documented
+        //    beep -> noise-burst -> mute sequence (see KySecureReceiveState.Update).
+        if (!slotCryptoCapable || !slotEnc)
             return (false, false, true);
-
-        if (!slotEnc)
-            return (false, true, false);
 
         return slotEncKey == streamEncKey ? (true, false, false) : (false, true, false);
     }

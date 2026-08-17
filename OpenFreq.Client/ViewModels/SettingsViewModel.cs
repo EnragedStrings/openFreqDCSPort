@@ -110,12 +110,36 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial string OutputDeviceName { get; set; } = string.Empty;
 
-    [ObservableProperty] public partial double MasterVolume { get; set; } = 1.0;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterVolumeDb))]
+    public partial double MasterVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool SidetoneEnabled { get; set; } = false;
     [ObservableProperty] public partial bool MicNormalizationEnabled { get; set; } = true;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(InputGainText))]
+    [NotifyPropertyChangedFor(nameof(InputGainDb))]
     public partial double InputGain { get; set; } = 1.0;
+
+    /// <summary>Master output volume in dB (0 dB = unity gain). Backed by the linear
+    /// <see cref="MasterVolume"/> multiplier that the audio engine actually consumes.</summary>
+    public double MasterVolumeDb
+    {
+        get => LinearGainToDb(MasterVolume);
+        set => MasterVolume = DbToLinearGain(value);
+    }
+
+    /// <summary>Mic input gain in dB (0 dB = unity gain). Backed by the linear
+    /// <see cref="InputGain"/> multiplier that the audio engine actually consumes.</summary>
+    public double InputGainDb
+    {
+        get => LinearGainToDb(InputGain);
+        set => InputGain = DbToLinearGain(value);
+    }
+
+    private const double MinDisplayableDb = -80.0;
+    private static double LinearGainToDb(double linear) =>
+        linear <= 0.0001 ? MinDisplayableDb : 20.0 * Math.Log10(linear);
+    private static double DbToLinearGain(double db) => Math.Pow(10.0, db / 20.0);
     [ObservableProperty] public partial double SidetoneVolume { get; set; } = 0.4;
     [ObservableProperty] public partial double AmbientNoiseVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool AutoRecordInGameMode { get; set; } = false;
@@ -207,7 +231,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     public string MicInputLevelText => $"{MicInputLevel:P0}";
 
-    public string InputGainText => $"{InputGain:P0}";
+    public string InputGainText => $"{InputGainDb:F1} dB";
 
 
     // This is displayed in the Top Bar but shared throughout the app

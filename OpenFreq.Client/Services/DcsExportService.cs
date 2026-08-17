@@ -128,6 +128,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     public event EventHandler<DcsRadioChangedEventArgs>? RadioChanged;
     public event EventHandler<DcsPttChangedEventArgs>? PttChanged;
+    public event EventHandler<DcsToneChangedEventArgs>? ToneChanged;
     public event EventHandler<DcsGameModeChangedEventArgs>? GameModeChanged;
     public event EventHandler<DcsAircraftChangedEventArgs>? AircraftChanged;
     public event EventHandler<DcsHeightmapChangedEventArgs>? HeightmapChanged;
@@ -369,10 +370,13 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 offRadio.SecondaryFrequencyHz = 0;
                 offRadio.IsOn = false;
                 offRadio.Ptt = false;
+                offRadio.ToneOn = false;
 
                 RadioChanged?.Invoke(this, new DcsRadioChangedEventArgs(oldRadio.Clone(), offRadio.Clone()));
                 if (oldRadio.Ptt)
                     PttChanged?.Invoke(this, new DcsPttChangedEventArgs(offRadio.Clone(), true, false));
+                if (oldRadio.ToneOn)
+                    ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(offRadio.Clone(), true, false));
             }
 
             _losResults.Clear();
@@ -436,6 +440,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 PttChanged?.Invoke(this, new DcsPttChangedEventArgs(normalized.Clone(), oldRadio.Ptt, normalized.Ptt));
             else if (oldRadio == null && normalized.Ptt)
                 PttChanged?.Invoke(this, new DcsPttChangedEventArgs(normalized.Clone(), false, true));
+
+            if (oldRadio != null && oldRadio.ToneOn != normalized.ToneOn)
+                ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(normalized.Clone(), oldRadio.ToneOn, normalized.ToneOn));
+            else if (oldRadio == null && normalized.ToneOn)
+                ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(normalized.Clone(), false, true));
         }
 
         foreach (var staleSlot in _radios.Keys.Where(slot => !seenRadios.Contains(slot)).ToList())
@@ -447,10 +456,13 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             offRadio.SecondaryFrequencyHz = 0;
             offRadio.IsOn = false;
             offRadio.Ptt = false;
+            offRadio.ToneOn = false;
 
             RadioChanged?.Invoke(this, new DcsRadioChangedEventArgs(oldRadio.Clone(), offRadio.Clone()));
             if (oldRadio.Ptt)
                 PttChanged?.Invoke(this, new DcsPttChangedEventArgs(offRadio.Clone(), true, false));
+            if (oldRadio.ToneOn)
+                ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(offRadio.Clone(), true, false));
         }
 
         if (!string.Equals(oldUnit, packet.Unit, StringComparison.Ordinal) ||
@@ -485,7 +497,9 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         oldRadio.Name != newRadio.Name ||
         oldRadio.Enc != newRadio.Enc ||
         oldRadio.EncKey != newRadio.EncKey ||
-        oldRadio.HqOn != newRadio.HqOn;
+        oldRadio.HqOn != newRadio.HqOn ||
+        oldRadio.SquelchOn != newRadio.SquelchOn ||
+        oldRadio.ToneOn != newRadio.ToneOn;
 
     private void ChangeState(ServiceState newState)
     {

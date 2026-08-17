@@ -414,12 +414,11 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    public void ToggleSquelch()
-    {
-        IsSquelchEnabled = !IsSquelchEnabled;
+    public void ToggleSquelch() => IsSquelchEnabled = !IsSquelchEnabled;
+
+    partial void OnIsSquelchEnabledChanged(bool value) =>
         WeakReferenceMessenger.Default.Send(new SquelchEnabledDisabledMessage(channelId: Id,
-            frequencyKhz: FrequencyKhz, squelchEnabled: IsSquelchEnabled));
-    }
+            frequencyKhz: FrequencyKhz, squelchEnabled: value));
 
     public void Dispose()
     {

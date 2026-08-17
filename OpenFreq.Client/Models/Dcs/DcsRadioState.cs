@@ -20,6 +20,14 @@ public class DcsRadioState
     /// <summary>HAVE QUICK frequency-hopping engaged for this radio.</summary>
     public bool HqOn { get; set; }
 
+    /// <summary>Cockpit squelch switch state: true = normal/closed squelch, false = the pilot
+    /// has manually opened squelch to monitor weak/garbled signals.</summary>
+    public bool SquelchOn { get; set; } = true;
+
+    /// <summary>ARC-186 momentary TONE switch held: keys the radio and transmits an attention
+    /// tone instead of mic audio. Always false for the other radios.</summary>
+    public bool ToneOn { get; set; }
+
     public int FrequencyKhz => (int)Math.Round(FrequencyHz / 1000d);
     public int SecondaryFrequencyKhz => (int)Math.Round(SecondaryFrequencyHz / 1000d);
 
@@ -37,7 +45,9 @@ public class DcsRadioState
             Ptt = Ptt,
             Enc = Enc,
             EncKey = EncKey,
-            HqOn = HqOn
+            HqOn = HqOn,
+            SquelchOn = SquelchOn,
+            ToneOn = ToneOn
         };
     }
 }

@@ -555,7 +555,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MinimizeOnConnect = settings.MinimizeOnConnect;
         AmbientNoiseVolume = settings.AmbientNoiseVolume;
         AutoRecordInGameMode = settings.AutoRecordInGameMode;
-        DcsManualRadioControlOverride = settings.DcsManualRadioControlOverride;
+        // Manual volume/squelch override always starts off, regardless of the saved value --
+        // cockpit-driven control should be the default state on every launch.
+        DcsManualRadioControlOverride = false;
         // Keep the computed AppData default when no path was saved.
         if (!string.IsNullOrWhiteSpace(settings.RecordingPath))
             RecordingPath = settings.RecordingPath;

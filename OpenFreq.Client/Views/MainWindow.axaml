@@ -978,13 +978,6 @@
                                     Orientation="Horizontal"
                                     Spacing="4"
                                     VerticalAlignment="Center">
-                            <StackPanel.IsEnabled>
-                                <MultiBinding Converter="{x:Static BoolConverters.And}">
-                                    <Binding Path="Settings.ModeIsGci" />
-                                    <Binding Path="OpenFreqConnected" />
-                                </MultiBinding>
-                            </StackPanel.IsEnabled>
-
                             <StackPanel.Styles>
                                 <Style Selector="RadioButton">
                                     <Setter Property="Theme" Value="{StaticResource MaterialButtonlikeRadioButton}" />
@@ -1002,9 +995,26 @@
                                 </Style>
                             </StackPanel.Styles>
 
+                            <!-- In GCI mode either option is selectable once connected (there's no
+                                 live game-state signal to drive it automatically). In DCS mode,
+                                 Lobby is selectable as soon as the mission export is running, but
+                                 Game requires actually being seated in the A-10C II (real cockpit
+                                 data). BMS drives Is3dMode automatically and doesn't use this toggle. -->
                             <RadioButton GroupName="3dMode"
                                          IsChecked="{Binding !Settings.Is3dMode}"
                                          ToolTip.Tip="Lobby Mode - Your voice will only be heard by other players in the Lobby without any effects.">
+                                <RadioButton.IsEnabled>
+                                    <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                            <Binding Path="Settings.ModeIsGci" />
+                                            <Binding Path="OpenFreqConnected" />
+                                        </MultiBinding>
+                                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                            <Binding Path="Settings.ModeIsDcs" />
+                                            <Binding Path="DcsExportConnected" />
+                                        </MultiBinding>
+                                    </MultiBinding>
+                                </RadioButton.IsEnabled>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <avalonia:MaterialIcon Kind="Account" Width="20" Height="20" />
                                     <TextBlock Text="Lobby" VerticalAlignment="Center" />
@@ -1014,6 +1024,18 @@
                             <RadioButton GroupName="3dMode"
                                          IsChecked="{Binding Settings.Is3dMode}"
                                          ToolTip.Tip="3D Mode - Your voice will only be heard by other players in the game.">
+                                <RadioButton.IsEnabled>
+                                    <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                            <Binding Path="Settings.ModeIsGci" />
+                                            <Binding Path="OpenFreqConnected" />
+                                        </MultiBinding>
+                                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                            <Binding Path="Settings.ModeIsDcs" />
+                                            <Binding Path="DcsInGame" />
+                                        </MultiBinding>
+                                    </MultiBinding>
+                                </RadioButton.IsEnabled>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <avalonia:MaterialIcon Kind="ShieldAirplane" Width="20" Height="20" />
                                     <TextBlock Text="Game" VerticalAlignment="Center" />

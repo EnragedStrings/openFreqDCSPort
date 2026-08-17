@@ -211,9 +211,9 @@
                                    Foreground="{DynamicResource SystemAccentColor}" />
                     </StackPanel>
 
-                    <!-- Squelch toggle. Gated the same as Volume: no DCS cockpit squelch reading
-                         exists yet, so "cockpit default" is just squelch-on until that's added;
-                         the manual-override setting still governs whether the user can change it. -->
+                    <!-- Squelch toggle. Gated the same as Volume: the cockpit squelch switch
+                         drives this by default; the manual-override setting governs whether the
+                         user can override it instead. -->
                     <Button Grid.Column="1" Command="{Binding ToggleSquelchCommand}"
                             IsEnabled="{Binding CanAdjustRadioControls}"
                             BorderBrush="{DynamicResource MaterialDividerBrush}"

@@ -33,6 +33,7 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     event EventHandler<DcsRadioChangedEventArgs>? RadioChanged;
     event EventHandler<DcsPttChangedEventArgs>? PttChanged;
+    event EventHandler<DcsToneChangedEventArgs>? ToneChanged;
     event EventHandler<DcsGameModeChangedEventArgs>? GameModeChanged;
     event EventHandler<DcsAircraftChangedEventArgs>? AircraftChanged;
     event EventHandler<DcsHeightmapChangedEventArgs>? HeightmapChanged;
@@ -49,6 +50,13 @@ public class DcsPttChangedEventArgs(DcsRadioState radio, bool oldPtt, bool newPt
     public DcsRadioState Radio { get; } = radio;
     public bool OldPtt { get; } = oldPtt;
     public bool NewPtt { get; } = newPtt;
+}
+
+public class DcsToneChangedEventArgs(DcsRadioState radio, bool oldToneOn, bool newToneOn) : EventArgs
+{
+    public DcsRadioState Radio { get; } = radio;
+    public bool OldToneOn { get; } = oldToneOn;
+    public bool NewToneOn { get; } = newToneOn;
 }
 
 public class DcsGameModeChangedEventArgs(bool oldIsInGame, bool newIsInGame) : EventArgs

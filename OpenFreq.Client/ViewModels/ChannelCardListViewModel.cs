@@ -43,6 +43,14 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private const string BmsLocationName = "BMS Channels";
     private const string DcsLocationName = "DCS A-10C II Radios";
+
+    // ARC-210 TR+G ("guard") monitoring: the only DCS radio that listens on 243.0 simultaneously
+    // with its tuned frequency, so unlike guard on the other radios it isn't representable as a
+    // regular tuned channel and instead gets joined silently in the background, with no card of
+    // its own. See SyncArc210GuardMonitorOnUiThread.
+    private const int Arc210GuardFrequencyKhz = 243000;
+    private readonly Guid _arc210GuardSlotId = Guid.NewGuid();
+    private bool _arc210GuardJoined;
     public LocationViewModel? FalconLocation { get; private set; }
     public LocationViewModel? DcsLocation { get; private set; }
 
@@ -107,6 +115,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
         _dcsExportService.RadioChanged += OnDcsRadioChanged;
+        _dcsExportService.ToneChanged += OnDcsToneChanged;
         _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
         _dcsExportService.StateChanged += OnDcsStateChanged;
 
@@ -556,6 +565,34 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         });
     }
 
+    /// <summary>ARC-186 TONE: key/unkey a transmission on that radio's channel the same way real
+    /// PTT would, except OpenFreqService substitutes a synthesized tone for the mic buffer while
+    /// it's the only active transmission (see OpenFreqService.RecordProcedure).</summary>
+    private void OnDcsToneChanged(object? sender, DcsToneChangedEventArgs e)
+    {
+        if (!_settings.ModeIsDcs) return;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (DcsLocation == null) return;
+
+            var channel = DcsLocation.Channels.FirstOrDefault(c => c.DcsRadioId == GetDcsRadioKey(e.Radio));
+            if (channel == null || channel.ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected) return;
+
+            if (e.NewToneOn)
+            {
+                var mutedFrequencies = new List<int> { channel.FrequencyKhz };
+                _openFreqService.StartToneTransmissionAsync(channel.FrequencyKhz, channel.Id, mutedFrequencies)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+            }
+            else
+            {
+                _openFreqService.StopToneTransmissionAsync(channel.FrequencyKhz)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+            }
+        });
+    }
+
     private async void OnDcsStateChanged(object? sender, ServiceStateChangedEventArgs e)
     {
         if (!_settings.ModeIsDcs) return;
@@ -589,23 +626,45 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             allowTransmit: true,
             enc: radio.Enc,
             encKey: radio.EncKey,
-            hqOn: radio.HqOn);
+            hqOn: radio.HqOn,
+            squelchOn: radio.SquelchOn);
 
-        // Guard is a fixed emergency frequency, never encrypted.
-        SyncDcsChannelOnUiThread(
-            key: GetDcsRadioKey(radio, secondary: true),
-            name: $"{radio.Name} Guard",
-            frequencyKhz: radio.SecondaryFrequencyKhz,
-            shouldBeJoined: IsUsableDcsRadio(radio) && radio.SecondaryFrequencyKhz > 0,
-            volume: radio.Volume,
-            allowTransmit: false,
-            enc: false,
-            encKey: 0,
-            hqOn: false);
+        if (radio.Slot == DcsRadioSlot.Arc210)
+            SyncArc210GuardMonitorOnUiThread(radio);
+    }
+
+    /// <summary>The ARC-210 is the only DCS radio with true simultaneous guard monitoring
+    /// (TR+G): it listens on 243.0 in addition to its tuned frequency without retuning away
+    /// from it. That doesn't map to a regular tuned channel, so it's joined/left silently here
+    /// instead of getting its own channel card. <see cref="DcsRadioState.SecondaryFrequencyHz"/>
+    /// is 0 unless TR+G mode is currently selected (see OpenFreqDCS.lua's getArc210GuardHz).</summary>
+    private void SyncArc210GuardMonitorOnUiThread(DcsRadioState radio)
+    {
+        if (DcsLocation == null || !_openFreqService.IsAuthenticated) return;
+
+        var shouldMonitor = IsUsableDcsRadio(radio) && radio.SecondaryFrequencyKhz > 0;
+        if (shouldMonitor)
+        {
+            if (!_arc210GuardJoined)
+            {
+                _openFreqService.JoinFrequencyAsync(Arc210GuardFrequencyKhz, _arc210GuardSlotId,
+                        DcsLocation.RadioStationData)
+                    .Wait(TimeSpan.FromMilliseconds(500));
+                _openFreqService.SetSquelch(Arc210GuardFrequencyKhz, _arc210GuardSlotId, isSquelchClosed: true);
+                _arc210GuardJoined = true;
+            }
+            _openFreqService.SetVolume(Arc210GuardFrequencyKhz, _arc210GuardSlotId, (float)radio.Volume);
+        }
+        else if (_arc210GuardJoined)
+        {
+            _openFreqService.LeaveFrequencyAsync(Arc210GuardFrequencyKhz, _arc210GuardSlotId)
+                .Wait(TimeSpan.FromMilliseconds(500));
+            _arc210GuardJoined = false;
+        }
     }
 
     private void SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,
-        double volume, bool allowTransmit, bool enc, int encKey, bool hqOn)
+        double volume, bool allowTransmit, bool enc, int encKey, bool hqOn, bool squelchOn)
     {
         if (DcsLocation == null) return;
 
@@ -661,12 +720,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                     .Wait(TimeSpan.FromMilliseconds(500));
             }
 
-            // Cockpit drives volume by default; the manual-override setting lets the channel's
-            // own Volume control (see ChannelCardViewModel) take over instead. Squelch has no
-            // known DCS cockpit source yet, so it stays UI-driven regardless of this setting.
+            // Cockpit drives volume and squelch by default; the manual-override setting lets the
+            // channel's own Volume/Squelch controls (see ChannelCardViewModel) take over instead.
             if (!_settings.DcsManualRadioControlOverride)
             {
                 channel.Volume = volume;
+                channel.IsSquelchEnabled = squelchOn;
             }
             _openFreqService.SetPan(channel.FrequencyKhz, channel.Id, channel.Pan);
         }
@@ -680,16 +739,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     private static bool IsUsableDcsRadio(DcsRadioState radio) =>
         radio.IsOn && radio.FrequencyKhz > IDcsExportService.RadioOffFrequencyKhz;
 
-    private static string GetDcsRadioKey(DcsRadioState radio, bool secondary = false) =>
-        secondary ? $"{radio.Slot}:guard" : radio.Slot.ToString();
+    private static string GetDcsRadioKey(DcsRadioState radio) => radio.Slot.ToString();
 
-    private HotkeyBinding? GetDcsPttHotkey(string radioKey)
-    {
-        var slotKey = radioKey.Split(':', 2)[0];
-        return Enum.TryParse<DcsRadioSlot>(slotKey, out var slot)
-            ? GetDcsPttHotkey(slot)
-            : null;
-    }
+    private HotkeyBinding? GetDcsPttHotkey(string radioKey) =>
+        Enum.TryParse<DcsRadioSlot>(radioKey, out var slot) ? GetDcsPttHotkey(slot) : null;
 
     private HotkeyBinding? GetDcsPttHotkey(DcsRadioSlot slot) => slot switch
     {
@@ -711,9 +764,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 if (channel.DcsRadioId == null)
                     continue;
 
-                channel.PttHotKey = channel.DcsRadioId.Contains(":guard", StringComparison.OrdinalIgnoreCase)
-                    ? null
-                    : GetDcsPttHotkey(channel.DcsRadioId);
+                channel.PttHotKey = GetDcsPttHotkey(channel.DcsRadioId);
             }
         }
 
@@ -1050,6 +1101,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
         _dcsExportService.RadioChanged -= OnDcsRadioChanged;
+        _dcsExportService.ToneChanged -= OnDcsToneChanged;
         _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
         _dcsExportService.StateChanged -= OnDcsStateChanged;
         _openFreqService.ConnectionStateChanged -= OnOpenFreqConnectionStateChanged;

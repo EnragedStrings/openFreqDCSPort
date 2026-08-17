@@ -39,6 +39,11 @@ public class OpenFreqService : IOpenFreqService
     private int _recordHandle;
     private readonly ConcurrentDictionary<int, List<int>> _activeTransmissionsAndMutedFrequencies = new();
 
+    // Frequencies currently transmitting a synthesized tone (see StartToneTransmissionAsync)
+    // rather than real mic audio. Subset of _activeTransmissionsAndMutedFrequencies' keys.
+    private readonly ConcurrentDictionary<int, byte> _toneTransmissionFrequencies = new();
+    private double _tonePhase;
+
     private class TunedFrequencyData(RadioStationData radioStation, bool isEnabled)
     {
         public RadioStationData RadioStation { get; set; } = radioStation;
@@ -608,6 +613,7 @@ public class OpenFreqService : IOpenFreqService
         await _client.DisconnectAsync();
         _activeTransmissionsAndMutedFrequencies.Clear();
         _activeTransmissionSlots.Clear();
+        _toneTransmissionFrequencies.Clear();
         _tunedSlots.Clear();
 
         // Stop orphaned BASS streams before clearing the tracking dict.
@@ -797,6 +803,20 @@ public class OpenFreqService : IOpenFreqService
 
         await _client.StopTransmissionAsync(frequencyKhz, Apply3dAudioEffects);
         OnStatusMessage($"Stopped transmitting on {frequencyKhz / 1000d:F3} MHz");
+    }
+
+    /// <inheritdoc />
+    public async Task StartToneTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies)
+    {
+        _toneTransmissionFrequencies.TryAdd(frequencyKhz, 0);
+        await StartTransmissionAsync(frequencyKhz, slotId, mutedFrequencies);
+    }
+
+    /// <inheritdoc />
+    public async Task StopToneTransmissionAsync(int frequencyKhz)
+    {
+        _toneTransmissionFrequencies.TryRemove(frequencyKhz, out _);
+        await StopTransmissionAsync(frequencyKhz);
     }
 
     /// <summary>
@@ -1109,6 +1129,15 @@ public class OpenFreqService : IOpenFreqService
             ApplyInputGain(audioData);
             PublishMicLevel(audioData);
 
+            // If every currently-active transmission is tone-sourced (e.g. ARC-186 TONE), replace
+            // the real mic samples with a synthesized tone before they go out. If a real voice
+            // transmission is ALSO active this cycle, it wins — see StartToneTransmissionAsync.
+            if (!_activeTransmissionsAndMutedFrequencies.IsEmpty &&
+                _activeTransmissionsAndMutedFrequencies.Keys.All(_toneTransmissionFrequencies.ContainsKey))
+            {
+                GenerateTone(audioData);
+            }
+
             // Convert mic to float once and fan out to sidetone (speaker loopback) and/or the
             // session recording (own voice, rendered through radio FX downstream).
             // Pre-allocated buffer avoids GC allocation on the hot audio path.
@@ -1208,6 +1237,22 @@ public class OpenFreqService : IOpenFreqService
         }
 
         return true;
+    }
+
+    // ~1kHz attention tone, matching a real VHF-FM TONE key. Phase is kept in _tonePhase across
+    // calls so consecutive 20ms buffers join without an audible click at the seam.
+    private const double ToneFrequencyHz = 1000.0;
+    private const double ToneAmplitude = 0.6 * short.MaxValue;
+
+    private void GenerateTone(short[] buffer)
+    {
+        double phaseStep = 2.0 * Math.PI * ToneFrequencyHz / OpenFreqRtcClient.SAMPLE_RATE;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            buffer[i] = (short)(ToneAmplitude * Math.Sin(_tonePhase));
+            _tonePhase += phaseStep;
+            if (_tonePhase > 2.0 * Math.PI) _tonePhase -= 2.0 * Math.PI;
+        }
     }
 
     private void ApplyInputGain(short[] samples)
@@ -1931,6 +1976,7 @@ public class OpenFreqService : IOpenFreqService
         // Stop all transmissions and free the recording handle
         StopMicCapture();
         _activeTransmissionsAndMutedFrequencies.Clear();
+        _toneTransmissionFrequencies.Clear();
 
         _playbackService?.StopAll();
         _signalCalculator?.Dispose();

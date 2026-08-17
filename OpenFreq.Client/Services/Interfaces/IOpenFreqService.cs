@@ -86,6 +86,13 @@ public interface IOpenFreqService : IDisposable
     Task LeaveFrequencyAsync(int frequencyKhz, Guid slotId);
     Task StartTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies);
     Task StopTransmissionAsync(int frequencyKhz);
+
+    /// <summary>Like <see cref="StartTransmissionAsync"/>, but the mic buffer is replaced with a
+    /// synthesized attention tone for as long as this is the only active transmission (e.g. the
+    /// ARC-186 TONE switch). If a real voice transmission is active at the same time, that one
+    /// wins for this shared audio cycle — see OpenFreqService.RecordProcedure.</summary>
+    Task StartToneTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies);
+    Task StopToneTransmissionAsync(int frequencyKhz);
     Task UpdateDisplayNameAsync(string newDisplayName);
     Task NotifyModeAsync(bool is3d);
 

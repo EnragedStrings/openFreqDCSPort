@@ -81,6 +81,14 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     [ObservableProperty] public partial bool OpenFreqConnected { get; set; }
 
+    /// <summary>DCS export is receiving packets (mission running), regardless of whether the
+    /// player is actually seated in the A-10C II yet. Drives whether "Lobby" is selectable.</summary>
+    [ObservableProperty] public partial bool DcsExportConnected { get; set; }
+
+    /// <summary>DCS export reports the player is in the A-10C II cockpit. Drives whether "Game"
+    /// (3D) mode is selectable, since it needs real cockpit position data.</summary>
+    [ObservableProperty] public partial bool DcsInGame { get; set; }
+
     /// <summary>True while a session recording is in progress. Drives the REC indicator + button label.</summary>
     [ObservableProperty] public partial bool IsRecording { get; set; }
 
@@ -180,6 +188,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconSharedMemoryService.AircraftInfoChanged += OnAircraftInfoChanged;
         _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
         _dcsExportService.StateChanged += OnDcsExportStateChanged;
+        DcsExportConnected = _dcsExportService.State == ServiceState.Connected;
+        DcsInGame = _dcsExportService.IsInGame;
 
         // IVC Monitor
         _ivcMonitorService.IvcStatusChanged += OnIvcStatusChanged;
@@ -836,7 +846,12 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                 Dispatcher.UIThread.Post(() => Settings.Is3dMode = isFlying);
 
             if (Settings.ConnectionMode == IOpenFreqService.Mode.DCS)
-                Dispatcher.UIThread.Post(() => Settings.Is3dMode = _dcsExportService.IsInGame);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    Settings.Is3dMode = _dcsExportService.IsInGame;
+                    DcsExportConnected = _dcsExportService.State == ServiceState.Connected;
+                    DcsInGame = _dcsExportService.IsInGame;
+                });
 
             if (Settings is { ModeIsBms: true, MinimizeOnConnect: true } ||
                 Settings is { ModeIsDcs: true, MinimizeOnConnect: true })
@@ -876,12 +891,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnDcsGameModeChanged(object? sender, DcsGameModeChangedEventArgs e)
     {
+        Dispatcher.UIThread.Post(() => DcsInGame = e.NewIsInGame);
+
         if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
         Dispatcher.UIThread.Post(() => Settings.Is3dMode = e.NewIsInGame);
     }
 
     private async void OnDcsExportStateChanged(object? sender, ServiceStateChangedEventArgs e)
     {
+        Dispatcher.UIThread.Post(() => DcsExportConnected = e.NewState == ServiceState.Connected);
+
         if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
 
         if (e is not { OldState: ServiceState.Connected, NewState: ServiceState.Disconnected }) return;

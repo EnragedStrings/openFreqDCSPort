@@ -20,6 +20,19 @@ OpenFreqDCSConfig.los.heightOffsetMeters = OpenFreqDCSConfig.los.heightOffsetMet
 OpenFreqDCSConfig.los.maxHeightOffsetMeters = OpenFreqDCSConfig.los.maxHeightOffsetMeters or 200
 OpenFreqDCSConfig.los.heightOffsetStepMeters = OpenFreqDCSConfig.los.heightOffsetStepMeters or 20
 
+-- Diagnostic tool for finding unknown cockpit argument IDs (e.g. squelch switches). Off by
+-- default -- flip on, flip one switch at a time in the cockpit, and read the changed id out of
+-- Logs\OpenFreqDCS.log. See DCS/README.md for details.
+OpenFreqDCSConfig.debugArgScan = OpenFreqDCSConfig.debugArgScan or {}
+OpenFreqDCSConfig.debugArgScan.enabled = OpenFreqDCSConfig.debugArgScan.enabled == true
+OpenFreqDCSConfig.debugArgScan.scanHz = OpenFreqDCSConfig.debugArgScan.scanHz or 20
+OpenFreqDCSConfig.debugArgScan.minId = OpenFreqDCSConfig.debugArgScan.minId or 0
+OpenFreqDCSConfig.debugArgScan.maxId = OpenFreqDCSConfig.debugArgScan.maxId or 900
+OpenFreqDCSConfig.debugArgScan.deviceIds = OpenFreqDCSConfig.debugArgScan.deviceIds or { 0 }
+-- Ids that report a "changed" reading unrelated to any switch (observed noisy on 10 and 600) --
+-- excluded so real switch flips aren't buried in the log.
+OpenFreqDCSConfig.debugArgScan.ignoreIds = OpenFreqDCSConfig.debugArgScan.ignoreIds or { 600, 10 }
+
 OpenFreqDCSConfig.heightmap = OpenFreqDCSConfig.heightmap or {}
 OpenFreqDCSConfig.heightmap.enabled = OpenFreqDCSConfig.heightmap.enabled == true
 

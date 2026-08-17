@@ -47,11 +47,7 @@ pcall(function() json = loadfile("Scripts\\JSON.lua")() end)
 local terrain
 pcall(function() terrain = require("terrain") end)
 
-local function writeDebug(message)
-    if config.debugRadios == false then
-        return
-    end
-
+local function writeLog(message)
     if log and type(log.write) == "function" and log.INFO then
         pcall(log.write, "OpenFreqDCS", log.INFO, message)
     end
@@ -63,6 +59,13 @@ local function writeDebug(message)
             file:close()
         end
     end
+end
+
+local function writeDebug(message)
+    if config.debugRadios == false then
+        return
+    end
+    writeLog(message)
 end
 
 writeDebug(string.format(
@@ -499,23 +502,17 @@ local function getVolume(mainPanel, ...)
     return clamp(volume, 0.0, 1.0)
 end
 
+-- Only the ARC-210 has a true simultaneous-guard mode (TR+G: monitor 243.0 in addition to the
+-- tuned frequency, without retuning away from it). The ARC-164's GRD selector position (167,
+-- index 2) instead exclusively retunes its primary frequency to guard -- getArc164DialFrequencyHz
+-- already reflects that via the device's own get_frequency(), so it needs no separate guard field.
+-- The ARC-186 has no guard capability at all.
 local function getArc210GuardHz(mainPanel)
     if config.a10c2 and config.a10c2.exportGuardFrequencies == false then
         return 0
     end
-    local modeKnob = getArgument(mainPanel, 551, 0)
-    if modeKnob and modeKnob > 0.65 then
-        return 243000000
-    end
-    return 0
-end
-
-local function getArc164GuardHz(mainPanel)
-    if config.a10c2 and config.a10c2.exportGuardFrequencies == false then
-        return 0
-    end
-    local functionKnob = getArgument(mainPanel, 168, 0)
-    if functionKnob and functionKnob > 0.65 then
+    local modeIndex = getSelectorIndex(mainPanel, 551, 0.1)
+    if modeIndex == 1 then -- TR+G
         return 243000000
     end
     return 0
@@ -591,16 +588,38 @@ local function buildA10C2Radios()
         end
     end
 
+    -- Manual squelch-open switches. Rest position (0) is normal/closed squelch; flipping the
+    -- switch opens (disables) squelch to help pick out weak/garbled signals -- mirrors the
+    -- client's existing "open squelch" feature. ARC-186 is a 3-position switch (SQUELCH -1 /
+    -- center 0 / momentary TONE +1); only the SQUELCH position opens squelch, TONE is unrelated.
+    local arc210SquelchOn = getArgument(mainPanel, 568, 0) > 0.5
+    local arc164SquelchOn = getArgument(mainPanel, 170, 0) > 0.5
+    local arc186SquelchOn = getArgument(mainPanel, 148, 0) < -0.5
+    -- Same switch (148), momentary TONE position (+1): keys the ARC-186 and sends an attention
+    -- tone instead of mic audio. Spring-loaded back to center on release, already handled by DCS.
+    local arc186ToneOn = getArgument(mainPanel, 148, 0) > 0.5
+
+    -- ARC-210 power knob (551): 0 = OFF, 0.1 = TR+G, 0.2 = TR, 0.3 = ADF, 0.4 = CHG PRST,
+    -- 0.5 = TEST, 0.6 = ZERO (PULL). The default power heuristic below (frequency > 1000 Hz)
+    -- can't see this since the dial keeps its tuned frequency even when powered off, so gate on
+    -- the knob explicitly whenever it reads OFF.
+    local arc210PowerKnobOff = getSelectorIndex(mainPanel, 551, 0.1) == 0
+    -- ARC-164 power knob (168): 0 = OFF, 0.1 = MAIN, 0.2 = BOTH, 0.3 = ADF. Same dial-keeps-its-
+    -- frequency issue as ARC-210, found via debugArgScan.
+    local arc164PowerKnobOff = getSelectorIndex(mainPanel, 168, 0.1) == 0
+    -- ARC-186 power knob (152): 0 = OFF, 0.1 = TR, 0.2 = DF. Same rationale, found via debugArgScan.
+    local arc186PowerKnobOff = getSelectorIndex(mainPanel, 152, 0.1) == 0
+
     local now = callGlobal("LoGetModelTime", 0)
     local debugSeconds = numberOr(config.debugSeconds, 1)
     if config.debugRadios ~= false and (OpenFreqDCS.nextRadioDebugTime == nil or now >= OpenFreqDCS.nextRadioDebugTime) then
         OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
         local arc210Display = oneLine(arc210DisplayRaw, 220)
         writeDebug(string.format(
-            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s displayRaw=%s displayScan=%s | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
-            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary),
-            textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171, 238, 227, 228)),
-            textOr(arc186Frequency), textOr(arc186RawFrequency), textOr(arc186IsOn), textOr(getArgument(mainPanel, 149, nil)), textOr(getVolume(mainPanel, 147, 238, 223, 224)),
+            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
+            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary),
+            textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171, 238, 227, 228)), textOr(arc164SquelchOn), textOr(arc164PowerKnobOff),
+            textOr(arc186Frequency), textOr(arc186RawFrequency), textOr(arc186IsOn), textOr(getArgument(mainPanel, 149, nil)), textOr(getVolume(mainPanel, 147, 238, 223, 224)), textOr(arc186SquelchOn), textOr(arc186ToneOn), textOr(arc186PowerKnobOff),
             textOr(ptt.arc210), textOr(ptt.arc164), textOr(ptt.arc186), textOr(getArgument(mainPanel, 751, nil)), textOr(getArgument(mainPanel, 752, nil))
         ))
     end
@@ -618,24 +637,28 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = getArc210GuardHz(mainPanel),
             modulation = arc210Modulation,
             volume = getVolume(mainPanel, 238, 225, 226),
-            isOn = getDevicePower(arc210, arc210Frequency, arc210IsOn),
+            isOn = not arc210PowerKnobOff and getDevicePower(arc210, arc210Frequency, arc210IsOn),
             ptt = ptt.arc210,
             enc = arc210Enc,
             encKey = arc210EncKey,
-            hqOn = arc210HqOn
+            hqOn = arc210HqOn,
+            squelchOn = arc210SquelchOn,
+            toneOn = false
         },
         {
             slot = 2,
             name = "ARC-164 UHF",
             frequencyHz = arc164Frequency,
-            secondaryFrequencyHz = getArc164GuardHz(mainPanel),
+            secondaryFrequencyHz = 0, -- GRD retunes the primary frequency instead; see getArc210GuardHz comment
             modulation = getDeviceModulation(arc164, 0),
             volume = getVolume(mainPanel, 171, 238, 227, 228),
-            isOn = getDevicePower(arc164, arc164Frequency, arc164IsOn),
+            isOn = not arc164PowerKnobOff and getDevicePower(arc164, arc164Frequency, arc164IsOn),
             ptt = ptt.arc164,
             enc = arc164Enc,
             encKey = arc164EncKey,
-            hqOn = false
+            hqOn = false,
+            squelchOn = arc164SquelchOn,
+            toneOn = false
         },
         {
             slot = 3,
@@ -644,11 +667,13 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = 0,
             modulation = getDeviceModulation(arc186, 1),
             volume = getVolume(mainPanel, 147, 238, 223, 224),
-            isOn = getDevicePower(arc186, arc186Frequency, arc186IsOn),
+            isOn = not arc186PowerKnobOff and getDevicePower(arc186, arc186Frequency, arc186IsOn),
             ptt = ptt.arc186,
             enc = arc186Enc,
             encKey = arc186EncKey,
-            hqOn = false
+            hqOn = false,
+            squelchOn = arc186SquelchOn,
+            toneOn = arc186ToneOn
         }
     }
 end
@@ -1084,6 +1109,83 @@ function OpenFreqDCS.export(modelTime)
     return OpenFreqDCS.nextExportTime
 end
 
+-- Debug tool for discovering cockpit argument IDs (e.g. squelch switches) that have no known
+-- ID yet. Enable via config.debugArgScan.enabled, then flip one switch at a time in the cockpit
+-- and watch Logs\OpenFreqDCS.ArgScan.log for "changed" lines -- the id that changes right as you
+-- flip the switch is the argument to use. Disable again once done; it's a perf cost. Kept in its
+-- own file (not OpenFreqDCS.log or dcs.log) since it can be high-volume.
+local function writeArgScanLog(message)
+    if writeDir ~= "" then
+        local file = io.open(writeDir .. [[Logs\OpenFreqDCS.ArgScan.log]], "ab")
+        if file then
+            file:write(os.date("!%Y-%m-%dT%H:%M:%SZ "), tostring(message), "\r\n")
+            file:close()
+        end
+    end
+end
+
+local argScanPrevValues = {}
+
+local function scanArgumentsOnce()
+    local scanConfig = config.debugArgScan
+
+    if not OpenFreqDCS.argScanConfigLogged then
+        OpenFreqDCS.argScanConfigLogged = true
+        writeLog(string.format(
+            "argScan config seen at load: present=%s enabled=%s minId=%s maxId=%s deviceIds=%s ignoreIds=%s",
+            tostring(scanConfig ~= nil),
+            tostring(scanConfig and scanConfig.enabled),
+            tostring(scanConfig and scanConfig.minId),
+            tostring(scanConfig and scanConfig.maxId),
+            scanConfig and type(scanConfig.deviceIds) == "table" and table.concat(scanConfig.deviceIds, ",") or "nil",
+            scanConfig and type(scanConfig.ignoreIds) == "table" and table.concat(scanConfig.ignoreIds, ",") or "nil"))
+    end
+
+    if not scanConfig or scanConfig.enabled ~= true then
+        return
+    end
+
+    local now = callGlobal("LoGetModelTime", 0)
+    local hz = numberOr(scanConfig.scanHz, 20)
+    if hz < 1 then hz = 1 end
+    if OpenFreqDCS.nextArgScanTime and now < OpenFreqDCS.nextArgScanTime then
+        return
+    end
+    OpenFreqDCS.nextArgScanTime = now + (1 / hz)
+
+    local minId = math.floor(numberOr(scanConfig.minId, 0))
+    local maxId = math.floor(numberOr(scanConfig.maxId, 900))
+    local deviceIds = scanConfig.deviceIds or { 0 }
+
+    local ignoreIds = {}
+    if type(scanConfig.ignoreIds) == "table" then
+        for _, ignoreId in ipairs(scanConfig.ignoreIds) do
+            ignoreIds[ignoreId] = true
+        end
+    end
+
+    for _, deviceId in ipairs(deviceIds) do
+        local device = getDevice(deviceId)
+        if device then
+            for id = minId, maxId do
+                if not ignoreIds[id] then
+                    local value = getArgument(device, id, nil)
+                    if type(value) == "number" then
+                        local key = deviceId .. ":" .. id
+                        local previous = argScanPrevValues[key]
+                        if previous ~= nil and math.abs(previous - value) > 0.0005 then
+                            writeArgScanLog(string.format(
+                                "device=%d id=%d changed %.4f -> %.4f",
+                                deviceId, id, previous, value))
+                        end
+                        argScanPrevValues[key] = value
+                    end
+                end
+            end
+        end
+    end
+end
+
 local previousStart = LuaExportStart
 local previousStop = LuaExportStop
 local previousAfterNextFrame = LuaExportAfterNextFrame
@@ -1107,6 +1209,7 @@ function LuaExportAfterNextFrame()
     if type(previousAfterNextFrame) == "function" then
         pcall(previousAfterNextFrame)
     end
+    scanArgumentsOnce()
     OpenFreqDCS.export()
 end
 

@@ -19,6 +19,19 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // --profile <name>: isolates settings/logs/recordings under "OpenFreq-<name>" instead of
+        // "OpenFreq", so a second instance can run alongside the normal one on the same machine
+        // (e.g. `dotnet run --project OpenFreq.Client -- --profile test2`) without both instances
+        // fighting over the same config file. Must run before anything touches AppDataPaths.
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] != "--profile") continue;
+            var profileName = args[i + 1].Trim();
+            if (profileName.Length > 0)
+                AppDataPaths.ProfileSuffix = "-" + profileName;
+            break;
+        }
+
         // Initialize Serilog for file logging
         var logsDirectory = AppDataPaths.ClientLogDirectory;
         Directory.CreateDirectory(logsDirectory);

@@ -33,6 +33,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     private DcsVector3? _position;
     private DcsVector3? _velocity;
     private double? _headingRadians;
+    private double? _pitchRadians;
+    private double? _bankRadians;
+    private double _latitude;
+    private double _longitude;
+    private double _altitudeMsl;
     private DcsHeightmapInfo? _heightmapInfo;
     private string _theater = string.Empty;
     private string _unit = string.Empty;
@@ -114,6 +119,46 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         get
         {
             lock (_stateLock) return _headingRadians;
+        }
+    }
+
+    public double? PitchRadians
+    {
+        get
+        {
+            lock (_stateLock) return _pitchRadians;
+        }
+    }
+
+    public double? BankRadians
+    {
+        get
+        {
+            lock (_stateLock) return _bankRadians;
+        }
+    }
+
+    public double Latitude
+    {
+        get
+        {
+            lock (_stateLock) return _latitude;
+        }
+    }
+
+    public double Longitude
+    {
+        get
+        {
+            lock (_stateLock) return _longitude;
+        }
+    }
+
+    public double AltitudeMsl
+    {
+        get
+        {
+            lock (_stateLock) return _altitudeMsl;
         }
     }
 
@@ -223,6 +268,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             _position = null;
             _velocity = null;
             _headingRadians = null;
+            _pitchRadians = null;
+            _bankRadians = null;
+            _latitude = 0;
+            _longitude = 0;
+            _altitudeMsl = 0;
             _heightmapInfo = null;
             _theater = string.Empty;
             _unit = string.Empty;
@@ -359,6 +409,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 _position = null;
                 _velocity = null;
                 _headingRadians = null;
+            _pitchRadians = null;
+            _bankRadians = null;
+            _latitude = 0;
+            _longitude = 0;
+            _altitudeMsl = 0;
                 expiredRadios = _radios.Values.Select(r => r.Clone()).ToList();
                 _radios.Clear();
             }
@@ -410,6 +465,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             _position = packet.Position;
             _velocity = packet.Velocity;
             _headingRadians = packet.HeadingRadians;
+            _pitchRadians = packet.PitchRadians;
+            _bankRadians = packet.BankRadians;
+            _latitude = packet.Latitude;
+            _longitude = packet.Longitude;
+            _altitudeMsl = packet.AltitudeMsl;
 
             if (packet.Heightmap is { Ready: true } hm &&
                 (_heightmapInfo == null ||
@@ -447,22 +507,32 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(normalized.Clone(), false, true));
         }
 
-        foreach (var staleSlot in _radios.Keys.Where(slot => !seenRadios.Contains(slot)).ToList())
+        // DCS OBSERVED BEHAVIOR: while the sim is paused (pause menu open), the export script
+        // can't read cockpit arguments and reports an empty radios list -- NOT "every radio just
+        // turned off". Only run the stale-radio-off cleanup below when this packet actually
+        // reported at least one radio; an empty list just means "no fresh data this frame", so
+        // radios are left exactly at their last-known state and pick back up the moment real data
+        // resumes. Genuinely leaving the aircraft/game is already tracked separately via
+        // GameModeChanged (IsInAircraft/IsInGame below), not by this per-radio cleanup.
+        if (packet.Radios.Count > 0)
         {
-            if (!_radios.TryRemove(staleSlot, out var oldRadio)) continue;
+            foreach (var staleSlot in _radios.Keys.Where(slot => !seenRadios.Contains(slot)).ToList())
+            {
+                if (!_radios.TryRemove(staleSlot, out var oldRadio)) continue;
 
-            var offRadio = oldRadio.Clone();
-            offRadio.FrequencyHz = 0;
-            offRadio.SecondaryFrequencyHz = 0;
-            offRadio.IsOn = false;
-            offRadio.Ptt = false;
-            offRadio.ToneOn = false;
+                var offRadio = oldRadio.Clone();
+                offRadio.FrequencyHz = 0;
+                offRadio.SecondaryFrequencyHz = 0;
+                offRadio.IsOn = false;
+                offRadio.Ptt = false;
+                offRadio.ToneOn = false;
 
-            RadioChanged?.Invoke(this, new DcsRadioChangedEventArgs(oldRadio.Clone(), offRadio.Clone()));
-            if (oldRadio.Ptt)
-                PttChanged?.Invoke(this, new DcsPttChangedEventArgs(offRadio.Clone(), true, false));
-            if (oldRadio.ToneOn)
-                ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(offRadio.Clone(), true, false));
+                RadioChanged?.Invoke(this, new DcsRadioChangedEventArgs(oldRadio.Clone(), offRadio.Clone()));
+                if (oldRadio.Ptt)
+                    PttChanged?.Invoke(this, new DcsPttChangedEventArgs(offRadio.Clone(), true, false));
+                if (oldRadio.ToneOn)
+                    ToneChanged?.Invoke(this, new DcsToneChangedEventArgs(offRadio.Clone(), true, false));
+            }
         }
 
         if (!string.Equals(oldUnit, packet.Unit, StringComparison.Ordinal) ||
@@ -499,7 +569,10 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         oldRadio.EncKey != newRadio.EncKey ||
         oldRadio.HqOn != newRadio.HqOn ||
         oldRadio.SquelchOn != newRadio.SquelchOn ||
-        oldRadio.ToneOn != newRadio.ToneOn;
+        oldRadio.ToneOn != newRadio.ToneOn ||
+        oldRadio.SatcomSelected != newRadio.SatcomSelected ||
+        oldRadio.SatcomBandActive != newRadio.SatcomBandActive ||
+        oldRadio.SatcomChannel != newRadio.SatcomChannel;
 
     private void ChangeState(ServiceState newState)
     {

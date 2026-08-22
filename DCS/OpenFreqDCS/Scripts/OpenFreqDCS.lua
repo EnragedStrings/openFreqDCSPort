@@ -607,12 +607,86 @@ local function buildA10C2Radios()
     -- switch opens (disables) squelch to help pick out weak/garbled signals -- mirrors the
     -- client's existing "open squelch" feature. ARC-186 is a 3-position switch (SQUELCH -1 /
     -- center 0 / momentary TONE +1); only the SQUELCH position opens squelch, TONE is unrelated.
+    -- ARC-186 polarity confirmed inverted against the physical cockpit switch (PROJECT_OBSERVED,
+    -- user-reported) -- flipped below; ARC-210/ARC-164 unaffected, TONE (arc186ToneOn) unaffected.
     local arc210SquelchOn = getArgument(mainPanel, 568, 0) > 0.5
     local arc164SquelchOn = getArgument(mainPanel, 170, 0) > 0.5
-    local arc186SquelchOn = getArgument(mainPanel, 148, 0) < -0.5
+    local arc186SquelchOn = getArgument(mainPanel, 148, 0) > -0.5
     -- Same switch (148), momentary TONE position (+1): keys the ARC-186 and sends an attention
     -- tone instead of mic audio. Spring-loaded back to center on release, already handled by DCS.
     local arc186ToneOn = getArgument(mainPanel, 148, 0) > 0.5
+
+    -- ARC-210 SATCOM detection (DCS OBSERVED BEHAVIOR, not a documented DCS API). Two distinct
+    -- conditions, per real ARC-210 DAMA/ANDVT channel-plan behavior: channels 31-40 on the
+    -- channel-select knob (552) are all DAMA ANDVT VOICE channels, but only Channel 31 runs the
+    -- actual PRST login procedure (secondary selector 553 reading "PRST"). Once logged in, the
+    -- radio stays in SATCOM as long as the knob stays anywhere in the 31-40 band (and the radio
+    -- stays powered) -- it does NOT require sitting exactly on Channel 31/PRST the whole time.
+    -- Only computes the raw cockpit-argument match here; the acquisition timer and band-sustain/
+    -- logout state machine live client-side (see ChannelCardListViewModel/
+    -- SatcomAcquisitionStateMachine) since they need a monotonic clock independent of this
+    -- export's own sample rate.
+    local satcomConfig = config.a10c2 and config.a10c2.satcom
+    local arc210Chan552 = getArgument(mainPanel, satcomConfig and satcomConfig.channelSelectorArgument or 552, nil)
+    local arc210Sel553 = getArgument(mainPanel, satcomConfig and satcomConfig.secondarySelectorArgument or 553, nil)
+    local satcomTolerance = numberOr(satcomConfig and satcomConfig.tolerance, 0.01)
+    local channel31Value = numberOr(satcomConfig and satcomConfig.channel31Value, 0.8499)
+    local arc210Channel31 = arc210Chan552 ~= nil and
+        math.abs(arc210Chan552 - channel31Value) <= satcomTolerance
+    local arc210Prst = arc210Sel553 ~= nil and
+        math.abs(arc210Sel553 - numberOr(satcomConfig and satcomConfig.prstValue, 0.2000)) <= satcomTolerance
+    -- Login trigger: exact Channel 31 + PRST, unchanged from before.
+    local arc210SatcomSelected = arc210Channel31 and arc210Prst
+    -- Band-sustain: anywhere in the configured channel 31-40 argument-value envelope
+    -- (PROJECT_OBSERVED default: channel31Value..0.9850, id552's reading at Channel 31 and
+    -- Channel 40 respectively). Override channelBandMinValue/channelBandMaxValue in
+    -- OpenFreqDCSConfig.lua if your installation reads differently.
+    local channelBandMinValue = numberOr(satcomConfig and satcomConfig.channelBandMinValue, channel31Value)
+    local channelBandMaxValue = numberOr(satcomConfig and satcomConfig.channelBandMaxValue, channel31Value)
+    local bandLow = math.min(channelBandMinValue, channelBandMaxValue) - satcomTolerance
+    local bandHigh = math.max(channelBandMinValue, channelBandMaxValue) + satcomTolerance
+    local arc210SatcomBandActive = arc210Chan552 ~= nil and arc210Chan552 >= bandLow and arc210Chan552 <= bandHigh
+
+    if OpenFreqDCS.lastArc210SatcomSelected ~= arc210SatcomSelected then
+        writeDebug(string.format(
+            "ARC210 SATCOM %s: chan31=%s (id552=%s) prst=%s (id553=%s) band=%s",
+            arc210SatcomSelected and "SELECTED" or "DESELECTED",
+            textOr(arc210Channel31), textOr(arc210Chan552), textOr(arc210Prst), textOr(arc210Sel553),
+            textOr(arc210SatcomBandActive)))
+        OpenFreqDCS.lastArc210SatcomSelected = arc210SatcomSelected
+    end
+    if OpenFreqDCS.lastArc210SatcomBandActive ~= arc210SatcomBandActive then
+        writeDebug(string.format(
+            "ARC210 SATCOM BAND %s: id552=%s (band %s..%s)",
+            arc210SatcomBandActive and "ENTERED" or "LEFT",
+            textOr(arc210Chan552), textOr(bandLow), textOr(bandHigh)))
+        OpenFreqDCS.lastArc210SatcomBandActive = arc210SatcomBandActive
+    end
+
+    -- SATCOM channel/net pushbutton (id561, PROJECT_OBSERVED) -- a momentary control, not a
+    -- rotary: reads ~1.000 while pressed and ~0 at rest. Edge-detected (rising 0->1) against
+    -- OpenFreqDCS's own persistent state (survives mission restarts, resets only on a full DCS.exe
+    -- restart -- see the "installed" guard at the top of this file) so a held press advances the
+    -- channel exactly once, not every frame it reads ~1.000. Both this channel number AND
+    -- arc210SatcomBandActive above have to match between two stations for them to hear each other
+    -- over SATCOM -- see ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz.
+    local satcomChannelButtonArgument = numberOr(satcomConfig and satcomConfig.channelSelectorPushButtonArgument, 561)
+    local satcomChannelPressedValue = numberOr(satcomConfig and satcomConfig.channelPushButtonPressedValue, 1.000)
+    local arc210Chan561 = getArgument(mainPanel, satcomChannelButtonArgument, nil)
+    local arc210ChannelButtonPressed = arc210Chan561 ~= nil and
+        math.abs(arc210Chan561 - satcomChannelPressedValue) <= satcomTolerance
+
+    if OpenFreqDCS.satcomChannelNumber == nil then
+        OpenFreqDCS.satcomChannelNumber = 1
+    end
+    if arc210ChannelButtonPressed and not OpenFreqDCS.lastArc210ChannelButtonPressed then
+        OpenFreqDCS.satcomChannelNumber = (OpenFreqDCS.satcomChannelNumber % 6) + 1
+        writeDebug(string.format(
+            "ARC210 SATCOM CHANNEL advanced to %d (id561=%s)",
+            OpenFreqDCS.satcomChannelNumber, textOr(arc210Chan561)))
+    end
+    OpenFreqDCS.lastArc210ChannelButtonPressed = arc210ChannelButtonPressed
+    local arc210SatcomChannel = OpenFreqDCS.satcomChannelNumber
 
     -- ARC-210 power knob (551): 0 = OFF, 0.1 = TR+G, 0.2 = TR, 0.3 = ADF, 0.4 = CHG PRST,
     -- 0.5 = TEST, 0.6 = ZERO (PULL). The default power heuristic below (frequency > 1000 Hz)
@@ -631,8 +705,8 @@ local function buildA10C2Radios()
         OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
         local arc210Display = oneLine(arc210DisplayRaw, 220)
         writeDebug(string.format(
-            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
-            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary),
+            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s satcomBand=%s satcomChan=%s(id561=%s) | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
+            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary), textOr(arc210SatcomBandActive), textOr(arc210SatcomChannel), textOr(arc210Chan561),
             textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171, 238, 227, 228)), textOr(arc164SquelchOn), textOr(arc164PowerKnobOff),
             textOr(arc186Frequency), textOr(arc186RawFrequency), textOr(arc186IsOn), textOr(getArgument(mainPanel, 149, nil)), textOr(getVolume(mainPanel, 147, 238, 223, 224)), textOr(arc186SquelchOn), textOr(arc186ToneOn), textOr(arc186PowerKnobOff),
             textOr(ptt.arc210), textOr(ptt.arc164), textOr(ptt.arc186), textOr(getArgument(mainPanel, 751, nil)), textOr(getArgument(mainPanel, 752, nil))
@@ -658,7 +732,10 @@ local function buildA10C2Radios()
             encKey = arc210EncKey,
             hqOn = arc210HqOn,
             squelchOn = arc210SquelchOn,
-            toneOn = false
+            toneOn = false,
+            satcomSelected = arc210SatcomSelected,
+            satcomBandActive = arc210SatcomBandActive,
+            satcomChannel = arc210SatcomChannel
         },
         {
             slot = 2,
@@ -1302,6 +1379,10 @@ local function buildPacket(modelTime)
     local position = selfData and selfData.Position or nil
     local velocity = callGlobal("LoGetVectorVelocity", nil)
     local heading = selfData and selfData.Heading or nil
+    -- Pitch/Bank: standard LoGetSelfData() attitude fields (radians), alongside Heading above.
+    -- Used for SATCOM antenna/airframe-masking geometry -- see docs/SATCOM_SIMULATION.md.
+    local pitch = selfData and selfData.Pitch or nil
+    local bank = selfData and selfData.Bank or nil
 
     local radios = {}
     if inSupportedAircraft then
@@ -1324,6 +1405,8 @@ local function buildPacket(modelTime)
         longitude = numberOr(latLongAlt.Long, 0),
         altitudeMsl = numberOr(latLongAlt.Alt, 0),
         headingRadians = type(heading) == "number" and heading or nil,
+        pitchRadians = type(pitch) == "number" and pitch or nil,
+        bankRadians = type(bank) == "number" and bank or nil,
         position = position and { x = numberOr(position.x, 0), y = numberOr(position.y, 0), z = numberOr(position.z, 0) } or nil,
         velocity = velocity and { x = numberOr(velocity.x, 0), y = numberOr(velocity.y, 0), z = numberOr(velocity.z, 0) } or nil,
         radios = radios,

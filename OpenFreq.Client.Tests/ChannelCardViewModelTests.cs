@@ -50,4 +50,78 @@ public class ChannelCardViewModelTests
         Assert.Equal(0, vm.SignalStrengthSnrDb);
         Assert.Equal(0, vm.SignalStrengthReceivedDb);
     }
+
+    [Fact]
+    public void EnablingManualSatcomMode_SetsVirtualFrequencyAndDisplayText()
+    {
+        var vm = CreateVm();
+
+        vm.IsManualSatcomMode = true;
+
+        Assert.Equal(ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(1), vm.FrequencyKhz);
+        Assert.Equal("SATCOM VOICE", vm.FrequencyDisplayText);
+        Assert.Equal("SATCOM CH 1", vm.SatcomSubtitleText);
+    }
+
+    [Fact]
+    public void DisablingManualSatcomMode_RestoresPriorFrequency()
+    {
+        var vm = CreateVm(Freq);
+
+        vm.IsManualSatcomMode = true;
+        vm.IsManualSatcomMode = false;
+
+        Assert.Equal(Freq, vm.FrequencyKhz);
+        Assert.Equal($"{Freq / 1000d:F3} MHz", vm.FrequencyDisplayText);
+    }
+
+    [Fact]
+    public void NextSatcomChannel_WrapsFrom6To1()
+    {
+        var vm = CreateVm();
+        vm.IsManualSatcomMode = true;
+        vm.ManualSatcomChannel = 6;
+
+        vm.NextSatcomChannelCommand.Execute(null);
+
+        Assert.Equal(1, vm.ManualSatcomChannel);
+        Assert.Equal(ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(1), vm.FrequencyKhz);
+    }
+
+    [Fact]
+    public void PreviousSatcomChannel_WrapsFrom1To6()
+    {
+        var vm = CreateVm();
+        vm.IsManualSatcomMode = true;
+        vm.ManualSatcomChannel = 1;
+
+        vm.PreviousSatcomChannelCommand.Execute(null);
+
+        Assert.Equal(6, vm.ManualSatcomChannel);
+        Assert.Equal(ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(6), vm.FrequencyKhz);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void GetSatcomVirtualFrequencyKhz_ProducesDistinctFrequenciesPerChannel(int channel)
+    {
+        var freq = ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(channel);
+
+        Assert.Equal(999_000 + channel, freq);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(7)]
+    [InlineData(-1)]
+    public void GetSatcomVirtualFrequencyKhz_OutOfRangeFallsBackToChannel1(int channel)
+    {
+        Assert.Equal(ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(1),
+            ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(channel));
+    }
 }

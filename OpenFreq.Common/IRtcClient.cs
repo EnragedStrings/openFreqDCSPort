@@ -4,6 +4,16 @@ using OpenFreqAudio;
 
 namespace OpenFreq.Common;
 
+public class SatcomLinkStateEventArgs(SatcomLinkStateMessage message) : EventArgs
+{
+    public SatcomLinkStateMessage Message { get; } = message;
+}
+
+public class SatelliteEphemerisEventArgs(List<SatcomSatelliteInfoDto> satellites) : EventArgs
+{
+    public List<SatcomSatelliteInfoDto> Satellites { get; } = satellites;
+}
+
 /// <summary>
 /// Abstraction over <see cref="OpenFreqRtcClient"/> covering the surface used by the client
 /// service layer. Exists so the network client can be replaced with a fake in tests — the real
@@ -23,6 +33,8 @@ public interface IRtcClient : IDisposable
     event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusUpdateReceived;
     event EventHandler<ServerSettingsEventArgs>? ServerSettingsChanged;
     event EventHandler<ErrorEventArgs>? ErrorOccurred;
+    event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
+    event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
 
     string ServerIp { get; }
     string? MyPeerId { get; }
@@ -37,6 +49,11 @@ public interface IRtcClient : IDisposable
     Task StopTransmissionAsync(int frequencyKhz, bool is3d);
     Task SendModeUpdateAsync(bool is3d);
     Task SetDisplayNameAsync(string displayName);
+
+    /// <summary>Reports this client's SATCOM geometry/state for one net -- the server is
+    /// authoritative for satellite assignment/link-budget/DAMA; see docs/SATCOM_SIMULATION.md.</summary>
+    Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message);
+
     void MarkTransmitStartTime();
 
     void SendAudio(

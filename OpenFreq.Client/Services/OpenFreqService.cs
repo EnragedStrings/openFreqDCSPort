@@ -234,6 +234,14 @@ public class OpenFreqService : IOpenFreqService
 
     public bool DcsLineOfSightEnabled { get; set; } = true;
 
+    /// <summary>Server-broadcast SATCOM feature gate, mirroring DcsLineOfSightEnabled above.
+    /// Not yet consumed by any live audio/link-quality code path in this pass -- SatcomLinkCalculator/
+    /// SatcomAcquisitionStateMachine are built and tested but not wired into the real-time
+    /// RadioPlayback pipeline yet (see docs/SATCOM_SIMULATION.md's limitations section). Exposed
+    /// now so that wiring only needs to add a read of this flag, not another round-trip through
+    /// the signaling protocol.</summary>
+    public bool SatcomEnabled { get; set; } = true;
+
     public double SidetoneVolume
     {
         get => field;
@@ -361,6 +369,8 @@ public class OpenFreqService : IOpenFreqService
         _client.AllPeersStatusUpdateReceived += OnAllPeersStatusUpdateReceived;
         _client.ServerSettingsChanged += OnClientServerSettingsChanged;
         _client.ErrorOccurred += OnClientErrorOccurred;
+        _client.SatcomLinkStateReceived += OnClientSatcomLinkStateReceived;
+        _client.SatelliteEphemerisReceived += OnClientSatelliteEphemerisReceived;
 
         RecordingDeviceIndex = recordingDeviceIndex;
         var previousPlaybackDeviceIndex = _playbackDeviceIndex;
@@ -505,6 +515,8 @@ public class OpenFreqService : IOpenFreqService
                 _client.AllPeersStatusUpdateReceived -= OnAllPeersStatusUpdateReceived;
                 _client.ServerSettingsChanged -= OnClientServerSettingsChanged;
                 _client.ErrorOccurred -= OnClientErrorOccurred;
+                _client.SatcomLinkStateReceived -= OnClientSatcomLinkStateReceived;
+                _client.SatelliteEphemerisReceived -= OnClientSatelliteEphemerisReceived;
 
                 _logger.LogDebug("Disconnecting client: {ClientHashCode}", _client.GetHashCode());
                 await _client.DisconnectAsync();
@@ -948,6 +960,11 @@ public class OpenFreqService : IOpenFreqService
         _playbackService?.SetSquelchLevel(frequencyKhz, slotId, isSquelchClosed ? 1f : 0f);
     }
 
+    public void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate,
+        double burstSeverity, double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0)
+        => _playbackService?.SetSatcomState(frequencyKhz, slotId, isActive, frameErrorRate, burstSeverity,
+            frameDurationSeconds, propagationLatencySeconds);
+
     public void SetEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
     {
         if (_tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData))
@@ -1011,12 +1028,26 @@ public class OpenFreqService : IOpenFreqService
         double? cellSizeMeters = null)
     {
         _signalCalculator?.Dispose();
-        // Cell size = theater world size / DEM resolution
-        var cellSize = cellSizeMeters ?? BmsHeightmapConverter.HEIGHTMAP_SIZE_METERS / width;
-        _signalCalculator = _signalCalculatorFactory.Create(path, width, height, bytesPerSample, cellSize,
-            _loggerFactory);
-        OnStatusMessage($"Heightmap loaded: {path}");
-        _logger.LogDebug($"Heightmap loaded: {path}");
+        _signalCalculator = null;
+
+        // Heightmap is optional (see MainWindowViewModel.ConnectAsync) -- terrain-aware LOS/
+        // attenuation just doesn't apply while it's unset, everything downstream already treats
+        // _signalCalculator == null as "no terrain data available" rather than an error. A bad/
+        // stale configured path must degrade the same way, not throw and break connecting.
+        try
+        {
+            // Cell size = theater world size / DEM resolution
+            var cellSize = cellSizeMeters ?? BmsHeightmapConverter.HEIGHTMAP_SIZE_METERS / width;
+            _signalCalculator = _signalCalculatorFactory.Create(path, width, height, bytesPerSample, cellSize,
+                _loggerFactory);
+            OnStatusMessage($"Heightmap loaded: {path}");
+            _logger.LogDebug($"Heightmap loaded: {path}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load heightmap from {Path} -- continuing without terrain data", path);
+            OnStatusMessage($"Heightmap not loaded ({ex.Message}) -- continuing without terrain data");
+        }
     }
 
     public double? SampleTerrainElevationMeters(double xMeters, double yMeters)
@@ -1956,6 +1987,21 @@ public class OpenFreqService : IOpenFreqService
     {
         DcsLineOfSightEnabled = args.DcsLineOfSightEnabled;
         OnStatusMessage($"DCS LOS constraint {(DcsLineOfSightEnabled ? "enabled" : "disabled")} by server");
+    }
+
+    public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
+    public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
+
+    private void OnClientSatcomLinkStateReceived(object? sender, SatcomLinkStateEventArgs args) =>
+        SatcomLinkStateReceived?.Invoke(this, args);
+
+    private void OnClientSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs args) =>
+        SatelliteEphemerisReceived?.Invoke(this, args);
+
+    public async Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message)
+    {
+        if (_client is not { IsAuthenticated: true }) return;
+        await _client.SendSatcomGeometryUpdateAsync(message);
     }
 
     public void Dispose()

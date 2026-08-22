@@ -7,6 +7,15 @@ internal static class AppDataPaths
 {
     private const string AppDirectoryName = "OpenFreq";
 
+    /// <summary>Optional instance-isolation suffix (e.g. "-test2"), set via the --profile CLI arg
+    /// in Program.Main before anything else runs. Lets a second client instance run alongside the
+    /// normal one on the same machine (e.g. to manually test SATCOM audio between two clients)
+    /// without both instances reading/writing the same settings file, log directory, and
+    /// recordings directory. Empty by default -- normal single-instance use is unaffected.</summary>
+    public static string ProfileSuffix { get; set; } = "";
+
+    private static string EffectiveAppDirectoryName => AppDirectoryName + ProfileSuffix;
+
     public static string RoamingDirectory => GetSpecialFolderPath(
         Environment.SpecialFolder.ApplicationData,
         Path.Combine(GetExecutableDirectory(), "appdata"));
@@ -26,7 +35,7 @@ internal static class AppDataPaths
         var root = Environment.GetFolderPath(folder);
         return string.IsNullOrWhiteSpace(root)
             ? fallback
-            : Path.Combine(root, AppDirectoryName);
+            : Path.Combine(root, EffectiveAppDirectoryName);
     }
 
     private static string GetExecutableDirectory() =>

@@ -16,6 +16,7 @@
     <UserControl.Resources>
         <converters:EnumToBoolConverter x:Key="EnumToBoolConverter" />
         <converters1:NullableDoubleConverter x:Key="NullableDoubleConverter" />
+        <converters1:CoordinateFormatLabelConverter x:Key="CoordinateFormatLabelConverter" />
     </UserControl.Resources>
 
     <Grid RowDefinitions="Auto,*">
@@ -119,13 +120,29 @@
                                                  ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}"
                                         GroupName="PositionSource"
                                         Content="Fixed Position" />
+                                    <StackPanel Spacing="4"
+                                                IsEnabled="{Binding RadioStationData.Type,
+                                                Converter={StaticResource EnumToBoolConverter},
+                                                ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}">
+                                        <TextBlock Text="Coordinate Format" Classes="Caption" Opacity="0.7" />
+                                        <ComboBox ItemsSource="{x:Static viewModels:LocationViewModel.AvailableCoordinateFormats}"
+                                                  SelectedItem="{Binding SelectedCoordinateFormat}"
+                                                  Classes="Outline" HorizontalAlignment="Stretch">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Converter={StaticResource CoordinateFormatLabelConverter}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
                                     <Grid ColumnDefinitions="*, *, *, Auto" ColumnSpacing="10"
+                                          IsVisible="{Binding !IsMgrsFormat}"
                                           IsEnabled="{Binding RadioStationData.Type,
                                           Converter={StaticResource EnumToBoolConverter},
                                           ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}">
                                         <StackPanel Grid.Column="0" Spacing="4">
                                             <TextBlock Text="Latitude" Classes="Caption" Opacity="0.7" />
-                                            <TextBox Text="{Binding Latitude, StringFormat={}{0:F5}}" PlaceholderText="0.00000" Classes="Outline">
+                                            <TextBox Text="{Binding LatitudeInputString}" PlaceholderText="0.00000" Classes="Outline">
                                                 <TextBox.KeyBindings>
                                                     <KeyBinding Command="{Binding ToggleEditingCommand}" Gesture="Enter" />
                                                 </TextBox.KeyBindings>
@@ -133,7 +150,7 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Spacing="4">
                                             <TextBlock Text="Longitude" Classes="Caption" Opacity="0.7" />
-                                            <TextBox Text="{Binding Longitude, StringFormat={}{0:F5}}" PlaceholderText="0.00000" Classes="Outline">
+                                            <TextBox Text="{Binding LongitudeInputString}" PlaceholderText="0.00000" Classes="Outline">
                                                 <TextBox.KeyBindings>
                                                     <KeyBinding Command="{Binding ToggleEditingCommand}" Gesture="Enter" />
                                                 </TextBox.KeyBindings>
@@ -148,6 +165,35 @@
                                             </TextBox>
                                         </StackPanel>
                                         <Button Grid.Column="3"
+                                                Theme="{StaticResource MaterialFlatButton}" Classes="primary"
+                                                Command="{Binding OpenMapPickerCommand}"
+                                                ToolTip.Tip="Pick on map"
+                                                Width="40" Height="40" VerticalAlignment="Bottom">
+                                            <avalonia:MaterialIcon Kind="MapMarker" Width="20" Height="20" />
+                                        </Button>
+                                    </Grid>
+                                    <Grid ColumnDefinitions="2*, *, Auto" ColumnSpacing="10"
+                                          IsVisible="{Binding IsMgrsFormat}"
+                                          IsEnabled="{Binding RadioStationData.Type,
+                                          Converter={StaticResource EnumToBoolConverter},
+                                          ConverterParameter={x:Static models:RadioStationData+RadioStationType.STATIONARY}}">
+                                        <StackPanel Grid.Column="0" Spacing="4">
+                                            <TextBlock Text="MGRS Grid" Classes="Caption" Opacity="0.7" />
+                                            <TextBox Text="{Binding MgrsInputString}" PlaceholderText="30TXT1234567890" Classes="Outline">
+                                                <TextBox.KeyBindings>
+                                                    <KeyBinding Command="{Binding ToggleEditingCommand}" Gesture="Enter" />
+                                                </TextBox.KeyBindings>
+                                            </TextBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="4">
+                                            <TextBlock Text="Altitude (ft AGL)" Classes="Caption" Opacity="0.7" />
+                                            <TextBox Text="{Binding AltitudeFeet, Converter={StaticResource NullableDoubleConverter}}" PlaceholderText="0" Classes="Outline">
+                                                <TextBox.KeyBindings>
+                                                    <KeyBinding Command="{Binding ToggleEditingCommand}" Gesture="Enter" />
+                                                </TextBox.KeyBindings>
+                                            </TextBox>
+                                        </StackPanel>
+                                        <Button Grid.Column="2"
                                                 Theme="{StaticResource MaterialFlatButton}" Classes="primary"
                                                 Command="{Binding OpenMapPickerCommand}"
                                                 ToolTip.Tip="Pick on map"

@@ -8,6 +8,8 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using FalconBmsDataService.Models;
 using OpenFreq.Client.Models;
+using OpenFreq.Client.Services.Satcom;
+using OpenFreq.Common.Satcom;
 using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services;
@@ -27,6 +29,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FrequencyMhzString))]
     [NotifyPropertyChangedFor(nameof(Type))]
+    [NotifyPropertyChangedFor(nameof(FrequencyDisplayText))]
     public partial int FrequencyKhz { get; set; }
 
     /// <summary>
@@ -54,8 +57,73 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Upper bound for a tunable frequency in MHz (UHF military band ceiling).</summary>
-    private const double MaxFrequencyMhz = 400d;
+    /// <summary>Upper bound for a tunable frequency in MHz. Raised above the UHF military band
+    /// ceiling (400 MHz) specifically so a manually-created GCI channel can be pointed at one of
+    /// ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz's six synthetic frequencies (around
+    /// 999.001-999.006 MHz) -- for manual two-client SATCOM testing without a second DCS instance.
+    /// Superseded in practice by <see cref="IsManualSatcomMode"/> (which sets the frequency for
+    /// you), but kept as the outer bound since that mode just writes into FrequencyKhz like any
+    /// other path. See docs/SATCOM_SIMULATION.md.</summary>
+    private const double MaxFrequencyMhz = 1000d;
+
+    /// <summary>Manually-created (GCI/stationary) channel set to SATCOM mode instead of a real
+    /// dial frequency -- the client-side equivalent of a DCS ARC-210 whose cockpit controls are in
+    /// the SATCOM configuration, for testing/using SATCOM without a DCS instance driving this
+    /// channel. Only meaningful for editable channels; DCS-synced channels get this from
+    /// SatcomAcquisitionState instead (see FrequencyDisplayText/SatcomSubtitleText below, which
+    /// both treat the two as equivalent).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FrequencyDisplayText), nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial bool IsManualSatcomMode { get; set; }
+
+    /// <summary>Which of the six virtual SATCOM channels/nets (see DcsRadioState.SatcomChannel and
+    /// OpenFreqDCS.lua's argument-561 tracking) this manual channel is on. Only takes effect while
+    /// <see cref="IsManualSatcomMode"/> is on. Advance with NextSatcomChannel/PreviousSatcomChannel
+    /// below rather than setting directly, so it stays wrapped to 1-6 the same way the real
+    /// cockpit pushbutton does.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial int ManualSatcomChannel { get; set; } = 1;
+
+    /// <summary>The real (non-SATCOM) frequency this channel was tuned to before SATCOM mode was
+    /// turned on, restored when it's turned back off.</summary>
+    private int _preManualSatcomFrequencyKhz;
+
+    partial void OnIsManualSatcomModeChanged(bool value)
+    {
+        if (value)
+        {
+            _preManualSatcomFrequencyKhz = FrequencyKhz;
+            FrequencyKhz = ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(ManualSatcomChannel);
+        }
+        else
+        {
+            FrequencyKhz = _preManualSatcomFrequencyKhz;
+        }
+    }
+
+    partial void OnManualSatcomChannelChanged(int value)
+    {
+        if (IsManualSatcomMode)
+            FrequencyKhz = ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(value);
+    }
+
+    [RelayCommand]
+    private void NextSatcomChannel() => ManualSatcomChannel = ManualSatcomChannel % 6 + 1;
+
+    [RelayCommand]
+    private void PreviousSatcomChannel() => ManualSatcomChannel = (ManualSatcomChannel + 4) % 6 + 1;
+
+    /// <summary>What the read-only frequency readout should show. DCS OBSERVED BEHAVIOR: the
+    /// ARC-210's cockpit dial (and therefore DCS's export) keeps showing its last-tuned
+    /// frequency (typically ~133.000 MHz, wherever PRST last parked it) even once SATCOM is
+    /// selected -- there's no real "SATCOM channel" for DCS to report. Shown for as long as the
+    /// cockpit controls are in the SATCOM configuration (during acquisition and once ready
+    /// alike), not just once SatcomAcquisitionState reaches Ready, since the frequency is
+    /// already misleading the moment the switches move. IsManualSatcomMode (a manually-created
+    /// channel's own SATCOM toggle) shows the same text for the same reason.</summary>
+    public string FrequencyDisplayText =>
+        IsManualSatcomMode || SatcomAcquisitionState != SatcomState.Normal ? "SATCOM VOICE" : $"{FrequencyMhzString} MHz";
 
     [ObservableProperty] public partial string? Name { get; set; }
 
@@ -340,19 +408,163 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     /// transmit -- use the card's dedicated PTT button or this radio's own PTT hotkey for that.</summary>
     public void Select() => _parentLocationViewModel.SelectChannel(this);
 
-    public void StartTransmission()
+    /// <summary>ARC-210 SATCOM acquisition state (see SatcomAcquisitionStateMachine). Normal for
+    /// every channel except the ARC-210 card while its cockpit controls are in/near the SATCOM
+    /// configuration. Set from DCS sync -- see ChannelCardListViewModel.SyncDcsChannelOnUiThread.
+    /// Named "AcquisitionState" (not "SatcomState") to avoid colliding with the SatcomState enum
+    /// type of the same simple name.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSatcomAcquiring), nameof(IsSatcomActive), nameof(SatcomStatusText),
+        nameof(FrequencyDisplayText), nameof(HasSatcomLinkStatusText), nameof(HasDamaStatusText),
+        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial SatcomState SatcomAcquisitionState { get; set; } = SatcomState.Normal;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SatcomStatusText), nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial double SatcomAcquisitionElapsedSeconds { get; set; }
+
+    public bool IsSatcomAcquiring => SatcomAcquisitionState == SatcomState.Acquiring;
+    public bool IsSatcomActive => SatcomAcquisitionState == SatcomState.Ready;
+
+    public string? SatcomStatusText => SatcomAcquisitionState switch
+    {
+        SatcomState.Acquiring =>
+            $"SATCOM ACQ {SatcomAcquisitionElapsedSeconds:F1}/{SatcomAcquisitionStateMachine.AcquisitionSeconds:F0}",
+        SatcomState.Ready => "SATCOM",
+        _ => null
+    };
+
+    /// <summary>DAMA network-access state (see SatcomDamaStateMachine) for the ARC-210 card,
+    /// Offline for every other channel. Set from DCS sync alongside SatcomAcquisitionState.
+    /// Informational/debug only -- does not itself gate PTT (SatcomAcquisitionState +
+    /// CanStartTransmit above already do), so a slow/denied DAMA request never blocks
+    /// transmission, only reflects what would realistically be happening on the network layer.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DamaStatusText), nameof(HasDamaStatusText), nameof(SatcomSubtitleText),
+        nameof(HasSatcomSubtitleText))]
+    public partial DamaState DamaState { get; set; } = DamaState.Offline;
+
+    public string? DamaStatusText => DamaState switch
+    {
+        DamaState.Offline => null,
+        DamaState.Searching => "DAMA SEARCHING",
+        DamaState.Synchronizing => "DAMA SYNC",
+        DamaState.Ready => "DAMA RDY",
+        DamaState.Requesting => "DAMA REQ",
+        DamaState.Assigned => "DAMA ASSIGNED",
+        DamaState.Tx => "DAMA TX",
+        DamaState.Rx => "DAMA RX",
+        DamaState.ServiceDenied => "DAMA DENIED",
+        DamaState.LostSync => "DAMA LOST SYNC",
+        _ => null
+    };
+
+    /// <summary>Whether DamaStatusText actually has content right now -- bind badge visibility to
+    /// this, NOT to IsSatcomActive alone, otherwise the badge renders empty (just its background)
+    /// for the window between reaching Ready and the server's first DamaState update arriving.</summary>
+    public bool HasDamaStatusText => !string.IsNullOrEmpty(DamaStatusText);
+
+    /// <summary>Everything below is server-authoritative SATCOM link state (see
+    /// ChannelCardListViewModel's SatcomLinkStateMessage handling and
+    /// docs/SATCOM_SIMULATION.md) -- this card only ever displays what the server pushed down,
+    /// never computes or lets the user override it (no client-side quality/BER/FEC/satellite
+    /// controls).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SatcomLinkStatusText), nameof(HasSatcomLinkStatusText),
+        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial string SatcomSatelliteName { get; set; } = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SatcomLinkStatusText), nameof(HasSatcomLinkStatusText),
+        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial SatcomLinkQualityState SatcomQualityState { get; set; } = SatcomLinkQualityState.Lost;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SatcomLinkStatusText), nameof(HasSatcomLinkStatusText),
+        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+    public partial SatcomAcquisitionFailureReason SatcomFailureReason { get; set; } = SatcomAcquisitionFailureReason.None;
+
+    /// <summary>Debug-only telemetry bundle (only populated when the server has granted this
+    /// session debug access -- see MainWindowViewModel.DebugMode); never shown as a normal-user
+    /// control.</summary>
+    [ObservableProperty] public partial string SatcomDebugText { get; set; } = "";
+
+    public string? SatcomLinkStatusText
+    {
+        get
+        {
+            if (!IsSatcomActive) return null;
+            if (SatcomFailureReason != SatcomAcquisitionFailureReason.None)
+                return $"SATCOM: {SatcomFailureReason}";
+            if (string.IsNullOrEmpty(SatcomSatelliteName)) return null;
+            return $"SATCOM: {SatcomSatelliteName} ({SatcomQualityState})";
+        }
+    }
+
+    /// <summary>Whether SatcomLinkStatusText actually has content right now -- bind badge
+    /// visibility to this, NOT to IsSatcomActive alone, otherwise the badge renders empty (just
+    /// its background) for the window between reaching Ready and the server's first
+    /// SatcomLinkStateMessage arriving.</summary>
+    public bool HasSatcomLinkStatusText => !string.IsNullOrEmpty(SatcomLinkStatusText);
+
+    /// <summary>Single combined SATCOM status line shown as a subtitle directly under
+    /// FrequencyDisplayText ("SATCOM VOICE") -- acquisition countdown while logging in, then the
+    /// server-reported link/satellite status and DAMA state once logged in, instead of separate
+    /// badges elsewhere on the card.</summary>
+    public string? SatcomSubtitleText
+    {
+        get
+        {
+            if (IsManualSatcomMode) return $"SATCOM CH {ManualSatcomChannel}";
+            if (SatcomAcquisitionState == SatcomState.Normal) return null;
+            if (IsSatcomAcquiring) return SatcomStatusText;
+
+            var parts = new List<string>();
+            if (HasSatcomLinkStatusText) parts.Add(SatcomLinkStatusText!);
+            if (HasDamaStatusText) parts.Add(DamaStatusText!);
+            return parts.Count > 0 ? string.Join("  •  ", parts) : "SATCOM";
+        }
+    }
+
+    public bool HasSatcomSubtitleText => !string.IsNullOrEmpty(SatcomSubtitleText);
+
+    /// <summary>Whether pressing PTT on this channel right now should actually start a
+    /// transmission. Centralizes every guard (disconnected, DCS guard-monitor pseudo-channel,
+    /// BMS 3D mode, and SATCOM still acquiring) in one place so it's enforced identically
+    /// whether PTT comes from this card's own button/hotkey (StartTransmission below) or from
+    /// the global PTT keybind resolving to this channel as the selected one
+    /// (LocationViewModel.OnHotkeyPressed).</summary>
+    public bool CanStartTransmit => GetTransmitBlockReason() == null;
+
+    /// <summary>Same guards as <see cref="CanStartTransmit"/>, but reports WHICH one is blocking
+    /// (null = not blocked) -- used to give visible feedback (see StartTransmission below) instead
+    /// of PTT silently doing nothing, which was previously indistinguishable from a hotkey/button
+    /// that simply never fired at all.</summary>
+    private string? GetTransmitBlockReason()
     {
         if (ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected)
-            return;
-
+            return $"channel is disconnected (status={ConnectionStatus})";
+        if (IsEditing)
+            return "channel card is in edit mode";
+        if (IsSatcomAcquiring)
+            return $"SATCOM still acquiring ({SatcomAcquisitionElapsedSeconds:F1}/{SatcomAcquisitionStateMachine.AcquisitionSeconds:F0}s)";
         if (RadioStationData.Type == RadioStationData.RadioStationType.DCS &&
             DcsRadioId?.Contains(":guard", StringComparison.OrdinalIgnoreCase) == true)
-            return;
-
-        // Don't allow click transmissions in BMS 3d mode - use the comms switch there.
+            return "this is a guard-monitor pseudo-channel (no PTT)";
         if (RadioStationData.Type == RadioStationData.RadioStationType.BMS &&
             Settings is { ModeIsGci: false, Is3dMode: true })
+            return "BMS 3D mode -- use the in-cockpit comms switch instead";
+        return null;
+    }
+
+    public void StartTransmission()
+    {
+        var blockReason = GetTransmitBlockReason();
+        if (blockReason != null)
+        {
+            WeakReferenceMessenger.Default.Send(new TransmitBlockedMessage(Id, Name ?? DcsRadioId ?? "?", blockReason));
             return;
+        }
 
         // mute only the transmitting frequency
         var mutedFrequencies = new List<int> { FrequencyKhz };
@@ -502,6 +714,16 @@ public class StopTransmissionMessage(Guid channelId, int frequencyKhz)
 {
     public Guid ChannelId { get; } = channelId;
     public int FrequencyKhz { get; } = frequencyKhz;
+}
+
+/// <summary>PTT was pressed but ChannelCardViewModel.CanStartTransmit blocked it -- logged by
+/// ChannelCardListViewModel so a blocked PTT is visible (terminal/log file) instead of silently
+/// doing nothing, which is otherwise indistinguishable from a hotkey/button that never fired.</summary>
+public class TransmitBlockedMessage(Guid channelId, string channelName, string reason)
+{
+    public Guid ChannelId { get; } = channelId;
+    public string ChannelName { get; } = channelName;
+    public string Reason { get; } = reason;
 }
 
 public class ChannelDeleteRequestedMessage(Guid channelId, int frequencyKhz)

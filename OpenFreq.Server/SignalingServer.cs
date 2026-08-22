@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
 using OpenFreq.Common.Signaling;
+using OpenFreqServer.Satcom;
 
 namespace OpenFreqServer;
 
@@ -24,7 +25,11 @@ public class SignalingServer
     private readonly FrequencyChannelManager _channelManager = new();
     private readonly IAudioStreamServer _audioServer;
     private readonly ILogger<SignalingServer> _logger;
+    private readonly SatcomServerCoordinator? _satcom;
     private CancellationTokenSource _cts = new();
+
+    private static readonly TimeSpan SatcomTickInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan SatcomEphemerisBroadcastInterval = TimeSpan.FromSeconds(10);
 
     // Guards against a single wedged socket stalling a broadcast indefinitely. Kept well above
     // the worst-case send latency seen during synchronized channel tune bursts (clients all jumping to 3D) so we
@@ -125,6 +130,7 @@ public class SignalingServer
         _rtpTimeoutDuration = rtpTimeout ?? TimeSpan.FromMinutes(1);
         _watchdogInterval = watchdogInterval ?? TimeSpan.FromSeconds(30);
         _audioServer = audioServer ?? new AudioStreamServer(_channelManager, _clients, loggerFactory, config.AudioPort);
+        _satcom = config.SatcomEnabled ? new SatcomServerCoordinator(config.Satcom, loggerFactory) : null;
 
         // Build Kestrel application
         var builder = WebApplication.CreateBuilder();
@@ -205,6 +211,12 @@ public class SignalingServer
 
         _ = IdleWatchdogAsync(_cts.Token);
         _ = PeerUpdateBroadcastLoopAsync(_cts.Token);
+
+        if (_satcom != null)
+        {
+            _satcom.Start();
+            _ = SatcomTickLoopAsync(_cts.Token);
+        }
     }
 
     private int? ResolveBoundPort()
@@ -372,6 +384,9 @@ public class SignalingServer
                     break;
                 case "set-display-name":
                     await SetDisplayName(session, message);
+                    break;
+                case SignalingMessageTypes.SatcomGeometryUpdate:
+                    await HandleSatcomGeometryUpdate(session, message);
                     break;
 
                 default:
@@ -624,6 +639,72 @@ public class SignalingServer
         return Task.CompletedTask;
     }
 
+    private Task HandleSatcomGeometryUpdate(ClientSession session, SignalingMessage message)
+    {
+        if (!session.IsAuthenticated || _satcom == null) return Task.CompletedTask;
+
+        var geometryMsg = SignalingMessageFactory.DeserializePayload<SatcomGeometryUpdateMessage>(message.Payload);
+        if (geometryMsg == null) return Task.CompletedTask;
+
+        var net = _satcom.GetNet(geometryMsg.NetId);
+        if (net == null) return Task.CompletedTask; // unknown net id -- ignore rather than trust client-supplied config
+
+        _satcom.HandleGeometryUpdate(session.Id, geometryMsg, net, Environment.TickCount64);
+
+        // Cache the last-seen login/debug/priority request alongside the session so the tick loop
+        // (which runs independently of message arrival) has something to evaluate against.
+        session.SatcomNetId = geometryMsg.NetId;
+        session.SatcomLoginReady = geometryMsg.LoginReady;
+        session.SatcomDebugRequested = geometryMsg.DebugRequested;
+        session.SatcomPriority = geometryMsg.Priority;
+
+        return Task.CompletedTask;
+    }
+
+    private async Task SatcomTickLoopAsync(CancellationToken ct)
+    {
+        if (_satcom == null) return;
+        var sinceLastEphemerisBroadcast = TimeSpan.Zero;
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(SatcomTickInterval, ct);
+                var nowMs = Environment.TickCount64;
+
+                foreach (var (clientId, netId) in _satcom.ActiveSessions)
+                {
+                    if (!_clients.TryGetValue(clientId, out var session) || !session.IsAuthenticated) continue;
+                    if (session.SatcomNetId != netId) continue; // client has since switched/left this net
+
+                    try
+                    {
+                        var linkState = _satcom.Evaluate(clientId, netId, session.SatcomLoginReady,
+                            session.SatcomDebugRequested, session.SatcomPriority, nowMs);
+                        await SendToClient(session, SignalingMessageFactory.CreateSatcomLinkState(linkState));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "SATCOM: error evaluating link state for {ClientId} on net {NetId}", clientId, netId);
+                    }
+                }
+
+                sinceLastEphemerisBroadcast += SatcomTickInterval;
+                if (sinceLastEphemerisBroadcast >= SatcomEphemerisBroadcastInterval)
+                {
+                    sinceLastEphemerisBroadcast = TimeSpan.Zero;
+                    await BroadcastToAllChannels(
+                        SignalingMessageFactory.CreateSatelliteEphemerisUpdate(_satcom.GetSatelliteInfoDtos()));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Server shutting down — expected
+        }
+    }
+
     private async Task SetDisplayName(ClientSession session, SignalingMessage message)
     {
         var setDisplayNameMsg = SignalingMessageFactory.DeserializePayload<DisplayNameMessage>(message.Payload);
@@ -690,7 +771,7 @@ public class SignalingServer
     {
         return BroadcastToAllChannels(
             SignalingMessageFactory.CreateServerSettings(
-                _config.DcsLineOfSightEnabled));
+                _config.DcsLineOfSightEnabled, _config.SatcomEnabled));
     }
 
     private async Task BroadcastToChannel(int frequencyKhz, string excludeClientId, SignalingMessage message)
@@ -764,7 +845,7 @@ public class SignalingServer
     {
         await SendToClient(session,
             SignalingMessageFactory.CreateSuccess(message, _channelManager.GetAllChannelStates(), peerId, audioPort,
-                opusEnabled, _config.DcsLineOfSightEnabled));
+                opusEnabled, _config.DcsLineOfSightEnabled, _config.SatcomEnabled));
     }
 
     private async Task SendChannelState(ClientSession session, int frequencyKhz, List<ChannelStateMessage.Peer> peers)
@@ -780,6 +861,7 @@ public class SignalingServer
 
             _channelManager.LeaveAllChannels(clientId);
             _audioServer.RemoveSession(clientId);
+            _satcom?.RemoveClient(clientId);
 
             if (session.WebSocket.State == WebSocketState.Open)
             {
@@ -810,6 +892,7 @@ public class SignalingServer
 
         // Stop audio server first
         _audioServer.Stop();
+        _satcom?.Dispose();
 
         // Notify connected clients before cancelling so they receive a proper close frame.
         // CloseAsync (full handshake) ensures the frame is transmitted before we return —

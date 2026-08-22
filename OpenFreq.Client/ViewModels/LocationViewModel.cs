@@ -72,11 +72,97 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     }
 
     // UI Properties
+    [NotifyPropertyChangedFor(nameof(LatitudeInputString))]
+    [NotifyPropertyChangedFor(nameof(MgrsInputString))]
     [ObservableProperty] public partial double Latitude { get; set; }
+
+    [NotifyPropertyChangedFor(nameof(LongitudeInputString))]
+    [NotifyPropertyChangedFor(nameof(MgrsInputString))]
     [ObservableProperty] public partial double Longitude { get; set; }
+
     [ObservableProperty] public partial double AltitudeFeet { get; set; }
     [ObservableProperty] public partial string? CoordinateError { get; set; }
     [ObservableProperty] public partial bool HasCoordinateError { get; set; }
+
+    /// <summary>Which text representation the Latitude/Longitude boxes (or the single MGRS box)
+    /// read/write in. Latitude/Longitude themselves always stay plain WGS84 decimal degrees --
+    /// this only controls how they're displayed/entered.</summary>
+    [NotifyPropertyChangedFor(nameof(LatitudeInputString))]
+    [NotifyPropertyChangedFor(nameof(LongitudeInputString))]
+    [NotifyPropertyChangedFor(nameof(MgrsInputString))]
+    [NotifyPropertyChangedFor(nameof(IsMgrsFormat))]
+    [ObservableProperty] public partial CoordinateFormat SelectedCoordinateFormat { get; set; } = CoordinateFormat.DecimalDegrees;
+
+    public bool IsMgrsFormat => SelectedCoordinateFormat == CoordinateFormat.Mgrs;
+
+    public static IReadOnlyList<CoordinateFormat> AvailableCoordinateFormats { get; } =
+        Enum.GetValues<CoordinateFormat>();
+
+    /// <summary>Latitude in whatever format SelectedCoordinateFormat currently selects. Setter
+    /// throws on invalid input (CoordinateFormatException, an ArgumentException) -- Avalonia's
+    /// TextBox surfaces that directly via DataValidationErrors, same convention as
+    /// ChannelCardViewModel.FrequencyMhzString. Not used at all when IsMgrsFormat is true (the
+    /// view shows MgrsInputString instead).</summary>
+    public string LatitudeInputString
+    {
+        get => SelectedCoordinateFormat switch
+        {
+            CoordinateFormat.LatLongStandard => CoordinateParser.FormatDms(Latitude, isLatitude: true, precise: false),
+            CoordinateFormat.Precise => CoordinateParser.FormatDms(Latitude, isLatitude: true, precise: true),
+            CoordinateFormat.DecimalMinutes => CoordinateParser.FormatDecimalMinutes(Latitude, isLatitude: true),
+            _ => CoordinateParser.FormatDecimalDegreesAxis(Latitude)
+        };
+        set => Latitude = SelectedCoordinateFormat switch
+        {
+            CoordinateFormat.LatLongStandard or CoordinateFormat.Precise => CoordinateParser.ParseDms(value, isLatitude: true),
+            CoordinateFormat.DecimalMinutes => CoordinateParser.ParseDecimalMinutes(value, isLatitude: true),
+            _ => CoordinateParser.ParseDecimalDegrees(value, isLatitude: true)
+        };
+    }
+
+    /// <summary>Longitude counterpart to <see cref="LatitudeInputString"/>.</summary>
+    public string LongitudeInputString
+    {
+        get => SelectedCoordinateFormat switch
+        {
+            CoordinateFormat.LatLongStandard => CoordinateParser.FormatDms(Longitude, isLatitude: false, precise: false),
+            CoordinateFormat.Precise => CoordinateParser.FormatDms(Longitude, isLatitude: false, precise: true),
+            CoordinateFormat.DecimalMinutes => CoordinateParser.FormatDecimalMinutes(Longitude, isLatitude: false),
+            _ => CoordinateParser.FormatDecimalDegreesAxis(Longitude)
+        };
+        set => Longitude = SelectedCoordinateFormat switch
+        {
+            CoordinateFormat.LatLongStandard or CoordinateFormat.Precise => CoordinateParser.ParseDms(value, isLatitude: false),
+            CoordinateFormat.DecimalMinutes => CoordinateParser.ParseDecimalMinutes(value, isLatitude: false),
+            _ => CoordinateParser.ParseDecimalDegrees(value, isLatitude: false)
+        };
+    }
+
+    /// <summary>Combined MGRS grid reference, e.g. "54SUE1234567890" -- only shown/used when
+    /// IsMgrsFormat is true. Setting it updates both Latitude and Longitude together (mirrors
+    /// the existing OpenMapPickerAsync pattern of assigning both sequentially).</summary>
+    public string MgrsInputString
+    {
+        get
+        {
+            try
+            {
+                return Mgrs.LatLonToMgrs(Latitude, Longitude);
+            }
+            catch (CoordinateFormatException)
+            {
+                // Latitude outside MGRS's +/-80..84 domain (e.g. a not-yet-set 0,0 default) --
+                // show nothing rather than throwing out of a property getter.
+                return string.Empty;
+            }
+        }
+        set
+        {
+            var (lat, lon) = Mgrs.MgrsToLatLon(value);
+            Latitude = lat;
+            Longitude = lon;
+        }
+    }
 
     private const double FeetPerMeter = 3.28084d;
     private bool _isUpdatingPosition;
@@ -312,8 +398,9 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
                 if (e.Type == IHotkeyService.HotkeyType.Ptt)
                 {
-                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
-                        !channel.IsEditing)
+                    // CanStartTransmit centralizes every guard, including SATCOM still
+                    // acquiring -- see ChannelCardViewModel.CanStartTransmit.
+                    if (channel != null && channel.CanStartTransmit)
                     {
                         // mute only the transmitting frequency
                         var mutedFrequencies = new List<int> { channel.FrequencyKhz };

@@ -24,6 +24,11 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     DcsVector3? Position { get; }
     DcsVector3? Velocity { get; }
     double? HeadingRadians { get; }
+    double? PitchRadians { get; }
+    double? BankRadians { get; }
+    double Latitude { get; }
+    double Longitude { get; }
+    double AltitudeMsl { get; }
     DcsHeightmapInfo? HeightmapInfo { get; }
 
     DcsRadioState? GetRadio(int slot);

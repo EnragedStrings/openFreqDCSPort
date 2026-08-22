@@ -17,6 +17,14 @@ public class ClientSession(string id, string displayName, WebSocket webSocket, s
     public bool Is3d { get; set; }
     public SemaphoreSlim SendLock { get; } = new(1, 1);
 
+    // Latest SATCOM state this client reported (message-driven; consumed by SignalingServer's
+    // independent SatcomTickLoopAsync, which runs on its own cadence rather than only reacting to
+    // message arrival). Null/default NetId means "not currently using SATCOM".
+    public string? SatcomNetId { get; set; }
+    public bool SatcomLoginReady { get; set; }
+    public bool SatcomDebugRequested { get; set; }
+    public int SatcomPriority { get; set; }
+
     public enum FrequencyClientStatus
     {
         Transmitting, Receiving

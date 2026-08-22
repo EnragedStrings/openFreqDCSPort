@@ -24,6 +24,11 @@ namespace OpenFreq.Common;
 [JsonSerializable(typeof(AllPeersStatusMessage))]
 [JsonSerializable(typeof(ModeUpdateMessage))]
 [JsonSerializable(typeof(ServerSettingsMessage))]
+[JsonSerializable(typeof(SatcomGeometryUpdateMessage))]
+[JsonSerializable(typeof(SatcomSatelliteInfoDto))]
+[JsonSerializable(typeof(SatelliteEphemerisUpdateMessage))]
+[JsonSerializable(typeof(SatcomFrameDispositionDto))]
+[JsonSerializable(typeof(SatcomLinkStateMessage))]
 
 public partial class OpenFreqJsonContext : JsonSerializerContext
 {

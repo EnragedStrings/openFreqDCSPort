@@ -55,7 +55,8 @@ public static class SignalingMessageFactory
     }
 
     public static SignalingMessage CreateSuccess(string message, SortedDictionary<int, List<PeerData>> peers,
-        string? peerId = null, int? audioPort = null, bool opusEnabled = true, bool dcsLineOfSightEnabled = true)
+        string? peerId = null, int? audioPort = null, bool opusEnabled = true, bool dcsLineOfSightEnabled = true,
+        bool satcomEnabled = true)
     {
         return new SignalingMessage
         {
@@ -68,6 +69,7 @@ public static class SignalingMessageFactory
                     AudioPort = audioPort,
                     OpusCompressionEnabled = opusEnabled,
                     DcsLineOfSightEnabled = dcsLineOfSightEnabled,
+                    SatcomEnabled = satcomEnabled,
                     FrequenciesPeers = peers
                 },
                 OpenFreqJsonContext.Default.SuccessMessage)
@@ -184,7 +186,7 @@ public static class SignalingMessageFactory
         };
     }
 
-    public static SignalingMessage CreateServerSettings(bool dcsLineOfSightEnabled)
+    public static SignalingMessage CreateServerSettings(bool dcsLineOfSightEnabled, bool satcomEnabled = true)
     {
         return new SignalingMessage
         {
@@ -192,9 +194,39 @@ public static class SignalingMessageFactory
             Payload = JsonSerializer.SerializeToElement(
                 new ServerSettingsMessage
                 {
-                    DcsLineOfSightEnabled = dcsLineOfSightEnabled
+                    DcsLineOfSightEnabled = dcsLineOfSightEnabled,
+                    SatcomEnabled = satcomEnabled
                 },
                 OpenFreqJsonContext.Default.ServerSettingsMessage)
+        };
+    }
+
+    public static SignalingMessage CreateSatcomGeometryUpdate(SatcomGeometryUpdateMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.SatcomGeometryUpdate,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.SatcomGeometryUpdateMessage)
+        };
+    }
+
+    public static SignalingMessage CreateSatelliteEphemerisUpdate(List<SatcomSatelliteInfoDto> satellites)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.SatelliteEphemerisUpdate,
+            Payload = JsonSerializer.SerializeToElement(
+                new SatelliteEphemerisUpdateMessage { Satellites = satellites },
+                OpenFreqJsonContext.Default.SatelliteEphemerisUpdateMessage)
+        };
+    }
+
+    public static SignalingMessage CreateSatcomLinkState(SatcomLinkStateMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.SatcomLinkState,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.SatcomLinkStateMessage)
         };
     }
 

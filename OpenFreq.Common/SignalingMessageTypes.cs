@@ -18,4 +18,7 @@ public static class SignalingMessageTypes
     public const string AllPeersStatus = "all-peers-status";
     public const string ModeUpdate = "mode-update";
     public const string ServerSettings = "server-settings";
+    public const string SatcomGeometryUpdate = "satcom-geometry-update";
+    public const string SatelliteEphemerisUpdate = "satellite-ephemeris-update";
+    public const string SatcomLinkState = "satcom-link-state";
 }

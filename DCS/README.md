@@ -69,11 +69,13 @@ shipped with the mod for these IDs, so unmapped switches (e.g. squelch on the
 ARC-210/ARC-164/ARC-186) need to be found by correlating a physical switch
 flip with the argument that changes.
 
-To do that, set `debugArgScan.enabled = true` in `Scripts/OpenFreqDCSConfig.lua`
-(edit the copy under your `Saved Games\DCS...\Mods\Services\OpenFreqDCS`
-install), then in the cockpit flip **one switch at a time**, pausing a second
-or two between each. Every changed argument gets logged to its own file
-(kept separate from the radio debug log since it can be high-volume):
+`debugArgScan.enabled` defaults to `true` in the repo config (this repo is currently private
+with only developers on it, so it's more useful for everyone to have live arg-scan data than to
+keep it opt-in — flip it to `false` in `Scripts/OpenFreqDCSConfig.lua`, or per-install under
+`Saved Games\DCS...\Mods\Services\OpenFreqDCS\Scripts`, once that stops being worth the per-frame
+scan cost). With it on, flip **one switch at a time** in the cockpit, pausing a second or two
+between each. Every changed argument gets logged to its own file (kept separate from the radio
+debug log since it can be high-volume):
 
 `%USERPROFILE%\Saved Games\DCS\Logs\OpenFreqDCS.ArgScan.log`
 

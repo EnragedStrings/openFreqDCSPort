@@ -35,6 +35,8 @@ public interface IPlaybackService
     void SetFrequencyVolume(int frequencyKhz, Guid slotId, float volume);
     void SetFrequencyPan(int frequencyKhz, Guid slotId, int pan);
     void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable);
+    void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate, double burstSeverity,
+        double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0);
     void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes);
     void PlayTxTone();
 
@@ -99,6 +101,10 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
         => _inner.SetFrequencyPan(frequencyKhz, slotId, pan);
     public void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
         => _inner.SetSlotEncryption(frequencyKhz, slotId, enc, encKey, hqOn, cryptoCapable);
+    public void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate,
+        double burstSeverity, double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0)
+        => _inner.SetSatcomState(frequencyKhz, slotId, isActive, frameErrorRate, burstSeverity, frameDurationSeconds,
+            propagationLatencySeconds);
     public void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes)
         => _inner.SetEncryptionToneAssets(txWavBytes, rxWavBytes);
     public void PlayTxTone() => _inner.PlayTxTone();

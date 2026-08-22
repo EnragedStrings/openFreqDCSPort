@@ -120,6 +120,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     /// cockpit-driven values for DCS/BMS channels. When false (default), cockpit controls win
     /// and manual per-channel controls are disabled for those channels.</summary>
     [ObservableProperty] public partial bool DcsManualRadioControlOverride { get; set; } = false;
+
+    /// <summary>Requests the detailed SATCOM RF/DAMA debug telemetry bundle (see
+    /// ChannelCardViewModel.SatcomDebugText) from the server. The server decides whether to
+    /// actually honor this per SatcomServerConfig.DebugTelemetryEnabled -- this is a request, not
+    /// a client-side quality control (see docs/SATCOM_SIMULATION.md "no client quality cheating").</summary>
+    [ObservableProperty] public partial bool DebugMode { get; set; } = false;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(InputGainText))]
     [NotifyPropertyChangedFor(nameof(InputGainDb))]
@@ -181,12 +187,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private int? _left, _top, _width, _height, _windowState;
     private int? _maximizedScreenX, _maximizedScreenY, _maximizedScreenWidth, _maximizedScreenHeight;
 
-    public bool IsReadyToConnect => OpenFreqServerAddress != string.Empty &&
-                                    (
-                                        (ModeIsGci &&
-                                         HeightmapPath != string.Empty)
-                                        || !ModeIsGci
-                                    );
+    // Heightmap is optional in GCI mode -- it only adds terrain-aware LOS/attenuation when
+    // present (see MainWindowViewModel.ConnectAsync/OpenFreqService.LoadHeightmap, both of which
+    // already tolerate it being unset). This used to also require HeightmapPath for GCI; that's
+    // been removed per explicit request -- connecting doesn't need one.
+    public bool IsReadyToConnect => OpenFreqServerAddress != string.Empty;
 
     [ObservableProperty]
     public partial int BmsRadio1Pan { get; set; } = 0;
@@ -596,6 +601,26 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _dcsPttHotkeys = new Dictionary<string, HotkeyBinding>(
             settings.DcsPttHotkeys ?? new Dictionary<string, HotkeyBinding>(),
             StringComparer.OrdinalIgnoreCase);
+        // Direct field assignment above doesn't raise property-changed notifications on its own,
+        // so ChannelCardListViewModel.OnSettingsChanged (which re-pushes restored bindings onto
+        // already-created DCS channel cards via ApplyDcsPttHotkeysOnUiThread) never fires unless
+        // we fire these explicitly -- without this, a PTT hotkey saved to disk loads correctly
+        // into this dictionary but never reappears on the channel card after a restart, since a
+        // channel's PttHotKey is otherwise only set once, at creation.
+        OnPropertyChanged(nameof(DcsRadio1PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio1PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio2PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio2PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio3PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio3PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio4PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio4PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio5PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio5PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio6PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio6PttHotkeyDisplay));
+        OnPropertyChanged(nameof(DcsRadio7PttHotkey));
+        OnPropertyChanged(nameof(DcsRadio7PttHotkeyDisplay));
         GlobalPttHotkey = settings.GlobalPttHotkey;
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
@@ -837,6 +862,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _dcsRadioPans[radioId] = Math.Clamp(pan, -100, 100);
     }
 
+    /// <summary>Raised when a setting that shouldn't wait for the normal clean-shutdown-only
+    /// save (see App.axaml.cs's ShutdownRequested handler -- settings otherwise only persist to
+    /// disk on a clean exit, so a crash/task-kill loses anything changed since the last save)
+    /// changes. Currently just DCS PTT keybinds, since losing a captured keybind is a
+    /// particularly frustrating way to lose unsaved state. MainWindowViewModel subscribes and
+    /// triggers an immediate save.</summary>
+    public event EventHandler? PersistImmediately;
+
     public HotkeyBinding? GetDcsPttHotkey(string radioId) =>
         _dcsPttHotkeys.GetValueOrDefault(radioId);
 
@@ -849,6 +882,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             _dcsPttHotkeys.Remove(radioId);
         else
             _dcsPttHotkeys[radioId] = hotkey;
+
+        PersistImmediately?.Invoke(this, EventArgs.Empty);
     }
 
     private const int MaxAddressHistory = 10;

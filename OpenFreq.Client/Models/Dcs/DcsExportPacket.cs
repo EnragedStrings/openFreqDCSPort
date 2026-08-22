@@ -17,6 +17,8 @@ public class DcsExportPacket
     public double Longitude { get; set; }
     public double AltitudeMsl { get; set; }
     public double? HeadingRadians { get; set; }
+    public double? PitchRadians { get; set; }
+    public double? BankRadians { get; set; }
     public DcsVector3? Position { get; set; }
     public DcsVector3? Velocity { get; set; }
     public List<DcsRadioState> Radios { get; set; } = [];

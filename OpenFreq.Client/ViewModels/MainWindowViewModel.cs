@@ -199,6 +199,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         LobbyPeerList.CollectionChanged += OnLobbyPeerListChanged;
         GamePeerList.CollectionChanged += OnGamePeerListChanged;
         Settings.PropertyChanged += OnSettingsPropertyChanged;
+        Settings.PersistImmediately += OnSettingsPersistImmediately;
         ChannelList.PropertyChanged += OnChannelListPropertyChanged;
         UpdateLocationSubscription();
 
@@ -670,7 +671,13 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
             if (Settings.ConnectionMode == IOpenFreqService.Mode.GCI)
             {
-                _openFreqService.LoadHeightmap(Settings.HeightmapPath);
+                // Optional: GCI mode works without a heightmap (just without terrain-aware LOS/
+                // signal attenuation -- OpenFreqService already falls back gracefully when no
+                // heightmap is loaded, see its _signalCalculator == null check). Only attempt to
+                // load one if the user has actually configured a path; a missing/invalid path
+                // must never block connecting.
+                if (!string.IsNullOrWhiteSpace(Settings.HeightmapPath))
+                    _openFreqService.LoadHeightmap(Settings.HeightmapPath);
 
                 if (!string.IsNullOrEmpty(Settings.TacviewServerAddress))
                 {
@@ -1255,6 +1262,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    // See SettingsViewModel.PersistImmediately: settings otherwise only save on a clean
+    // shutdown, so a DCS PTT keybind capture would be lost on a crash/task-kill without this.
+    private async void OnSettingsPersistImmediately(object? sender, EventArgs e) => await SaveConfigurationAsync();
 
     [RelayCommand]
     private Task Debug()

@@ -77,6 +77,15 @@ public interface IOpenFreqService : IDisposable
     public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusChanged;
     event EventHandler<PeerActivityEventArgs>? PeerActivityReceived;
 
+    /// <summary>Server-authoritative SATCOM link state for one (channel, net) session --
+    /// satellite assignment, quality, DAMA state, and a precomputed frame-disposition batch. See
+    /// docs/SATCOM_SIMULATION.md.</summary>
+    event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
+
+    /// <summary>Low-rate broadcast of the server's SATCOM satellite catalog positions, for
+    /// client-side az/el display and the local terrain-LOS ray.</summary>
+    event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
+
     // Methods
     Task Initialize(OpenFreqClient.Models.OpenFreqSettings settings, int recordingDeviceIndex, int playbackDeviceIndex);
     Task ConnectAsync(TimeSpan? connectTimeout = null);
@@ -103,6 +112,16 @@ public interface IOpenFreqService : IDisposable
     void DisableFrequency(int frequencyKhz, Guid slotId);
 
     void SetSquelch(int frequencyKhz, Guid slotId, bool isSquelchClosed);
+
+    /// <summary>Route a receiving slot through the SATCOM digital vocoder pipeline instead of the
+    /// normal AM/FM path, or back to normal when <paramref name="isActive"/> is false. See
+    /// OpenFreqAudio.RadioPlayback.SetSatcomState and docs/SATCOM_SIMULATION.md.</summary>
+    void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate, double burstSeverity,
+        double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0);
+
+    /// <summary>Reports this client's SATCOM geometry/state for one net to the server. See
+    /// docs/SATCOM_SIMULATION.md's server-authoritative architecture.</summary>
+    Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message);
 
     /// <summary>
     /// Configure KY-58/COMSEC encryption and HAVE QUICK state for a tuned radio slot. Applies to

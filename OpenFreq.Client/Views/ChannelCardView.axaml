@@ -77,16 +77,24 @@
                     </Button>
                 </Grid>
 
-                <!-- Frequency -->
-                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                <!-- Frequency (+ SATCOM acquisition/link/DAMA status subtitle when applicable) -->
+                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Vertical"
                             Margin="0,0,0, 12">
                     <TextBlock
-                        Text="{Binding FrequencyMhzString, StringFormat={}{0} MHz}"
+                        Text="{Binding FrequencyDisplayText}"
                         Classes="Headline5"
                         FontWeight="SemiBold"
                         TextWrapping="NoWrap"
                         Background="{Binding TransmissionStatus,  Converter={StaticResource ChannelTransmissionStatusToColorConverter}}"
                         IsEnabled="{Binding IsEditable}" />
+
+                    <TextBlock
+                        Text="{Binding SatcomSubtitleText}"
+                        Classes="Caption"
+                        Opacity="0.75"
+                        TextWrapping="NoWrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasSatcomSubtitleText}" />
 
                 </StackPanel>
 
@@ -212,6 +220,10 @@
                         </StackPanel>
                     </Button>
 
+                    <!-- SATCOM acquisition/link/DAMA status now shows as a subtitle under
+                         FrequencyDisplayText ("SATCOM VOICE") instead of badges here, see
+                         SatcomSubtitleText / HasSatcomSubtitleText near the top of this card. -->
+
 
                 </StackPanel>
 
@@ -321,7 +333,7 @@
 
                 <!-- Frequency + Pan — same row, labels top-aligned -->
                 <Grid ColumnDefinitions="*, Auto" ColumnSpacing="12">
-                    <StackPanel Grid.Column="0" Spacing="4">
+                    <StackPanel Grid.Column="0" Spacing="4" IsVisible="{Binding !IsManualSatcomMode}">
                         <TextBlock Text="FREQUENCY"
                                    Classes="Caption"
                                    Opacity="0.55"
@@ -336,6 +348,32 @@
                             </TextBox.KeyBindings>
                         </TextBox>
                     </StackPanel>
+                    <StackPanel Grid.Column="0" Spacing="4" IsVisible="{Binding IsManualSatcomMode}">
+                        <TextBlock Text="SATCOM CHANNEL"
+                                   Classes="Caption"
+                                   Opacity="0.55"
+                                   FontWeight="SemiBold"
+                                   LetterSpacing="1" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="◀"
+                                    Command="{Binding PreviousSatcomChannelCommand}"
+                                    Classes="Outline"
+                                    Width="36" Height="36" Padding="0"
+                                    ToolTip.Tip="Previous SATCOM channel" />
+                            <Border BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                    BorderThickness="1" CornerRadius="4"
+                                    Width="70" Height="36">
+                                <TextBlock Text="{Binding ManualSatcomChannel, StringFormat=CH {0}}"
+                                           Classes="Body1" FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <Button Content="▶"
+                                    Command="{Binding NextSatcomChannelCommand}"
+                                    Classes="Outline"
+                                    Width="36" Height="36" Padding="0"
+                                    ToolTip.Tip="Next SATCOM channel" />
+                        </StackPanel>
+                    </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="4">
                         <TextBlock Text="PAN"
                                    Classes="Caption"
@@ -345,6 +383,12 @@
                         <controls1:AudioChannelSelector Pan="{Binding Pan}" />
                     </StackPanel>
                 </Grid>
+
+                <!-- SATCOM mode: pins this manually-created channel to one of the six virtual
+                     SATCOM channels instead of a real dial frequency, for using/testing SATCOM
+                     without a DCS instance driving this channel (see IsManualSatcomMode). -->
+                <CheckBox Content="SATCOM Mode (virtual channel, no real frequency)"
+                          IsChecked="{Binding IsManualSatcomMode}" />
 
                 <!-- Volume: cockpit-driven by default for DCS channels; always adjustable for
                      manual channels. See the "Manual volume/squelch override" setting. -->

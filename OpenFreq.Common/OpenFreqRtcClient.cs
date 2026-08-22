@@ -30,6 +30,8 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusUpdateReceived;
     public event EventHandler<ServerSettingsEventArgs>? ServerSettingsChanged;
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
+    public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
+    public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
 
     private RtpAudioReceiver? _rtpReceiver;
     private RtpAudioSender? _rtpSender;
@@ -364,6 +366,18 @@ public class OpenFreqRtcClient : IRtcClient
     }
 
     /// <summary>
+    /// Reports this client's current SATCOM geometry/state for one net to the server, which is
+    /// authoritative for satellite assignment/link-budget/DAMA (see docs/SATCOM_SIMULATION.md).
+    /// Fire-and-forget from the caller's perspective, same as SendModeUpdateAsync -- no reply is
+    /// expected here; the server pushes SatcomLinkStateMessage back independently on its own tick.
+    /// </summary>
+    public async Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message)
+    {
+        if (!IsAuthenticated) return;
+        await SendMessageAsync(SignalingMessageFactory.CreateSatcomGeometryUpdate(message));
+    }
+
+    /// <summary>
     /// Sets the Display Name (=Nickname)
     /// </summary>
     public async Task SetDisplayNameAsync(string displayName)
@@ -635,6 +649,20 @@ public class OpenFreqRtcClient : IRtcClient
                         OnServerSettingsChanged(serverSettings.DcsLineOfSightEnabled);
                     }
 
+                    break;
+
+                case SignalingMessageTypes.SatcomLinkState:
+                    var linkState =
+                        SignalingMessageFactory.DeserializePayload<SatcomLinkStateMessage>(message.Payload);
+                    if (linkState != null)
+                        SatcomLinkStateReceived?.Invoke(this, new SatcomLinkStateEventArgs(linkState));
+                    break;
+
+                case SignalingMessageTypes.SatelliteEphemerisUpdate:
+                    var ephemeris =
+                        SignalingMessageFactory.DeserializePayload<SatelliteEphemerisUpdateMessage>(message.Payload);
+                    if (ephemeris != null)
+                        SatelliteEphemerisReceived?.Invoke(this, new SatelliteEphemerisEventArgs(ephemeris.Satellites));
                     break;
             }
         }

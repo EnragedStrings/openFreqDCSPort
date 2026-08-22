@@ -4,6 +4,7 @@ using ManagedBass.Enc;
 using ManagedBass.Mix;
 using Microsoft.Extensions.Logging;
 using NWaves.Filters.Butterworth;
+using OpenFreqAudio.Satcom;
 
 // ReSharper disable InconsistentNaming
 
@@ -131,6 +132,37 @@ public class RadioPlayback : IDisposable
         // character. See FastPathAudioSim.bandConfigs for which real bands are which.
         public ModulationType Modulation { get; }
 
+        // SATCOM routing can't be derived from frequency the way Modulation above is: DCS keeps
+        // reporting the ARC-210's last-tuned dial frequency even once SATCOM (Channel 31 + PRST)
+        // is selected, so GetBandConfig would never see it. Set explicitly via
+        // RadioPlayback.SetSatcomState whenever the owning channel's SatcomAcquisitionState
+        // changes (see ChannelCardListViewModel), independent of Modulation/frequency-band
+        // classification. When true, the mixing loop takes an entirely different path (frame-
+        // based vocoder processing) instead of the AM/FM per-sample envelope math.
+        public bool IsSatcomActive { get; set; }
+        public double SatcomFrameErrorRate { get; set; }
+        public double SatcomBurstSeverity { get; set; }
+        public SatcomVocoder? SatcomVocoderInstance { get; set; }
+
+        // Vocoder output arrives frame-quantized (one full 8kHz analysis frame's worth of
+        // samples at a time, upsampled back to SampleRate), while the DSP callback wants exactly
+        // `samples` floats every cycle -- this smooths that mismatch. Same-thread only (drained
+        // and filled entirely within the DSP callback), so no synchronization is needed.
+        //
+        // Doubles as the GEO propagation-delay buffer: the drain loop (ProcessSatcomSlot) only
+        // starts dequeuing once this queue holds at least SatcomTargetLatencySamples, so real
+        // (server-computed) one-way relay delay is actually heard, not just simulated in data --
+        // and PTT release still drains whatever was already in flight, since the drain runs every
+        // cycle regardless of whether a transmitter is currently active. Local sidetone never
+        // touches this queue at all (it's mixed in the normal, undelayed path), so it stays immediate.
+        public Queue<float> SatcomOutputQueue { get; } = new();
+
+        /// <summary>Minimum buffered-sample depth before SatcomOutputQueue starts draining, set
+        /// from the server's real geometry-computed SatcomLinkResult.PropagationLatencySeconds
+        /// (see RadioPlayback.SetSatcomState) -- NOT vocoder/vocoder-buffering delay, which is
+        /// separate and always present regardless of this value.</summary>
+        public int SatcomTargetLatencySamples { get; set; }
+
         public RadioConfig(int frequencyKhz)
         {
             var bandConfig = FastPathAudioSim.GetBandConfig(frequencyKhz);
@@ -203,6 +235,10 @@ public class RadioPlayback : IDisposable
 
     private const int MaxBufferSize = 24576;
     private float[] _dspScratch = new float[MaxBufferSize];
+    // Reused per-cycle scratch for converting a SATCOM-active slot's incoming float samples to
+    // PCM16 for SatcomVocoder.ProcessBuffer (see ProcessSatcomSlot) -- same growth policy as
+    // _dspScratch below.
+    private short[] _satcomPcmScratch = new short[MaxBufferSize];
     private float[] _stereoBuffer = new float[MaxBufferSize * 2];
 
     // Phase coherence is good - don't have phase jumps between DSP callbacks.
@@ -976,6 +1012,52 @@ public class RadioPlayback : IDisposable
         }
     }
 
+    /// <summary>
+    /// Route a receiving slot through the SATCOM digital vocoder pipeline (OpenFreqAudio.Satcom)
+    /// instead of the normal AM/FM envelope-detector path, or back to normal when
+    /// <paramref name="isActive"/> is false. Called from the client whenever the owning channel's
+    /// SatcomAcquisitionState changes to/from Ready (see ChannelCardListViewModel) -- deliberately
+    /// separate from Modulation/frequency-band classification (see RadioConfig.IsSatcomActive)
+    /// since DCS keeps reporting the ARC-210's misleading dial frequency in SATCOM mode.
+    /// <paramref name="frameErrorRate"/>/<paramref name="burstSeverity"/> should be refreshed
+    /// periodically (e.g. once per link-quality update) via repeated calls while active --
+    /// cheap to call, does not reset the vocoder's decoder state or output buffer.
+    /// </summary>
+    public void SetSatcomState(int frequencyKHz, Guid slotId, bool isActive, double frameErrorRate,
+        double burstSeverity, double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0)
+    {
+        lock (_lock)
+        {
+            var key = (frequencyKHz, slotId);
+            if (!_slots.TryGetValue(key, out var slot))
+            {
+                slot = new RadioConfig(frequencyKHz);
+                _slots[key] = slot;
+            }
+
+            slot.IsSatcomActive = isActive;
+            slot.SatcomFrameErrorRate = frameErrorRate;
+            slot.SatcomBurstSeverity = burstSeverity;
+            // Cap well under the output queue's own 1s safety bound (ProcessSatcomSlot) so a bad/
+            // stale server value can't itself create runaway latency.
+            var cappedLatencySeconds = Math.Clamp(propagationLatencySeconds, 0.0, 0.9);
+            slot.SatcomTargetLatencySamples = (int)(cappedLatencySeconds * SampleRate);
+
+            if (!isActive)
+            {
+                // Drop the vocoder instance/queue on deactivation rather than leaving it idle --
+                // re-entering SATCOM later (a fresh acquisition) should start clean, not resume
+                // mid-stream with stale decoder concealment state.
+                slot.SatcomVocoderInstance = null;
+                slot.SatcomOutputQueue.Clear();
+            }
+            else
+            {
+                slot.SatcomVocoderInstance ??= new SatcomVocoder(SampleRate, frameDurationSeconds, slotId.GetHashCode());
+            }
+        }
+    }
+
     /// <summary>Configure KY-58/COMSEC + HAVE QUICK state for a receiving slot.</summary>
     public void SetSlotEncryption(int frequencyKHz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
     {
@@ -1152,6 +1234,69 @@ public class RadioPlayback : IDisposable
         }
     }
 
+    /// <summary>
+    /// SATCOM's per-slot processing: routes the dominant transmitter's audio through
+    /// SatcomVocoder instead of the AM/FM envelope-detector math, filling
+    /// <paramref name="slot"/>'s share of _dspScratch[0..samples-1] just like the AM/FM branch
+    /// does so the shared pan/volume mix downstream is unaffected. Runs synchronously on the
+    /// audio callback thread rather than a background worker -- a conscious tradeoff (see
+    /// docs/SATCOM_SIMULATION.md): the vocoder's per-frame cost (10th-order LPC + autocorrelation
+    /// pitch search over a ~22ms/180-sample-at-8kHz frame, amortized over ~1000+ samples of
+    /// output at 48kHz) is small next to genuinely expensive real-time-unsafe work (disk/network
+    /// IO, large allocations), and doing this inline avoids introducing a new cross-thread
+    /// synchronization surface into a live audio system that can't be listened to and verified
+    /// mid-development. Revisit if profiling ever shows this actually matters.
+    ///
+    /// Does not apply the AM/FM beat-frequency multi-transmitter math -- SATCOM is a digital
+    /// point-to-point-per-transponder link, not two analog carriers beating together; if the
+    /// KY-58/COMSEC gate above already narrowed <paramref name="transmittingStreams"/> to a
+    /// single dominant stream (or a synthesized noise-burst/beep via
+    /// <paramref name="sampleOverride"/>), that's exactly what gets vocoded, so SATCOM traffic
+    /// still honors the existing COMSEC match/mismatch behavior for free.
+    /// </summary>
+    private void ProcessSatcomSlot(RadioConfig slot, List<RadioStream> transmittingStreams,
+        Func<int, float>? sampleOverride, int samples)
+    {
+        if (transmittingStreams.Count > 0 && slot.SatcomVocoderInstance != null)
+        {
+            var span = transmittingStreams[0].Samples.Span;
+            if (span.Length >= samples)
+            {
+                for (int n = 0; n < samples; ++n)
+                {
+                    float samp = sampleOverride?.Invoke(n) ?? span[n];
+                    _satcomPcmScratch[n] = (short)Math.Clamp(samp * short.MaxValue, short.MinValue, short.MaxValue);
+                }
+
+                var processed = slot.SatcomVocoderInstance.ProcessBuffer(
+                    _satcomPcmScratch.AsSpan(0, samples), slot.SatcomFrameErrorRate, slot.SatcomBurstSeverity);
+                foreach (var s in processed)
+                    slot.SatcomOutputQueue.Enqueue(s / (float)short.MaxValue);
+
+                // Bound the queue so a sustained cadence mismatch between input chunk size and
+                // completed-frame output size can't grow latency unboundedly -- drop the oldest
+                // buffered audio, favoring low latency over never losing a sample (1s cap, well
+                // above what normal operation should ever accumulate).
+                while (slot.SatcomOutputQueue.Count > SampleRate)
+                    slot.SatcomOutputQueue.Dequeue();
+            }
+        }
+        // No carrier (or vocoder not yet constructed this cycle): SATCOM has no meaningful idle
+        // "static" the way analog AM/FM does -- a digital link is either receiving a real signal
+        // or it isn't -- so just drain whatever's still buffered rather than synthesizing noise.
+        //
+        // Below its target depth, the queue is still filling the real (server-computed) GEO
+        // propagation delay -- output silence, not whatever partial audio has arrived so far.
+        // Once full, it drains one sample per cycle same as before; this naturally covers both
+        // "audio starts ~250ms after the far end keys up" and "audio keeps arriving for ~250ms
+        // after the far end un-keys" (drain always runs, whether or not a transmitter is active
+        // this cycle) without needing separate onset/release logic.
+        for (int n = 0; n < samples; ++n)
+            _dspScratch[n] = slot.SatcomOutputQueue.Count > slot.SatcomTargetLatencySamples
+                ? slot.SatcomOutputQueue.Dequeue()
+                : 0f;
+    }
+
     private void SetupDSPAndPlay()
     {
         // This callback is fired continuously - to avoid stutters,
@@ -1167,6 +1312,7 @@ public class RadioPlayback : IDisposable
                 lock (_lock)
                 {
                     _dspScratch = new float[samples];
+                    _satcomPcmScratch = new short[samples];
                     _stereoBuffer = new float[stereoOutputSamples];
                 }
             }
@@ -1448,125 +1594,139 @@ public class RadioPlayback : IDisposable
                             }
                         }
 
-                        // Typical squelch is at +6 dB, which is a factor of 2x.
-                        float squelchThreshold = slot.SquelchLevel * 2.0f;
-                        // True if squelch opened at any point in this set of samples.
+                        // True if squelch opened at any point in this set of samples. Left false
+                        // for SATCOM slots (see ProcessSatcomSlot) -- the vocoder's own frame-
+                        // loss/concealment model, not AGC-driven squelch, decides what's audible.
                         bool squelchOpened = false;
 
-                        // Noise is always there!
-                        // The question is just "how loud compared to the signal?"
-                        // (What's the SNR?)
-                        // We draw independent I and Q noise per sample below - if we used
-                        // I_noise[n] = Q_noise[n], we wouldn't have random noise,
-                        // we'd have a single signal with a fixed phase (45 deg).
-                        var noiseGen = slot.NoiseGenerator;
-
-                        // FM vs AM (constant for this whole chunk, computed once from the
-                        // per-transmitter powers above): FM receivers capture onto the strongest
-                        // co-channel signal instead of mixing weaker ones in (ApplyFmCaptureEffect
-                        // mutates relativePowers directly), and FM is quieter than AM above a
-                        // threshold SNR but noisier below it (the classic FM "cliff") instead of
-                        // AM's smooth linear noise-vs-SNR curve. AM (fmNoiseScale stays 1) is
-                        // completely unaffected by any of this.
-                        float fmNoiseScale = 1f;
-                        if (slot.Modulation == ModulationType.FM && numStreams > 0)
+                        if (slot.IsSatcomActive)
                         {
-                            float maxPower = 0f;
-                            for (int k = 0; k < relativePowers.Count; ++k)
-                                maxPower = Math.Max(maxPower, relativePowers[k]);
-
-                            if (numStreams > 1)
-                                ApplyFmCaptureEffect(relativePowers, maxPower);
-
-                            if (maxPower > 0f)
-                            {
-                                float snrDb = 20f * MathF.Log10(maxPower);
-                                const float thresholdDb = 8f;  // knee position
-                                const float steepness = 0.35f; // dB^-1, controls how sharp the cliff is
-                                float t = 1f / (1f + MathF.Exp(-(thresholdDb - snrDb) * steepness));
-                                fmNoiseScale = 0.15f + t * 2.35f; // ~0.15x well above threshold, ~2.5x well below
-                            }
+                            // Entirely different path: frame-based digital vocoder processing
+                            // instead of the AM/FM per-sample envelope/AGC/squelch/bandpass math
+                            // below. Fills _dspScratch[0..samples-1] just like the AM/FM branch
+                            // does, so the shared pan/volume mix below still applies unchanged.
+                            ProcessSatcomSlot(slot, transmittingStreams, sampleOverride, samples);
                         }
-
-                        if (numStreams > 0)
-                        {
-                            // Calculate E[n] for each sample n.
-                            for (int n = 0; n < samples; ++n)
-                            {
-                                // Start with our noise.
-                                double i = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
-                                double q = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
-                                // Real aircraft radios don't have 100% modulation.
-                                // A bunch of the standards are paywalled, but those I've found
-                                // suggest minimum specs are 85% modulation, with 90-95% being common.
-                                // https://www.etsi.org/deliver/etsi_i_ets/300600_300699/300676/01_20_91/ets_300676e01c.pdf
-                                // https://avweb.com/avionics/vhf-nav-comm-basics/
-                                const double modIndex = 0.95;
-                                for (int k = 0; k < numStreams; ++k)
-                                {
-                                    // θ_k is the phasor that rotates around at each beat frequency k.
-                                    double theta = 2.0f * Math.PI * carrierOffsets[k] *
-                                        (double)(n + _sampleNum) / (double)SampleRate;
-                                    // Sum IQ components _before_ taking the length of the vector,
-                                    // as that's a nonlinear operation.
-                                    float samp = sampleOverride?.Invoke(n) ?? transmittingStreams[k].Samples.Span[n];
-                                    i += relativePowers[k] * (1 + samp * modIndex) * Math.Cos(theta);
-                                    q += relativePowers[k] * (1 + samp * modIndex) * Math.Sin(theta);
-                                }
-
-                                // Take the envelope.
-                                _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
-
-                                // Update the AGC:
-                                slot.Agc.Apply(_dspScratch[n]);
-
-                                // Squelch is driven by the AGC gain.
-                                // When it starts attenuating, we know we hear something.
-                                // NB: Handle squelch per sample, before the band-pass smooths the edges!
-                                // We don't want to gate the whole buffer (or not!) based on a single AGC value.
-                                if (slot.Agc.D1 >= squelchThreshold)
-                                {
-                                    _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
-                                    // SIM_VINSON: successfully-decrypted secure voice gets a CVSD-like
-                                    // texture instead of sounding identical to clear analog AM.
-                                    if (comsecOutcome == KySecureOutcome.Pass && matchedCipher)
-                                        _dspScratch[n] = slot.CvsdEffect.Process(_dspScratch[n]);
-                                    squelchOpened = true;
-                                }
-                                else
-                                {
-                                    _dspScratch[n] = 0;
-                                }
-                            }
-                        }
-                        // Nothing is transmitting except noise, decay AGC back to unity.
                         else
                         {
-                            for (int n = 0; n < samples; ++n)
-                            {
-                                double i = noiseGen?.NextSample() ?? 0.0;
-                                double q = noiseGen?.NextSample() ?? 0.0;
-                                _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
-                                slot.Agc.Apply(_dspScratch[n]);
+                            // Typical squelch is at +6 dB, which is a factor of 2x.
+                            float squelchThreshold = slot.SquelchLevel * 2.0f;
 
-                                // See above.
-                                if (slot.Agc.D1 >= squelchThreshold)
+                            // Noise is always there!
+                            // The question is just "how loud compared to the signal?"
+                            // (What's the SNR?)
+                            // We draw independent I and Q noise per sample below - if we used
+                            // I_noise[n] = Q_noise[n], we wouldn't have random noise,
+                            // we'd have a single signal with a fixed phase (45 deg).
+                            var noiseGen = slot.NoiseGenerator;
+
+                            // FM vs AM (constant for this whole chunk, computed once from the
+                            // per-transmitter powers above): FM receivers capture onto the strongest
+                            // co-channel signal instead of mixing weaker ones in (ApplyFmCaptureEffect
+                            // mutates relativePowers directly), and FM is quieter than AM above a
+                            // threshold SNR but noisier below it (the classic FM "cliff") instead of
+                            // AM's smooth linear noise-vs-SNR curve. AM (fmNoiseScale stays 1) is
+                            // completely unaffected by any of this.
+                            float fmNoiseScale = 1f;
+                            if (slot.Modulation == ModulationType.FM && numStreams > 0)
+                            {
+                                float maxPower = 0f;
+                                for (int k = 0; k < relativePowers.Count; ++k)
+                                    maxPower = Math.Max(maxPower, relativePowers[k]);
+
+                                if (numStreams > 1)
+                                    ApplyFmCaptureEffect(relativePowers, maxPower);
+
+                                if (maxPower > 0f)
                                 {
-                                    _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
-                                    squelchOpened = true;
-                                }
-                                else
-                                {
-                                    _dspScratch[n] = 0;
+                                    float snrDb = 20f * MathF.Log10(maxPower);
+                                    const float thresholdDb = 8f;  // knee position
+                                    const float steepness = 0.35f; // dB^-1, controls how sharp the cliff is
+                                    float t = 1f / (1f + MathF.Exp(-(thresholdDb - snrDb) * steepness));
+                                    fmNoiseScale = 0.15f + t * 2.35f; // ~0.15x well above threshold, ~2.5x well below
                                 }
                             }
-                        }
 
-                        for (int n = 0; n < samples; ++n)
-                        {
-                            // Bandpass the signal, which removes the DC component and centers us around 0
-                            _dspScratch[n] = slot.LowPass.Process(
-                                slot.HighPass.Process(_dspScratch[n]));
+                            if (numStreams > 0)
+                            {
+                                // Calculate E[n] for each sample n.
+                                for (int n = 0; n < samples; ++n)
+                                {
+                                    // Start with our noise.
+                                    double i = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
+                                    double q = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
+                                    // Real aircraft radios don't have 100% modulation.
+                                    // A bunch of the standards are paywalled, but those I've found
+                                    // suggest minimum specs are 85% modulation, with 90-95% being common.
+                                    // https://www.etsi.org/deliver/etsi_i_ets/300600_300699/300676/01_20_91/ets_300676e01c.pdf
+                                    // https://avweb.com/avionics/vhf-nav-comm-basics/
+                                    const double modIndex = 0.95;
+                                    for (int k = 0; k < numStreams; ++k)
+                                    {
+                                        // θ_k is the phasor that rotates around at each beat frequency k.
+                                        double theta = 2.0f * Math.PI * carrierOffsets[k] *
+                                            (double)(n + _sampleNum) / (double)SampleRate;
+                                        // Sum IQ components _before_ taking the length of the vector,
+                                        // as that's a nonlinear operation.
+                                        float samp = sampleOverride?.Invoke(n) ?? transmittingStreams[k].Samples.Span[n];
+                                        i += relativePowers[k] * (1 + samp * modIndex) * Math.Cos(theta);
+                                        q += relativePowers[k] * (1 + samp * modIndex) * Math.Sin(theta);
+                                    }
+
+                                    // Take the envelope.
+                                    _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
+
+                                    // Update the AGC:
+                                    slot.Agc.Apply(_dspScratch[n]);
+
+                                    // Squelch is driven by the AGC gain.
+                                    // When it starts attenuating, we know we hear something.
+                                    // NB: Handle squelch per sample, before the band-pass smooths the edges!
+                                    // We don't want to gate the whole buffer (or not!) based on a single AGC value.
+                                    if (slot.Agc.D1 >= squelchThreshold)
+                                    {
+                                        _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
+                                        // SIM_VINSON: successfully-decrypted secure voice gets a CVSD-like
+                                        // texture instead of sounding identical to clear analog AM.
+                                        if (comsecOutcome == KySecureOutcome.Pass && matchedCipher)
+                                            _dspScratch[n] = slot.CvsdEffect.Process(_dspScratch[n]);
+                                        squelchOpened = true;
+                                    }
+                                    else
+                                    {
+                                        _dspScratch[n] = 0;
+                                    }
+                                }
+                            }
+                            // Nothing is transmitting except noise, decay AGC back to unity.
+                            else
+                            {
+                                for (int n = 0; n < samples; ++n)
+                                {
+                                    double i = noiseGen?.NextSample() ?? 0.0;
+                                    double q = noiseGen?.NextSample() ?? 0.0;
+                                    _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
+                                    slot.Agc.Apply(_dspScratch[n]);
+
+                                    // See above.
+                                    if (slot.Agc.D1 >= squelchThreshold)
+                                    {
+                                        _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
+                                        squelchOpened = true;
+                                    }
+                                    else
+                                    {
+                                        _dspScratch[n] = 0;
+                                    }
+                                }
+                            }
+
+                            for (int n = 0; n < samples; ++n)
+                            {
+                                // Bandpass the signal, which removes the DC component and centers us around 0
+                                _dspScratch[n] = slot.LowPass.Process(
+                                    slot.HighPass.Process(_dspScratch[n]));
+                            }
                         }
 
                         if (squelchOpened != slot.WasSquelchOpen)

@@ -18,6 +18,7 @@
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="SGP.NET" Version="1.5.0" />
     <PackageReference Include="Spectre.Console" Version="0.49.1" />
     <PackageReference Include="Terminal.Gui" Version="2.4.1" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -42,8 +43,7 @@
 
   <Target Name="RemoveBassNativesFromPublish" AfterTargets="ComputeFilesToPublish">
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
-        Condition="'%(Filename)' == 'bass' Or '%(Filename)' == 'bassmix' Or '%(Filename)' == 'bassenc' Or '%(Filename)' == 'bassenc_ogg' Or '%(Filename)' == 'libbass' Or '%(Filename)' == 'libbassmix' Or '%(Filename)' == 'libbassenc' Or '%(Filename)' == 'libbassenc_ogg'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'bass' Or '%(Filename)' == 'bassmix' Or '%(Filename)' == 'bassenc' Or '%(Filename)' == 'bassenc_ogg' Or '%(Filename)' == 'libbass' Or '%(Filename)' == 'libbassmix' Or '%(Filename)' == 'libbassenc' Or '%(Filename)' == 'libbassenc_ogg'" />
     </ItemGroup>
   </Target>
 

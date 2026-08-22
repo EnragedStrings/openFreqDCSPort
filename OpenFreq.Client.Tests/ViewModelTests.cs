@@ -66,14 +66,17 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public void IsReadyToConnect_GciRequiresHeightmap()
+    public void IsReadyToConnect_GciDoesNotRequireHeightmap()
     {
+        // Heightmap is optional in GCI mode -- it only adds terrain-aware LOS/attenuation when
+        // present; connecting must not require one (MainWindowViewModel.ConnectAsync and
+        // OpenFreqService.LoadHeightmap both already tolerate it being unset).
         var vm = VmFactory.Settings();
         vm.ModeIsGci = true;
         vm.OpenFreqServerAddress = "127.0.0.1";
         vm.HeightmapPath = string.Empty;
 
-        Assert.False(vm.IsReadyToConnect);
+        Assert.True(vm.IsReadyToConnect);
     }
 
     [Fact]

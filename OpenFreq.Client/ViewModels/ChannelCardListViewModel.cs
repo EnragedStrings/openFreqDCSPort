@@ -19,7 +19,9 @@ using NetTopologySuite.Index.Quadtree;
 using OpenFreq.Client.Models.Dcs;
 using OpenFreq.Client.Models;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Client.Services.Satcom;
 using OpenFreq.Common;
+using OpenFreq.Common.Satcom;
 using OpenFreq.Services.Acmi;
 using OpenFreq.Utilities;
 using OpenFreqAudio;
@@ -64,6 +66,55 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     // See SyncGuardMonitorOnUiThread.
     private readonly Dictionary<string, Guid> _guardMonitorSlotIds = new();
     private readonly Dictionary<string, int> _guardMonitorJoinedFrequencyKhz = new();
+
+    // SATCOM only exists on the A-10C II's ARC-210 today (see OpenFreqDCS.lua's
+    // buildA10C2Radios/OpenFreqDCSConfig.a10c2.satcom) -- one shared instance is correct as long
+    // as that remains true. Fed only when processing that specific radio (see
+    // SyncDcsRadioOnUiThread) so other radios' syncs can't reset its acquisition progress.
+    //
+    // This is the ONLY SATCOM state still computed client-side: the local ARC-210 cockpit
+    // login/acquisition animation (device=0 id=552/553), which is purely a radio-mode-transition
+    // UI/timing concern with no network dimension. Satellite selection, link budget, DAMA network
+    // access, and channel-error/frame-disposition decisions are all server-authoritative -- this
+    // ViewModel just reports geometry/state to the server and displays what it pushes back (see
+    // UpdateSatcomLinkQuality, OnSatcomLinkStateReceived, OnSatelliteEphemerisReceived, and
+    // docs/SATCOM_SIMULATION.md).
+    private readonly SatcomAcquisitionStateMachine _arc210SatcomStateMachine = new();
+
+    /// <summary>Last SatcomChannel value logged by SyncDcsRadioOnUiThread, so an in-place
+    /// channel/net pushbutton change while already logged in gets its own log line instead of
+    /// being silently absorbed (there's no SatcomState transition to hang that log on).</summary>
+    private int _lastLoggedSatcomChannel = 1;
+
+    /// <summary>Single default SATCOM net id -- matches SatcomServerConfig.Default's "a10-arc210-satcom"
+    /// entry. One net is correct as long as SATCOM only exists on the A-10's ARC-210 (see above);
+    /// a future multi-net pass would derive this from DCS/radio config instead of a constant.</summary>
+    private const string DefaultSatcomNetId = "a10-arc210-satcom";
+
+    /// <summary>Latest satellite positions from the server's low-rate broadcast, keyed by
+    /// satellite id -- used to compute az/el for the local (bounded-range) terrain-LOS ray and for
+    /// debug display. Empty until the first SatelliteEphemerisUpdateMessage arrives.</summary>
+    private readonly Dictionary<string, SatcomSatelliteInfoDto> _satcomSatellites = new();
+
+    /// <summary>Which satellite id this client last heard it's assigned to, per channel -- the
+    /// direction the local terrain-LOS ray is cast toward (see SyncArc210SatcomOnUiThread).</summary>
+    private string? _satcomLastAssignedSatelliteId;
+
+    /// <summary>Last-logged (available, satelliteId, failureReason, qualityState, damaState)
+    /// summary per channel, so OnSatcomLinkStateReceived (which fires on the server's ~500ms tick)
+    /// only logs when something actually changes, not every tick.</summary>
+    private readonly Dictionary<Guid, string> _satcomLastLoggedLinkSummary = new();
+
+    /// <summary>SyncDcsRadioOnUiThread otherwise only runs when DcsExportService.RadioChanged
+    /// fires, which is gated on an actual field DIFFERING from the previous DCS export frame
+    /// (frequency/volume/on-off/enc/squelch/tone/satcom flags -- see DcsExportService.
+    /// HasRadioChanged). While the cockpit sits perfectly stable on Channel 31 + PRST, none of
+    /// those fields necessarily change frame to frame, so the ARC-210 SATCOM acquisition timer
+    /// (which needs repeated Update() calls with an advancing "now" to actually count up) could
+    /// silently stall at 0.0/5s indefinitely instead of completing -- this periodic tick re-syncs
+    /// the ARC-210 specifically often enough that the countdown, and the Channel 31-40 band-sustain
+    /// check, both advance in real time regardless of whether anything else about the radio changed.</summary>
+    private DispatcherTimer? _arc210SatcomTicker;
     public LocationViewModel? FalconLocation { get; private set; }
     public LocationViewModel? DcsLocation { get; private set; }
 
@@ -135,6 +186,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _dcsExportService.AircraftChanged += OnDcsAircraftChanged;
 
         _openFreqService.ConnectionStateChanged += OnOpenFreqConnectionStateChanged;
+        _openFreqService.SatcomLinkStateReceived += OnSatcomLinkStateReceived;
+        _openFreqService.SatelliteEphemerisReceived += OnSatelliteEphemerisReceived;
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChangedForCallsigns;
 
         // Sync initial ACMI state in case already connected before this VM was created
@@ -159,6 +212,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 if (!string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId))
                     _settings.SetDcsRadioPan(dcsChannel.DcsRadioId, m.Pan);
             });
+        WeakReferenceMessenger.Default.Register<TransmitBlockedMessage>(this,
+            (r, m) => _logger.LogWarning("PTT blocked on \"{ChannelName}\": {Reason}", m.ChannelName, m.Reason));
         WeakReferenceMessenger.Default.Register<ChannelPttHotkeyUpdateMessage>(this,
             (r, m) =>
             {
@@ -173,6 +228,21 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             (r, m) => _openFreqService.SetVolume(m.FrequencyKhz, m.ChannelId, (float)m.Volume));
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationSelectionRequestedMessage>(this,
             (r, m) => SelectedLocation = Locations.FirstOrDefault(g => g.Id == m.LocationId));
+
+        // See _arc210SatcomTicker's own doc comment: RadioChanged alone isn't a reliable enough
+        // trigger to advance the SATCOM acquisition timer/band-sustain check in real time.
+        _arc210SatcomTicker = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background,
+            OnArc210SatcomTick);
+        _arc210SatcomTicker.Start();
+    }
+
+    private void OnArc210SatcomTick(object? sender, EventArgs e)
+    {
+        if (DcsLocation == null || !_settings.ModeIsDcs) return;
+
+        var arc210 = _dcsExportService.GetRadios().FirstOrDefault(r => r.Name == "ARC-210");
+        if (arc210 != null)
+            SyncDcsRadioOnUiThread(arc210);
     }
 
     private async void OnFalconSharedMemoryStateChanged(object? sender, ServiceStateChangedEventArgs e)
@@ -717,15 +787,72 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         Dispatcher.UIThread.Post(() => _settings.Is3dMode = e.NewIsInGame);
     }
 
+    /// <summary>Base of the synthetic network-channel identity SATCOM traffic joins while active,
+    /// distinct from whatever real dial frequency DCS happens to be reporting for the ARC-210 (DCS
+    /// keeps reporting its last-tuned LOS dial frequency, typically ~133.000 MHz, even in SATCOM
+    /// mode -- see FrequencyDisplayText). Deliberately far outside any frequency a DCS radio could
+    /// actually be dialed to in this sim, so SATCOM traffic can never collide with a real LOS
+    /// channel. One of six distinct virtual frequencies -- see
+    /// <see cref="GetSatcomVirtualFrequencyKhz"/> -- since real ARC-210 SATCOM has a separate
+    /// 1-6 channel/net pushbutton (argument 561, PROJECT_OBSERVED) independent of the 31-40 login
+    /// band; two stations must match both to talk.</summary>
+    private const int SatcomVirtualFrequencyKhzBase = 999_000;
+
+    /// <summary>Maps a DCS-reported SATCOM channel/net number (1-6, DcsRadioState.SatcomChannel)
+    /// to the synthetic frequency that channel's traffic joins. Out-of-range values (shouldn't
+    /// happen -- OpenFreqDCS.lua wraps 1-6 itself, and manually-created GCI SATCOM channels are
+    /// clamped the same way in ChannelCardViewModel) fall back to channel 1's frequency.</summary>
+    public static int GetSatcomVirtualFrequencyKhz(int satcomChannel)
+    {
+        if (satcomChannel is < 1 or > 6) satcomChannel = 1;
+        return SatcomVirtualFrequencyKhzBase + satcomChannel;
+    }
+
     private void SyncDcsRadioOnUiThread(DcsRadioState radio)
     {
         if (DcsLocation == null) return;
 
         var key = GetDcsRadioKey(radio);
-        SyncDcsChannelOnUiThread(
+
+        // SATCOM only exists on the A-10C II's ARC-210 today (see OpenFreqDCS.lua's
+        // buildA10C2Radios). Gate on the radio name, not slot number -- slot 1 is a different
+        // radio on other aircraft, and feeding their (always-false) SatcomSelected into this
+        // shared state machine would reset the ARC-210's acquisition progress mid-sync. Computed
+        // BEFORE the channel sync below so the channel joins the right network frequency (real
+        // dial vs. synthetic SATCOM) from the very same sync pass, not one frame behind.
+        SatcomState? satcomState = null;
+        var effectiveFrequencyKhz = radio.FrequencyKhz;
+        if (radio.Name == "ARC-210")
+        {
+            // Power is folded in here (not in the Lua export) so both signals fail safe the
+            // instant the radio loses power, regardless of whatever the channel/selector
+            // arguments happen to read at that moment.
+            var loginTrigger = radio.IsOn && radio.SatcomSelected;
+            var bandActive = radio.IsOn && radio.SatcomBandActive;
+            var previousSatcomState = _arc210SatcomStateMachine.State;
+            satcomState = _arc210SatcomStateMachine.Update(loginTrigger, bandActive, Environment.TickCount64);
+            if (satcomState != previousSatcomState)
+            {
+                _logger.LogInformation(
+                    "SATCOM acquisition {Old} -> {New} (loginTrigger={LoginTrigger} bandActive={BandActive} radioOn={RadioOn} channel={Channel})",
+                    previousSatcomState, satcomState, loginTrigger, bandActive, radio.IsOn, radio.SatcomChannel);
+            }
+            else if (satcomState != SatcomState.Normal && radio.SatcomChannel != _lastLoggedSatcomChannel)
+            {
+                // Cockpit channel/net pushbutton (id561) advanced while already logged in --
+                // worth its own log line since it changes which virtual frequency this radio
+                // joins without a SatcomState transition to piggyback the log on.
+                _logger.LogInformation("SATCOM channel/net changed to {Channel}", radio.SatcomChannel);
+            }
+            _lastLoggedSatcomChannel = radio.SatcomChannel;
+            if (satcomState != SatcomState.Normal)
+                effectiveFrequencyKhz = GetSatcomVirtualFrequencyKhz(radio.SatcomChannel);
+        }
+
+        var channel = SyncDcsChannelOnUiThread(
             key: key,
             name: radio.Name,
-            frequencyKhz: radio.FrequencyKhz,
+            frequencyKhz: effectiveFrequencyKhz,
             shouldBeJoined: IsUsableDcsRadio(radio),
             volume: radio.Volume,
             allowTransmit: true,
@@ -734,7 +861,149 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             hqOn: radio.HqOn,
             squelchOn: radio.SquelchOn);
 
+        if (channel != null && satcomState != null)
+        {
+            channel.SatcomAcquisitionState = satcomState.Value;
+            channel.SatcomAcquisitionElapsedSeconds = _arc210SatcomStateMachine.AcquisitionElapsedSeconds;
+            UpdateSatcomLinkQuality(channel, satcomState.Value, radio.IsOn);
+        }
+
         SyncGuardMonitorOnUiThread(radio, key);
+    }
+
+    /// <summary>Reports this aircraft's SATCOM geometry/state to the server every DCS export
+    /// frame -- the server is authoritative for satellite assignment, link budget, and DAMA (see
+    /// docs/SATCOM_SIMULATION.md). This ViewModel no longer computes any of that itself; it only
+    /// sends what only the client can know (own position/attitude, cockpit login-ready state, PTT,
+    /// and a local DCS terrain-LOS check toward the last-known assigned satellite) and displays
+    /// whatever the server pushes back via OnSatcomLinkStateReceived.</summary>
+    private void UpdateSatcomLinkQuality(ChannelCardViewModel channel, SatcomState satcomState, bool radioPowered)
+    {
+        var loginReady = satcomState == SatcomState.Ready;
+        var pttPressed = channel.TransmissionStatus == Channel.ChannelTransmissionStatus.Transmitting;
+
+        var terrainLosClear = ComputeSatcomTerrainLosClear(channel.Id);
+
+        var message = new SatcomGeometryUpdateMessage
+        {
+            ChannelKey = channel.Id.ToString(),
+            NetId = DefaultSatcomNetId,
+            LatitudeDeg = _dcsExportService.Latitude,
+            LongitudeDeg = _dcsExportService.Longitude,
+            AltitudeMeters = _dcsExportService.AltitudeMsl,
+            HeadingRad = _dcsExportService.HeadingRadians,
+            PitchRad = _dcsExportService.PitchRadians,
+            BankRad = _dcsExportService.BankRadians,
+            RadioPowered = radioPowered,
+            LoginReady = loginReady,
+            PttPressed = pttPressed,
+            TerrainLosClear = terrainLosClear,
+            DebugRequested = _settings.DebugMode,
+            Priority = 0
+        };
+
+        _logger.LogDebug(
+            "SATCOM geometry update \"{ChannelName}\": lat={Lat:F4} lon={Lon:F4} alt={Alt:F0} " +
+            "powered={Powered} loginReady={LoginReady} ptt={Ptt} terrainLos={TerrainLos}",
+            channel.Name, message.LatitudeDeg, message.LongitudeDeg, message.AltitudeMeters,
+            radioPowered, loginReady, pttPressed, terrainLosClear);
+
+        _ = _openFreqService.SendSatcomGeometryUpdateAsync(message);
+    }
+
+    /// <summary>Local DCS terrain-LOS check toward the last-known assigned satellite's direction,
+    /// via the existing land.isVisible-backed RequestLineOfSight mechanism (same one used for
+    /// terrestrial peer LOS) -- cast to a single bounded point along that az/el direction (~50 km
+    /// horizontal, with a rise/floor that clears any real-world terrain) rather than the full
+    /// ~35,786 km to the satellite itself, which land.isVisible was never meant to span. Defaults
+    /// to "clear" (fail-open, matching this codebase's existing terrestrial-LOS convention) when no
+    /// satellite is known yet or terrain data isn't available.</summary>
+    private bool ComputeSatcomTerrainLosClear(Guid channelId)
+    {
+        const double horizontalRangeMeters = 50_000.0;
+        const double minClearanceMeters = 9_000.0; // above any real-world terrain (Everest ~8,850 m)
+
+        if (_satcomLastAssignedSatelliteId == null ||
+            !_satcomSatellites.TryGetValue(_satcomLastAssignedSatelliteId, out var sat) ||
+            _dcsExportService.Position == null)
+            return true;
+
+        var satEcef = SatcomGeodesy.GeodeticToEcef(sat.LatitudeDeg, sat.LongitudeDeg, sat.AltitudeMeters);
+        var look = SatcomGeodesy.LookAngles(_dcsExportService.Latitude, _dcsExportService.Longitude,
+            _dcsExportService.AltitudeMsl, satEcef);
+        if (!look.IsAboveHorizon)
+            return true; // below horizon is already handled by the server's elevation-mask gate
+
+        var azRad = look.AzimuthDeg * Math.PI / 180.0;
+        var elRad = look.ElevationDeg * Math.PI / 180.0;
+        var riseMeters = Math.Max(horizontalRangeMeters * Math.Tan(elRad), minClearanceMeters);
+
+        // DCS world axes: X = true north, Z = east, Y = up (meters).
+        var own = _dcsExportService.Position;
+        var target = new DcsVector3(
+            own.X + horizontalRangeMeters * Math.Cos(azRad),
+            own.Y + riseMeters,
+            own.Z + horizontalRangeMeters * Math.Sin(azRad));
+
+        var result = _dcsExportService.RequestLineOfSight($"satcom:{channelId}", target);
+        return result is not { TerrainAvailable: true } || result.Visible;
+    }
+
+    private void OnSatcomLinkStateReceived(object? sender, SatcomLinkStateEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var channel = DcsLocation?.Channels.FirstOrDefault(c => c.Id.ToString() == e.Message.ChannelKey);
+            if (channel == null) return;
+
+            var msg = e.Message;
+            _satcomLastAssignedSatelliteId = string.IsNullOrEmpty(msg.SatelliteId) ? null : msg.SatelliteId;
+
+            var summary = $"available={msg.Available} satellite={(string.IsNullOrEmpty(msg.SatelliteId) ? "(none)" : msg.SatelliteId)} " +
+                          $"failureReason={msg.FailureReason} quality={msg.QualityState} dama={msg.DamaState}";
+            if (!_satcomLastLoggedLinkSummary.TryGetValue(channel.Id, out var lastSummary) || lastSummary != summary)
+            {
+                _logger.LogInformation("SATCOM link state for \"{ChannelName}\": {Summary}", channel.Name, summary);
+                _satcomLastLoggedLinkSummary[channel.Id] = summary;
+            }
+
+            channel.SatcomSatelliteName = msg.SatelliteName;
+            channel.SatcomQualityState = Enum.TryParse<SatcomLinkQualityState>(msg.QualityState, out var qs)
+                ? qs : SatcomLinkQualityState.Lost;
+            channel.SatcomFailureReason = Enum.TryParse<SatcomAcquisitionFailureReason>(msg.FailureReason, out var fr)
+                ? fr : SatcomAcquisitionFailureReason.None;
+            channel.DamaState = Enum.TryParse<DamaState>(msg.DamaState, out var ds) ? ds : DamaState.Offline;
+
+            channel.SatcomDebugText = msg.DebugAuthorized
+                ? $"C/N0 {msg.CombinedCn0DbHz:F1} dBHz | Eb/N0 {msg.EbN0Db:F1} dB | rawBER {msg.RawBer:E1} | " +
+                  $"postFEC BER {msg.PostFecBer:E1} | up {msg.UplinkElevationDeg:F1}deg/{msg.UplinkRangeMeters / 1000.0:F0}km | " +
+                  $"down {msg.DownlinkElevationDeg:F1}deg/{msg.DownlinkRangeMeters / 1000.0:F0}km | " +
+                  $"frame {msg.DamaFrameIndex} slot {msg.DamaSlot}"
+                : "";
+
+            // Burst severity isn't sent explicitly -- derive a reasonable proxy from quality state
+            // for the existing (already-correct, frame-level) vocoder channel model; the server's
+            // real per-frame Clean/Corrected/Corrupted/Erased decisions (msg.FrameDispositions) are
+            // authoritative for WHICH frames are affected and are available for a future pass that
+            // has RadioPlayback consume that precomputed queue directly instead of re-deriving FER
+            // locally into SatcomChannelErrorModel's own dice roll.
+            var burstSeverity = msg.QualityState switch
+            {
+                nameof(SatcomLinkQualityState.Good) => 0.0,
+                nameof(SatcomLinkQualityState.Marginal) => 0.2,
+                nameof(SatcomLinkQualityState.Degraded) => 0.6,
+                _ => 1.0
+            };
+
+            _openFreqService.SetSatcomState(channel.FrequencyKhz, channel.Id, isActive: msg.Available,
+                msg.FrameErrorRate, burstSeverity, propagationLatencySeconds: msg.PropagationLatencySeconds);
+        });
+    }
+
+    private void OnSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs e)
+    {
+        foreach (var sat in e.Satellites)
+            _satcomSatellites[sat.Id] = sat;
     }
 
     /// <summary>Some radios (the A-10's ARC-210 in TR+G, the UH-60's ARC-164/ARC-186) listen on a
@@ -777,10 +1046,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,
+    private ChannelCardViewModel? SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,
         double volume, bool allowTransmit, bool enc, int encKey, bool hqOn, bool squelchOn)
     {
-        if (DcsLocation == null) return;
+        if (DcsLocation == null) return null;
 
         var channel = DcsLocation.Channels.FirstOrDefault(c => c.DcsRadioId == key);
         if (channel == null)
@@ -817,7 +1086,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         channel.EncKey = encKey;
         channel.HqOn = hqOn;
 
-        if (!_openFreqService.IsAuthenticated) return;
+        if (!_openFreqService.IsAuthenticated) return channel;
 
         if (shouldBeJoined)
         {
@@ -843,6 +1112,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             _openFreqService.LeaveFrequencyAsync(channel.FrequencyKhz, channel.Id)
                 .Wait(TimeSpan.FromMilliseconds(500));
         }
+
+        return channel;
     }
 
     private static bool IsUsableDcsRadio(DcsRadioState radio) =>
@@ -1175,6 +1446,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        _arc210SatcomTicker?.Stop();
+        _arc210SatcomTicker = null;
         _falconRadioSharedMemoryService.ConnectionParametersChanged -= OnConnectionParametersChanged;
         _falconRadioSharedMemoryService.FrequencyChanged -= OnBmsFrequencyChanged;
         _falconRadioSharedMemoryService.PttChanged -= OnBmsPttChanged;
@@ -1187,6 +1460,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
         _dcsExportService.StateChanged -= OnDcsStateChanged;
         _openFreqService.ConnectionStateChanged -= OnOpenFreqConnectionStateChanged;
+        _openFreqService.SatcomLinkStateReceived -= OnSatcomLinkStateReceived;
+        _openFreqService.SatelliteEphemerisReceived -= OnSatelliteEphemerisReceived;
         AllLocations.CollectionChanged -= OnAllLocationsChanged;
         _settings.PropertyChanged -= OnSettingsChanged;
         _acmiClientService.ConnectionStatusChanged -= OnAcmiConnectionStatusChangedForCallsigns;

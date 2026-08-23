@@ -60,34 +60,19 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty] public partial SettingsViewModel Settings { get; set; }
 
     [ObservableProperty]
-    public partial ObservableCollection<ChannelFrequencyPeerViewModel> LobbyPeerList { get; set; } = [];
+    public partial ObservableCollection<ChannelFrequencyPeerViewModel> PeerList { get; set; } = [];
 
-    [ObservableProperty]
-    public partial ObservableCollection<ChannelFrequencyPeerViewModel> GamePeerList { get; set; } = [];
+    public bool HasPeers => PeerList.Count > 0;
+    public int TotalChannels => PeerList.Select(f => f.FrequencyKhz).Distinct().Count();
+    public int DistinctPeers => PeerList.SelectMany(freq => freq.Peers).Distinct().Count();
+    public int PeerCount => PeerList.SelectMany(f => f.Peers).Select(p => p.Id).Distinct().Count();
 
-    public bool HasLobbyPeers => LobbyPeerList.Count > 0;
-    public bool HasGamePeers => GamePeerList.Count > 0;
-    public int TotalChannels => LobbyPeerList.Concat(GamePeerList).Select(f => f.FrequencyKhz).Distinct().Count();
-    public int DistinctPeers => LobbyPeerList.Concat(GamePeerList).SelectMany(freq => freq.Peers).Distinct().Count();
-    public int LobbyPeerCount => LobbyPeerList.SelectMany(f => f.Peers).Select(p => p.Id).Distinct().Count();
-    public int GamePeerCount => GamePeerList.SelectMany(f => f.Peers).Select(p => p.Id).Distinct().Count();
-
-
-    private readonly Dictionary<(string peerId, int freqKhz), bool> _peerModes = new();
     private SortedDictionary<int, List<PeerData>> _latestAllPeers = new();
 
     private LocationViewModel? _subscribedLocation;
     private readonly Dictionary<ChannelCardViewModel, PropertyChangedEventHandler> _channelHandlers = new();
 
     [ObservableProperty] public partial bool OpenFreqConnected { get; set; }
-
-    /// <summary>DCS export is receiving packets (mission running), regardless of whether the
-    /// player is actually seated in the A-10C II yet. Drives whether "Lobby" is selectable.</summary>
-    [ObservableProperty] public partial bool DcsExportConnected { get; set; }
-
-    /// <summary>DCS export reports the player is in the A-10C II cockpit. Drives whether "Game"
-    /// (3D) mode is selectable, since it needs real cockpit position data.</summary>
-    [ObservableProperty] public partial bool DcsInGame { get; set; }
 
     /// <summary>True while a session recording is in progress. Drives the REC indicator + button label.</summary>
     [ObservableProperty] public partial bool IsRecording { get; set; }
@@ -183,21 +168,14 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.LogbookNameChanged += OnLogbookNameChanged;
         _falconRadioSharedMemoryService.RadioClientConflict += OnRadioClientConflict;
         _falconRadioSharedMemoryService.RadioClientConflictResolved += OnRadioClientConflictResolved;
-        _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged += OnAircraftInfoChanged;
-        _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
-        _dcsExportService.StateChanged += OnDcsExportStateChanged;
-        DcsExportConnected = _dcsExportService.State == ServiceState.Connected;
-        DcsInGame = _dcsExportService.IsInGame;
-
         // IVC Monitor
         _ivcMonitorService.IvcStatusChanged += OnIvcStatusChanged;
         // manually start it so we can be sure to get a notification if its already running
         _ivcMonitorService.Start();
 
-        LobbyPeerList.CollectionChanged += OnLobbyPeerListChanged;
-        GamePeerList.CollectionChanged += OnGamePeerListChanged;
+        PeerList.CollectionChanged += OnPeerListChanged;
         Settings.PropertyChanged += OnSettingsPropertyChanged;
         Settings.PersistImmediately += OnSettingsPersistImmediately;
         ChannelList.PropertyChanged += OnChannelListPropertyChanged;
@@ -231,53 +209,34 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     private void OnAllPeersChanged(object? sender, AllPeersStatusEventArgs e)
     {
         _latestAllPeers = e.AllPeers;
-        // Sync _peerModes from the authoritative server snapshot so late-joining
-        // clients get the correct lobby/game section for all existing peers.
-        foreach (var (frequency, peers) in e.AllPeers)
-            foreach (var peer in peers)
-                _peerModes[(peer.Id, frequency)] = peer.Is3d;
         Dispatcher.UIThread.Post(RebuildPeerLists);
     }
 
     private void RebuildPeerLists()
     {
-        bool is3dMode = Settings.Is3dMode;
-        var newLobby = new List<ChannelFrequencyPeerViewModel>();
-        var newGame = new List<ChannelFrequencyPeerViewModel>();
+        var newPeerList = new List<ChannelFrequencyPeerViewModel>();
 
         foreach (var (frequency, peerDatas) in _latestAllPeers)
         {
-            ObservableCollection<ChannelPeerViewModel> lobbyPeers = [];
-            ObservableCollection<ChannelPeerViewModel> gamePeers = [];
+            ObservableCollection<ChannelPeerViewModel> peers = [];
 
             foreach (var peer in peerDatas)
             {
-                bool is3d = _peerModes.TryGetValue((peer.Id, frequency), out var mode) && mode;
-                bool isTransmitting = (is3dMode == is3d) && peer.Status == PeerData.PeerStatus.Transmitting;
-                var vm = new ChannelPeerViewModel(peer.Id, peer.Name ?? string.Empty, isTransmitting,
-                    peer.Id == _openFreqService.PeerId);
-                if (is3d) gamePeers.Add(vm);
-                else lobbyPeers.Add(vm);
+                bool isTransmitting = peer.Status == PeerData.PeerStatus.Transmitting;
+                peers.Add(new ChannelPeerViewModel(peer.Id, peer.Name ?? string.Empty, isTransmitting,
+                    peer.Id == _openFreqService.PeerId));
             }
 
             // canJoin is always false for BMS mode - BMS controls our channels
-            if (lobbyPeers.Count > 0)
+            if (peers.Count > 0)
             {
-                newLobby.Add(new ChannelFrequencyPeerViewModel(frequency, lobbyPeers, JoinFrequencyFromPeerList, false,
-                    Settings.ModeIsGci && !is3dMode && !IsFrequencyAlreadyConnected(frequency)));
-            }
-
-            if (gamePeers.Count > 0)
-            {
-                newGame.Add(new ChannelFrequencyPeerViewModel(frequency, gamePeers, JoinFrequencyFromPeerList, true,
-                    Settings.ModeIsGci && is3dMode && !IsFrequencyAlreadyConnected(frequency)));
+                newPeerList.Add(new ChannelFrequencyPeerViewModel(frequency, peers, JoinFrequencyFromPeerList,
+                    Settings.ModeIsGci && !IsFrequencyAlreadyConnected(frequency)));
             }
         }
 
-        LobbyPeerList.Clear();
-        foreach (var e in newLobby) LobbyPeerList.Add(e);
-        GamePeerList.Clear();
-        foreach (var e in newGame) GamePeerList.Add(e);
+        PeerList.Clear();
+        foreach (var e in newPeerList) PeerList.Add(e);
     }
 
     private void JoinFrequencyFromPeerList(int frequencyKhz)
@@ -306,19 +265,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void UpdateCanJoin()
     {
-        // Joining in the list is only allowed: NOT in BMS mode AND...
-        foreach (var entry in LobbyPeerList)
+        // Joining in the list is only allowed in GCI mode (BMS/DCS control their own channels)
+        // and only when the frequency isn't already connected.
+        foreach (var entry in PeerList)
         {
-            // ... for the lobby list if the GCI is not in 3d AND the freq is joinable
-            entry.CanJoin = Settings is { ModeIsGci: true, Is3dMode: false } &&
-                            !IsFrequencyAlreadyConnected(entry.FrequencyKhz);
-        }
-
-        foreach (var entry in GamePeerList)
-        {
-            // ... for the game list if the GCI is not in 3d AND the freq is joinable
-            entry.CanJoin = Settings is { ModeIsGci: true, Is3dMode: true } &&
-                            !IsFrequencyAlreadyConnected(entry.FrequencyKhz);
+            entry.CanJoin = Settings.ModeIsGci && !IsFrequencyAlreadyConnected(entry.FrequencyKhz);
         }
     }
 
@@ -415,7 +366,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
 
         // Still not Connected after the grace window — treat as a real BMS exit.
-        Settings.Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
         await DisconnectAsync();
     }
 
@@ -521,12 +471,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
-    private void OnFlyingStateChanged(object? sender, FlyingStateChangedEventArgs e)
-    {
-        if (Settings.ConnectionMode != IOpenFreqService.Mode.BMS) return;
-        Settings.Is3dMode = e.NewFlyingState;
-    }
-
     private void FalconRadioSharedMemoryServiceOnConnectionParametersChanged(object? sender,
         ConnectionParametersChangedEventArgs e)
     {
@@ -573,7 +517,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                 // sees ClientHasAnError()=true alongside Connected in the same frame.
                 _falconRadioSharedMemoryService.RemoveClientStatus(ClientStatusFlags.ErrorMask);
                 _falconRadioSharedMemoryService.AddClientStatus(ClientStatusFlags.Connected);
-                Settings.Is3dMode = _falconSharedMemoryService.IsFlying ?? false;
                 // Prefer Nickname (set by BMS at StartExternalVoice time = LogBook.Callsign()).
                 // LogbookName is from the Telemetry struct which BMS initialises to "Wot Pilot?!"
                 // and only overwrites after ClientReady() — i.e. after this connection completes.
@@ -847,19 +790,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (Settings.ModeIsGci || Settings.ModeIsDcs)
                 Dispatcher.UIThread.Post(() => Settings.AddOpenFreqServerAddressToHistory());
 
-            // Re-read live BMS flight state on connect to rule out stale local Is3dMode
-            if (Settings.ConnectionMode == IOpenFreqService.Mode.BMS &&
-                _falconSharedMemoryService.IsFlying is { } isFlying)
-                Dispatcher.UIThread.Post(() => Settings.Is3dMode = isFlying);
-
-            if (Settings.ConnectionMode == IOpenFreqService.Mode.DCS)
-                Dispatcher.UIThread.Post(() =>
-                {
-                    Settings.Is3dMode = _dcsExportService.IsInGame;
-                    DcsExportConnected = _dcsExportService.State == ServiceState.Connected;
-                    DcsInGame = _dcsExportService.IsInGame;
-                });
-
             if (Settings is { ModeIsBms: true, MinimizeOnConnect: true } ||
                 Settings is { ModeIsDcs: true, MinimizeOnConnect: true })
             {
@@ -894,26 +824,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                     window.WindowState = WindowState.Normal;
             });
         }
-    }
-
-    private void OnDcsGameModeChanged(object? sender, DcsGameModeChangedEventArgs e)
-    {
-        Dispatcher.UIThread.Post(() => DcsInGame = e.NewIsInGame);
-
-        if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
-        Dispatcher.UIThread.Post(() => Settings.Is3dMode = e.NewIsInGame);
-    }
-
-    private async void OnDcsExportStateChanged(object? sender, ServiceStateChangedEventArgs e)
-    {
-        Dispatcher.UIThread.Post(() => DcsExportConnected = e.NewState == ServiceState.Connected);
-
-        if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS) return;
-
-        if (e is not { OldState: ServiceState.Connected, NewState: ServiceState.Disconnected }) return;
-
-        Dispatcher.UIThread.Post(() => Settings.Is3dMode = false);
-        await Task.CompletedTask;
     }
 
     [RelayCommand]
@@ -1063,9 +973,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     private void OnPeerActivityReceived(object? sender, PeerActivityEventArgs e)
     {
-        bool? prevMode = _peerModes.TryGetValue((e.PeerData.Id, e.FrequencyKhz), out var m) ? m : null;
-        _peerModes[(e.PeerData.Id, e.FrequencyKhz)] = e.Is3d;
-
         // Update status in snapshot so a subsequent RebuildPeerLists call uses fresh status
         if (_latestAllPeers.TryGetValue(e.FrequencyKhz, out var peerList))
         {
@@ -1073,39 +980,22 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (snapPeer != null) snapPeer.Status = e.PeerData.Status;
         }
 
-        bool modeChanged = prevMode == null ? e.Is3d : prevMode != e.Is3d;
-
         Dispatcher.UIThread.Post(() =>
         {
-            if (modeChanged)
-            {
-                RebuildPeerLists();
-                return;
-            }
-
-            foreach (var peer in LobbyPeerList.Concat(GamePeerList)
+            foreach (var peer in PeerList
                          .Where(f => f.FrequencyKhz == e.FrequencyKhz)
                          .SelectMany(f => f.Peers)
                          .Where(p => p.Id == e.PeerData.Id))
             {
-                peer.IsTransmitting = (Settings.Is3dMode == e.Is3d) &&
-                                      e.PeerData.Status == PeerData.PeerStatus.Transmitting;
+                peer.IsTransmitting = e.PeerData.Status == PeerData.PeerStatus.Transmitting;
             }
         });
     }
 
-    private void OnLobbyPeerListChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private void OnPeerListChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(HasLobbyPeers));
-        OnPropertyChanged(nameof(LobbyPeerCount));
-        OnPropertyChanged(nameof(DistinctPeers));
-        OnPropertyChanged(nameof(TotalChannels));
-    }
-
-    private void OnGamePeerListChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        OnPropertyChanged(nameof(HasGamePeers));
-        OnPropertyChanged(nameof(GamePeerCount));
+        OnPropertyChanged(nameof(HasPeers));
+        OnPropertyChanged(nameof(PeerCount));
         OnPropertyChanged(nameof(DistinctPeers));
         OnPropertyChanged(nameof(TotalChannels));
     }
@@ -1115,27 +1005,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         if (e.PropertyName == nameof(SettingsViewModel.ConnectionMode))
         {
             _openFreqService.SetOwnPositionMode(Settings.ConnectionMode);
-            return;
         }
-
-        if (e.PropertyName == nameof(SettingsViewModel.Is3dMode))
-            Dispatcher.UIThread.Post(UpdateModeDependent);
-    }
-
-    private void UpdateModeDependent()
-    {
-        bool is3d = Settings.Is3dMode;
-        string? ownId = _openFreqService.PeerId;
-
-        // Stamp own player's mode into _peerModes for every frequency they appear on,
-        // so RebuildPeerLists places them in the correct section.
-        if (!string.IsNullOrEmpty(ownId))
-        {
-            foreach (var frequency in _latestAllPeers.Keys)
-                _peerModes[(ownId, frequency)] = is3d;
-        }
-
-        RebuildPeerLists();
     }
 
     private void OnFrequencyTransmissionStatusChanged(object? sender, FrequencyTransmissionStatusEventArgs e)
@@ -1145,7 +1015,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
         Dispatcher.UIThread.Post(() =>
         {
-            foreach (var peer in LobbyPeerList.Concat(GamePeerList)
+            foreach (var peer in PeerList
                          .Where(f => f.FrequencyKhz == e.FrequencyKhz)
                          .SelectMany(f => f.Peers)
                          .Where(p => p.Id == _openFreqService.PeerId))
@@ -1290,8 +1160,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _audioService.AudioDeviceErrorOccurred -= OnAudioErrorOccurred;
         _ivcMonitorService.IvcStatusChanged -= OnIvcStatusChanged;
         _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
-        LobbyPeerList.CollectionChanged -= OnLobbyPeerListChanged;
-        GamePeerList.CollectionChanged -= OnGamePeerListChanged;
+        PeerList.CollectionChanged -= OnPeerListChanged;
         Settings.PropertyChanged -= OnSettingsPropertyChanged;
         ChannelList.PropertyChanged -= OnChannelListPropertyChanged;
         if (_subscribedLocation != null)
@@ -1307,10 +1176,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.LogbookNameChanged -= OnLogbookNameChanged;
         _falconRadioSharedMemoryService.RadioClientConflict -= OnRadioClientConflict;
         _falconRadioSharedMemoryService.RadioClientConflictResolved -= OnRadioClientConflictResolved;
-        _falconSharedMemoryService.FlyingStateChanged -= OnFlyingStateChanged;
         _falconSharedMemoryService.AircraftInfoChanged -= OnAircraftInfoChanged;
-        _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
-        _dcsExportService.StateChanged -= OnDcsExportStateChanged;
 
         await DisconnectAsync();
         ChannelList.Dispose();

@@ -19,6 +19,9 @@ public static class SignalingMessageTypes
     public const string ModeUpdate = "mode-update";
     public const string ServerSettings = "server-settings";
     public const string SatcomGeometryUpdate = "satcom-geometry-update";
+    public const string DcsPresenceUpdate = "dcs-presence-update";
+    public const string DcsLosOracleRequest = "dcs-los-oracle-request";
+    public const string DcsLosOracleResponse = "dcs-los-oracle-response";
     public const string SatelliteEphemerisUpdate = "satellite-ephemeris-update";
     public const string SatcomLinkState = "satcom-link-state";
 }

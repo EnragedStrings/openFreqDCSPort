@@ -253,7 +253,7 @@ public class TestClientWrapper : IDisposable
         // Tell client to start transmission on all frequencies
         foreach (var frequency in _frequencies)
         {
-            await _client.StartTransmissionAsync(frequency, false);
+            await _client.StartTransmissionAsync(frequency);
             _isTransmitting[frequency] = true;
         }
     }
@@ -276,7 +276,7 @@ public class TestClientWrapper : IDisposable
         {
             if (_isTransmitting[frequency])
             {
-                await _client.StopTransmissionAsync(frequency, false);
+                await _client.StopTransmissionAsync(frequency);
                 _isTransmitting[frequency] = false;
             }
         }
@@ -294,12 +294,13 @@ public class TestClientWrapper : IDisposable
         // Send complete frame to all transmitting frequencies
         var transmitData = new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position,
             Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey,
-            bool hqOn)>();
+            bool hqOn, double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)>();
         foreach (var frequency in _isTransmitting.Keys)
         {
-            transmitData.Add((frequency, 50, 0, new Vector3(), null, null, AmbientNoiseType.None, false, 0, false));
+            transmitData.Add((frequency, 50, 0, new Vector3(), null, null, AmbientNoiseType.None, false, 0, false,
+                null, null, null));
         }
-        _client.SendAudio(audioData, transmitData, false);
+        _client.SendAudio(audioData, transmitData);
 
         return true;
     }

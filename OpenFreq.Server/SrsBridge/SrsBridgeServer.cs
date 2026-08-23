@@ -25,6 +25,12 @@ public sealed class SrsBridgeServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, SrsClientAdapter> _clients = new();
     private readonly ConcurrentDictionary<string, ClientSession> _openFreqClients;
 
+    /// <summary>Picks a connected OpenFreq client to referee terrain LOS for a leg involving an
+    /// SRS-bridged peer -- see SrsLosOracleService's own doc comment. Public so SrsClientAdapter
+    /// (via _bridge) can consult it from the OpenFreq-&gt;SRS leg's signal-quality computation.
+    /// </summary>
+    public SrsLosOracleService LosOracle { get; }
+
     // Shadow clients (SRS players bridged onto the real OpenFreq server) are themselves entries
     // in _openFreqClients -- excluded here so a bridged SRS player doesn't get reflected back to
     // SRS clients as a fake "OpenFreq" peer of themselves.
@@ -44,13 +50,15 @@ public sealed class SrsBridgeServer : IAsyncDisposable
     private static readonly TimeSpan FakeRosterPushInterval = TimeSpan.FromSeconds(3);
 
     public SrsBridgeServer(ServerConfig config, IRtcClientFactory rtcClientFactory, ILoggerFactory loggerFactory,
-        ConcurrentDictionary<string, ClientSession> openFreqClients)
+        ConcurrentDictionary<string, ClientSession> openFreqClients, SignalingServer signalingServer)
     {
         _config = config;
         _rtcClientFactory = rtcClientFactory;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<SrsBridgeServer>();
         _openFreqClients = openFreqClients;
+        LosOracle = new SrsLosOracleService(signalingServer, openFreqClients,
+            loggerFactory.CreateLogger<SrsLosOracleService>());
     }
 
     public void Start()

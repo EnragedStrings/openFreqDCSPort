@@ -404,8 +404,6 @@ public class RadioPlayback : IDisposable
         }
     } = true;
 
-    public bool Apply3dEffects { get; set; }
-
     // Wet/dry blend (0..1) for the transmitter-side ambient noise layer.
     // 0 bypasses ambient SFX entirely; 1 applies them at full strength.
     public float AmbientNoiseVolume { get; set; } = 1.0f;
@@ -1330,7 +1328,7 @@ public class RadioPlayback : IDisposable
             OwnVoiceRadioRenderer? ownVoiceRenderer;
             lock (_lock)
             {
-                transmittingFrequencies = Apply3dEffects ? new(_transmittingFrequencies) : [];
+                transmittingFrequencies = new(_transmittingFrequencies);
                 streams = _streams.Values.ToList();
 
                 capturing = Capturing;
@@ -1408,10 +1406,7 @@ public class RadioPlayback : IDisposable
                     }
 
                     // Apply radio effects
-                    if (Apply3dEffects)
-                    {
-                        stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
-                    }
+                    stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
 
                     stream.Samples = stream.Scratch.AsMemory()[..drained];
                 }
@@ -1437,7 +1432,6 @@ public class RadioPlayback : IDisposable
                 var freqStreams = streamsByFrequency.GetValueOrDefault(freq, []);
 
                 // Mix transmitting streams
-                if (Apply3dEffects)
                 {
                     var transmittingStreamsAll = freqStreams.Where(s => s.Samples.Length > 0).ToList();
                     // Sanity check:
@@ -1750,98 +1744,6 @@ public class RadioPlayback : IDisposable
                         }
 
                         // Mix this slot's mono signal into the stereo output with its pan and volume.
-                        float mv = MasterVolume;
-                        float panAngle  = (slot.Pan + 100) / 200f * MathF.PI / 2f;
-                        float leftGain  = mv * slot.Volume * MathF.Cos(panAngle);
-                        float rightGain = mv * slot.Volume * MathF.Sin(panAngle);
-                        for (int frame = 0; frame < samples; frame++)
-                        {
-                            int leftIdx = frame * 2;
-                            _stereoBuffer[leftIdx]     += leftGain  * _dspScratch[frame];
-                            _stereoBuffer[leftIdx + 1] += rightGain * _dspScratch[frame];
-                        }
-                    }
-                }
-                // Straight mix when we're not applying any FX (distance/squelch/AGC etc. are
-                // skipped here on purpose -- lobby/GCI mode has no position data to derive them
-                // from). KY-58/COMSEC gating is NOT one of those position-dependent effects
-                // though -- it's a per-slot key match, independent of 3D simulation -- so unlike
-                // squelch it must still run here, per slot, exactly as the 3D path does at
-                // (see the Apply3dEffects branch above). Without this, an unencrypted GCI slot
-                // heard an encrypted transmitter's raw plaintext-mixed audio with no gating at
-                // all, regardless of key state.
-                else
-                {
-                    foreach (var slot in tunedSlots)
-                    {
-                        if (slot.IsNoiseMuted) continue;
-
-                        var transecStreams = freqStreams.Where(s => s.HqOn == slot.HqOn).ToList();
-                        var dominant = transecStreams.Count > 0 ? transecStreams[0] : null;
-                        bool carrierPresent = dominant != null;
-
-                        var (matchedCipher, wrongKey, passiveCiphertext) = carrierPresent
-                            ? KySecureReceiveState.Classify(slot.Enc, slot.EncKey, slot.CryptoCapable,
-                                dominant!.Enc, dominant.EncKey)
-                            : (false, false, false);
-                        var comsecOutcome = slot.KySecureState.Update(carrierPresent, matchedCipher, wrongKey,
-                            passiveCiphertext, samples);
-
-                        if (comsecOutcome != slot.LastLoggedComsecOutcome)
-                        {
-                            _logger.LogWarning(
-                                "RadioPlayback COMSEC (no-FX): freq={FreqKhz} outcome={Outcome} slotEnc={SlotEnc} slotKey={SlotKey} slotCryptoCapable={SlotCryptoCapable} streamEnc={StreamEnc} streamKey={StreamKey} matched={Matched} wrongKey={WrongKey} passiveCiphertext={Passive}",
-                                freq, comsecOutcome, slot.Enc, slot.EncKey, slot.CryptoCapable,
-                                dominant?.Enc ?? false, dominant?.EncKey ?? 0, matchedCipher, wrongKey, passiveCiphertext);
-                            slot.LastLoggedComsecOutcome = comsecOutcome;
-                        }
-
-                        bool matchedCipherNow = comsecOutcome == KySecureOutcome.Pass && matchedCipher;
-                        if (matchedCipherNow && !slot.WasMatchedCipherActive)
-                            TriggerRxTone();
-                        slot.WasMatchedCipherActive = matchedCipherNow;
-
-                        Array.Clear(_dspScratch, 0, samples);
-                        switch (comsecOutcome)
-                        {
-                            case KySecureOutcome.Pass:
-                                int numTransmitting = transecStreams.Count;
-                                if (numTransmitting > 0)
-                                {
-                                    foreach (var t in transecStreams)
-                                        for (int i = 0; i < t.Samples.Length; ++i)
-                                            _dspScratch[i] += t.Samples.Span[i];
-
-                                    float mixGain = 1.0f / (float)Math.Sqrt(numTransmitting);
-                                    for (int i = 0; i < samples; ++i)
-                                        _dspScratch[i] *= mixGain;
-
-                                    if (matchedCipher)
-                                        for (int i = 0; i < samples; ++i)
-                                            _dspScratch[i] = slot.CvsdEffect.Process(_dspScratch[i]);
-                                }
-                                break;
-                            case KySecureOutcome.NoiseBurst:
-                            case KySecureOutcome.PassiveCiphertext:
-                                for (int i = 0; i < samples; ++i)
-                                    _dspScratch[i] = slot.CipherNoise.NextSample();
-                                break;
-                            case KySecureOutcome.Beep:
-                                for (int i = 0; i < samples; ++i)
-                                    _dspScratch[i] = (float)Math.Sin(
-                                        2.0 * Math.PI * WrongKeyBeepFrequencyHz * (i + _sampleNum) / SampleRate)
-                                        * WrongKeyBeepAmplitude;
-                                break;
-                            case KySecureOutcome.Muted:
-                            case KySecureOutcome.Idle:
-                            default:
-                                break; // silence
-                        }
-
-                        // Set AGC back to unity so there's not sudden jumps
-                        // when we turn FX back on.
-                        slot.Agc.D1 = 1;
-
                         float mv = MasterVolume;
                         float panAngle  = (slot.Pan + 100) / 200f * MathF.PI / 2f;
                         float leftGain  = mv * slot.Volume * MathF.Cos(panAngle);

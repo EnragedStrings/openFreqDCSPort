@@ -1339,6 +1339,45 @@ local function buildLosResponse(request)
     return response
 end
 
+-- Answers a remote-oracle LOS request between two arbitrary geodetic points -- unlike
+-- buildLosResponse (always anchored on this aircraft's own LoGetSelfData().Position), neither
+-- point here has to belong to this aircraft at all. coord.LLtoLO is the standard DCS Mission
+-- Scripting Engine API for converting a geodetic lat/lon/alt into this map's own local X/Y/Z --
+-- the only way to make an arbitrary geodetic point usable with terrain.isVisible at all, since
+-- that projection is per-map and only a live DCS instance on that map knows it.
+local function buildRemoteLosResponse(request)
+    local terrainAvailable = terrain ~= nil and type(terrain.isVisible) == "function"
+        and type(coord) == "table" and type(coord.LLtoLO) == "function"
+    local response = {
+        schema = "openfreq.dcs.los.remote_response",
+        version = 1,
+        requestId = request.requestId or "",
+        terrainAvailable = terrainAvailable,
+        visible = false,
+        loss = 1.0
+    }
+
+    local from = request.from or {}
+    local to = request.to or {}
+    if not terrainAvailable or
+        type(from.lat) ~= "number" or type(from.lon) ~= "number" or type(from.alt) ~= "number" or
+        type(to.lat) ~= "number" or type(to.lon) ~= "number" or type(to.alt) ~= "number" then
+        return response
+    end
+
+    local ok, fromLocal, toLocal = pcall(function()
+        return coord.LLtoLO(from.lat, from.lon, from.alt), coord.LLtoLO(to.lat, to.lon, to.alt)
+    end)
+    if not ok or type(fromLocal) ~= "table" or type(toLocal) ~= "table" then
+        return response
+    end
+
+    local loss, visible = calculateLosLoss(fromLocal, toLocal)
+    response.loss = loss
+    response.visible = visible == true
+    return response
+end
+
 function OpenFreqDCS.startLos()
     local losConfig = config.los or {}
     if losConfig.enabled == false or OpenFreqDCS.losReceiveSocket or not socket then
@@ -1379,6 +1418,10 @@ function OpenFreqDCS.processLosRequests()
         local ok, request = pcall(function() return json:decode(received) end)
         if ok and type(request) == "table" and request.schema == "openfreq.dcs.los.request" then
             local response = buildLosResponse(request)
+            local payload = encodeJson(response)
+            pcall(function() OpenFreqDCS.udp:send(payload) end)
+        elseif ok and type(request) == "table" and request.schema == "openfreq.dcs.los.remote_request" then
+            local response = buildRemoteLosResponse(request)
             local payload = encodeJson(response)
             pcall(function() OpenFreqDCS.udp:send(payload) end)
         end

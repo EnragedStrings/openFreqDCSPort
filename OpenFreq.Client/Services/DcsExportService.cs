@@ -25,6 +25,13 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     private readonly ConcurrentDictionary<int, DcsRadioState> _radios = new();
     private readonly ConcurrentDictionary<string, DcsLineOfSightResult> _losResults = new();
     private readonly ConcurrentDictionary<string, DateTime> _losLastRequestUtc = new();
+
+    // Pending remote (two-arbitrary-point) LOS requests awaiting this client's own DCS instance's
+    // reply -- see RequestRemoteLineOfSightAsync/DcsLosRemoteRequestPacket. Unlike the self-
+    // anchored _losResults cache above (polled, fire-and-forget), this answers one specific
+    // server-initiated query, so it's a proper await rather than a cache lookup.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<DcsLosRemoteResponsePacket>>
+        _pendingRemoteLosRequests = new();
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private Task? _watchdogTask;
@@ -210,6 +217,54 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         return now - result.ReceivedUtc <= LosResultTtl ? result : null;
     }
 
+    /// <summary>Asks this client's own live DCS instance to check terrain LOS between two
+    /// arbitrary geodetic points -- neither has to be this aircraft's own position, unlike <see
+    /// cref="RequestLineOfSight"/>. Answers a server-initiated remote-oracle query (see
+    /// OpenFreqService's DcsLosOracleRequestReceived handler); returns null if this client has no
+    /// DCS connection, the request can't be sent, or no reply arrives within <paramref
+    /// name="timeout"/>.</summary>
+    public async Task<DcsLosRemoteResponsePacket?> RequestRemoteLineOfSightAsync(double fromLat, double fromLon,
+        double fromAlt, double toLat, double toLon, double toAlt, TimeSpan timeout)
+    {
+        var udpClient = _udpClient;
+        if (udpClient == null || State != ServiceState.Connected)
+            return null;
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<DcsLosRemoteResponsePacket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingRemoteLosRequests.TryAdd(requestId, tcs))
+            return null;
+
+        try
+        {
+            var request = new DcsLosRemoteRequestPacket
+            {
+                RequestId = requestId,
+                ClientPort = UdpPort,
+                From = new DcsGeoPoint { Lat = fromLat, Lon = fromLon, Alt = fromAlt },
+                To = new DcsGeoPoint { Lat = toLat, Lon = toLon, Alt = toAlt }
+            };
+
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(request, ClientJsonContext.Default.DcsLosRemoteRequestPacket);
+            lock (_udpSendLock)
+            {
+                udpClient.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Loopback, LosRequestPort));
+            }
+
+            using var cts = new CancellationTokenSource(timeout);
+            await using var registration = cts.Token.Register(() => tcs.TrySetCanceled());
+            return await tcs.Task;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or SocketException or ObjectDisposedException)
+        {
+            return null;
+        }
+        finally
+        {
+            _pendingRemoteLosRequests.TryRemove(requestId, out _);
+        }
+    }
+
     public void Start()
     {
         lock (_stateLock)
@@ -262,6 +317,10 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         _radios.Clear();
         _losResults.Clear();
         _losLastRequestUtc.Clear();
+
+        foreach (var pending in _pendingRemoteLosRequests)
+            if (_pendingRemoteLosRequests.TryRemove(pending.Key, out var tcs))
+                tcs.TrySetCanceled();
 
         lock (_stateLock)
         {
@@ -328,6 +387,12 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             var packet = JsonSerializer.Deserialize(buffer, ClientJsonContext.Default.DcsLosResponsePacket);
             if (packet != null)
                 ApplyLosResponse(packet);
+        }
+        else if (string.Equals(schema, "openfreq.dcs.los.remote_response", StringComparison.OrdinalIgnoreCase))
+        {
+            var packet = JsonSerializer.Deserialize(buffer, ClientJsonContext.Default.DcsLosRemoteResponsePacket);
+            if (packet != null && _pendingRemoteLosRequests.TryRemove(packet.RequestId, out var tcs))
+                tcs.TrySetResult(packet);
         }
     }
 

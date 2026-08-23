@@ -23,7 +23,7 @@
                      IsChecked="{Binding !Settings.AutoRecordInGameMode}"
                      Margin="0,0,0,2" />
 
-        <RadioButton Content="Start recording in Game Mode"
+        <RadioButton Content="Start recording automatically on connect"
                      IsChecked="{Binding Settings.AutoRecordInGameMode}"
                      Margin="0,0,0,4" />
       </StackPanel>

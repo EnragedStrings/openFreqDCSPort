@@ -210,6 +210,33 @@ public static class SignalingMessageFactory
         };
     }
 
+    public static SignalingMessage CreateDcsPresenceUpdate(DcsPresenceUpdateMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.DcsPresenceUpdate,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.DcsPresenceUpdateMessage)
+        };
+    }
+
+    public static SignalingMessage CreateDcsLosOracleRequest(DcsLosOracleRequestMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.DcsLosOracleRequest,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.DcsLosOracleRequestMessage)
+        };
+    }
+
+    public static SignalingMessage CreateDcsLosOracleResponse(DcsLosOracleResponseMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.DcsLosOracleResponse,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.DcsLosOracleResponseMessage)
+        };
+    }
+
     public static SignalingMessage CreateSatelliteEphemerisUpdate(List<SatcomSatelliteInfoDto> satellites)
     {
         return new SignalingMessage

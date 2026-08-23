@@ -14,6 +14,11 @@ public class SatelliteEphemerisEventArgs(List<SatcomSatelliteInfoDto> satellites
     public List<SatcomSatelliteInfoDto> Satellites { get; } = satellites;
 }
 
+public class DcsLosOracleRequestEventArgs(DcsLosOracleRequestMessage message) : EventArgs
+{
+    public DcsLosOracleRequestMessage Message { get; } = message;
+}
+
 /// <summary>
 /// Abstraction over <see cref="OpenFreqRtcClient"/> covering the surface used by the client
 /// service layer. Exists so the network client can be replaced with a fake in tests — the real
@@ -36,6 +41,11 @@ public interface IRtcClient : IDisposable
     event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
 
+    /// <summary>The server is asking this client to referee a remote terrain-LOS check via its own
+    /// live DCS instance -- see DcsLosOracleRequestMessage's own doc comment. Answer with
+    /// SendDcsLosOracleResponseAsync, echoing the same RequestId.</summary>
+    event EventHandler<DcsLosOracleRequestEventArgs>? DcsLosOracleRequestReceived;
+
     string ServerIp { get; }
     string? MyPeerId { get; }
     bool IsConnected { get; }
@@ -45,22 +55,30 @@ public interface IRtcClient : IDisposable
     Task DisconnectAsync();
     Task JoinFrequencyAsync(int frequencyKhz);
     Task LeaveFrequencyAsync(int frequencyKhz);
-    Task StartTransmissionAsync(int frequencyKhz, bool is3d);
-    Task StopTransmissionAsync(int frequencyKhz, bool is3d);
-    Task SendModeUpdateAsync(bool is3d);
+    Task StartTransmissionAsync(int frequencyKhz);
+    Task StopTransmissionAsync(int frequencyKhz);
+    Task SendModeUpdateAsync();
     Task SetDisplayNameAsync(string displayName);
 
     /// <summary>Reports this client's SATCOM geometry/state for one net -- the server is
     /// authoritative for satellite assignment/link-budget/DAMA; see docs/SATCOM_SIMULATION.md.</summary>
     Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message);
 
+    /// <summary>Reports this DCS-mode client's rough position/theater, low-rate, independent of
+    /// SATCOM state -- see DcsPresenceUpdateMessage's own doc comment.</summary>
+    Task SendDcsPresenceUpdateAsync(DcsPresenceUpdateMessage message);
+
+    /// <summary>Answers a DcsLosOracleRequestMessage previously raised via
+    /// DcsLosOracleRequestReceived.</summary>
+    Task SendDcsLosOracleResponseAsync(DcsLosOracleResponseMessage message);
+
     void MarkTransmitStartTime();
 
     void SendAudio(
         Memory<short> pcmData,
         List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-            Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)> frequencies,
-        bool in3d);
+            Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn,
+            double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies);
 }
 
 /// <summary>

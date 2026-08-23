@@ -15,7 +15,6 @@
         <StackPanel Margin="10,0,5,0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
             <Button Click="OnLoadClicked">Load Heightmap</Button>
             <TextBlock Name="StatusText" HorizontalAlignment="Right" VerticalAlignment="Center">No heightmap loaded</TextBlock>
-            <CheckBox Margin="10,0,5,0" Content="Enable audio effects" IsCheckedChanged="OnEnable3dEffectsChanged" IsChecked="{Binding Enable3dEffects}"/>
             <TextBlock VerticalAlignment="Center" Margin="10, 0, 0, 0">Sound Effect Type</TextBlock>
             <ComboBox ItemsSource="{Binding AmbientNoiseTypes}" SelectedValue="{Binding AmbientNoiseType, Mode=TwoWay}" SelectionChanged="OnAmbientNoiseTypeChanged"/>
         </StackPanel>

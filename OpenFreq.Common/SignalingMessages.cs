@@ -172,6 +172,53 @@ public class ServerSettingsMessage
 }
 
 /// <summary>
+/// Client -&gt; server, low-rate (every ~1-2s, not per DCS export tick -- see
+/// OpenFreqService.SendDcsPresenceUpdatesAsync), sent by any DCS-mode OpenFreq client regardless of
+/// SATCOM state. Unlike SatcomGeometryUpdateMessage (which only exists for active SATCOM radios),
+/// this is the server's only source of "who's running DCS and roughly where" -- used to pick a
+/// live DCS client as a remote terrain-LOS oracle for SRS-bridged legs the server has no terrain
+/// data of its own to evaluate (see SrsLosOracleService, phase 4c/4d of the SRS bridge plan).
+/// Theater is required for correctness: querying an oracle on the wrong map returns meaningless
+/// terrain results, so callers must filter to matching theaters before picking one.
+/// </summary>
+public class DcsPresenceUpdateMessage
+{
+    [JsonPropertyName("lat")] public double LatitudeDeg { get; set; }
+    [JsonPropertyName("lon")] public double LongitudeDeg { get; set; }
+    [JsonPropertyName("alt")] public double AltitudeMeters { get; set; }
+    [JsonPropertyName("theater")] public string Theater { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Server -&gt; one client, asking it to referee terrain line-of-sight between two arbitrary
+/// geodetic points via its own live DCS instance's terrain.isVisible -- neither point has to be
+/// this client's own aircraft (see OpenFreqDCS.lua's buildRemoteLosResponse, which converts both
+/// via coord.LLtoLO before raycasting). Used by SrsLosOracleService for legs involving an
+/// SRS-bridged peer, which the server itself has no terrain data to evaluate. RequestId correlates
+/// with the client's DcsLosOracleResponseMessage; the server times the request out (see
+/// SignalingServer.RequestRemoteLineOfSightAsync) rather than waiting indefinitely.
+/// </summary>
+public class DcsLosOracleRequestMessage
+{
+    [JsonPropertyName("requestId")] public string RequestId { get; set; } = string.Empty;
+    [JsonPropertyName("fromLat")] public double FromLatitudeDeg { get; set; }
+    [JsonPropertyName("fromLon")] public double FromLongitudeDeg { get; set; }
+    [JsonPropertyName("fromAlt")] public double FromAltitudeMeters { get; set; }
+    [JsonPropertyName("toLat")] public double ToLatitudeDeg { get; set; }
+    [JsonPropertyName("toLon")] public double ToLongitudeDeg { get; set; }
+    [JsonPropertyName("toAlt")] public double ToAltitudeMeters { get; set; }
+}
+
+/// <summary>Client -&gt; server, answering one DcsLosOracleRequestMessage.</summary>
+public class DcsLosOracleResponseMessage
+{
+    [JsonPropertyName("requestId")] public string RequestId { get; set; } = string.Empty;
+    [JsonPropertyName("terrainAvailable")] public bool TerrainAvailable { get; set; }
+    [JsonPropertyName("visible")] public bool Visible { get; set; }
+    [JsonPropertyName("loss")] public double Loss { get; set; }
+}
+
+/// <summary>
 /// Client -&gt; server, sent once per DCS export tick per active SATCOM-capable radio. The server is
 /// authoritative for satellite selection/link-budget/DAMA; this is the raw geometry/state input it
 /// needs. TerrainLosClear is computed client-side (only the client has DCS's land.isVisible) along

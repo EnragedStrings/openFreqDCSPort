@@ -364,12 +364,9 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     {
         Dispatcher.UIThread.Post(() =>
         {
-            var modeMatches = e.Is3d == Settings.Is3dMode;
-
             foreach (var channel in Channels.Where(c => c.FrequencyKhz == e.FrequencyKhz).ToList())
             {
-                if (e.TransmissionStatus == Channel.ChannelTransmissionStatus.Idle || modeMatches)
-                    channel.TransmissionStatus = e.TransmissionStatus;
+                channel.TransmissionStatus = e.TransmissionStatus;
             }
 
             AnyChannelTransmitting =
@@ -428,8 +425,7 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
                 }
                 else if (e.Type == IHotkeyService.HotkeyType.SquelchToggle)
                 {
-                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected &&
-                        Settings.Is3dMode)
+                    if (channel != null && channel.ConnectionStatus != Channel.ChannelConnectionStatus.Disconnected)
                     {
                         channel.ToggleSquelch();
                     }

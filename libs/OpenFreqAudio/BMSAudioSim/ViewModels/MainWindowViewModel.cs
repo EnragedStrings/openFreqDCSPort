@@ -22,7 +22,6 @@ public class MainWindowViewModel : ReactiveObject
     private bool _signal2Continuous = false;
     private int _squelchSliderValue = 10;
     private float _squelch = 1.0f;
-    private bool _enable3dEffects = true;
     private float _ppm1 = 0;
     private float _ppm2 = 0;
 
@@ -100,12 +99,6 @@ public class MainWindowViewModel : ReactiveObject
     {
         get => _signal2Continuous;
         set => this.RaiseAndSetIfChanged(ref _signal2Continuous, value);
-    }
-
-    public bool Enable3dEffects
-    {
-        get => _enable3dEffects;
-        set => this.RaiseAndSetIfChanged(ref _enable3dEffects, value);
     }
 
     public float Ppm1

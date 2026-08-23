@@ -18,7 +18,6 @@ public interface IPlaybackService
     float SidetoneVolume { get; set; }
     float MasterVolume { get; set; }
     float AmbientNoiseVolume { get; set; }
-    bool Apply3dEffects { get; set; }
     bool OwnVoiceSfxEnabled { get; set; }
     bool IsRecording { get; }
     bool IsMonitoring { get; }
@@ -80,7 +79,6 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public float SidetoneVolume { get => _inner.SidetoneVolume; set => _inner.SidetoneVolume = value; }
     public float MasterVolume { get => _inner.MasterVolume; set => _inner.MasterVolume = value; }
     public float AmbientNoiseVolume { get => _inner.AmbientNoiseVolume; set => _inner.AmbientNoiseVolume = value; }
-    public bool Apply3dEffects { get => _inner.Apply3dEffects; set => _inner.Apply3dEffects = value; }
     public bool OwnVoiceSfxEnabled { get => _inner.OwnVoiceSfxEnabled; set => _inner.OwnVoiceSfxEnabled = value; }
     public bool IsRecording => _inner.IsRecording;
     public bool IsMonitoring => _inner.IsMonitoring;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using OpenFreq.Client.Models.Dcs;
 using FalconBmsDataService.Models;
 using FalconRadioService.Models;
@@ -34,6 +35,12 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     DcsRadioState? GetRadio(int slot);
     IReadOnlyList<DcsRadioState> GetRadios();
     DcsLineOfSightResult? RequestLineOfSight(string key, DcsVector3 remotePosition);
+
+    /// <summary>Asks this client's own live DCS instance to check terrain LOS between two
+    /// arbitrary geodetic points -- see DcsExportService's own doc comment on the implementation.
+    /// </summary>
+    Task<DcsLosRemoteResponsePacket?> RequestRemoteLineOfSightAsync(double fromLat, double fromLon,
+        double fromAlt, double toLat, double toLon, double toAlt, TimeSpan timeout);
 
     event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
     event EventHandler<DcsRadioChangedEventArgs>? RadioChanged;

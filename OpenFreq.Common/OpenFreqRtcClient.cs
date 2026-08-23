@@ -32,6 +32,7 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
     public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
+    public event EventHandler<DcsLosOracleRequestEventArgs>? DcsLosOracleRequestReceived;
 
     private RtpAudioReceiver? _rtpReceiver;
     private RtpAudioSender? _rtpSender;
@@ -323,7 +324,7 @@ public class OpenFreqRtcClient : IRtcClient
     /// <summary>
     /// Start transmitting on a frequency
     /// </summary>
-    public async Task StartTransmissionAsync(int frequencyKhz, bool is3d)
+    public async Task StartTransmissionAsync(int frequencyKhz)
     {
         if (!IsAuthenticated)
         {
@@ -337,17 +338,17 @@ public class OpenFreqRtcClient : IRtcClient
 
         _frequencyTransmissionState[frequencyKhz] = true;
 
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d));
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true));
         OnTransmissionStateChanged(frequencyKhz, true);
 
         // Start heartbeat for this frequency
-        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz, is3d), _cts.Token);
+        _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz), _cts.Token);
     }
 
     /// <summary>
     /// Stop transmitting on a frequency
     /// </summary>
-    public async Task StopTransmissionAsync(int frequencyKhz, bool is3d)
+    public async Task StopTransmissionAsync(int frequencyKhz)
     {
         if (!IsAuthenticated)
         {
@@ -361,18 +362,18 @@ public class OpenFreqRtcClient : IRtcClient
 
         _frequencyTransmissionState[frequencyKhz] = false;
 
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false, is3d));
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false, is3d: true));
         OnTransmissionStateChanged(frequencyKhz, false);
     }
 
     /// <summary>
-    /// Notifies the server of the local client's current 3D mode.
-    /// The server updates its state and broadcasts AllPeersStatusMessage to all clients.
+    /// Notifies the server of the local client's current mode. The server updates its state and
+    /// broadcasts AllPeersStatusMessage to all clients. Always game mode -- there is no lobby mode.
     /// </summary>
-    public async Task SendModeUpdateAsync(bool is3d)
+    public async Task SendModeUpdateAsync()
     {
         if (!IsAuthenticated) return;
-        await SendMessageAsync(SignalingMessageFactory.CreateModeUpdate(is3d));
+        await SendMessageAsync(SignalingMessageFactory.CreateModeUpdate(is3d: true));
     }
 
     /// <summary>
@@ -385,6 +386,21 @@ public class OpenFreqRtcClient : IRtcClient
     {
         if (!IsAuthenticated) return;
         await SendMessageAsync(SignalingMessageFactory.CreateSatcomGeometryUpdate(message));
+    }
+
+    /// <summary>Reports this DCS-mode client's rough position/theater, low-rate, independent of
+    /// SATCOM state. Fire-and-forget, same as SendSatcomGeometryUpdateAsync -- no reply expected.
+    /// </summary>
+    public async Task SendDcsPresenceUpdateAsync(DcsPresenceUpdateMessage message)
+    {
+        if (!IsAuthenticated) return;
+        await SendMessageAsync(SignalingMessageFactory.CreateDcsPresenceUpdate(message));
+    }
+
+    public async Task SendDcsLosOracleResponseAsync(DcsLosOracleResponseMessage message)
+    {
+        if (!IsAuthenticated) return;
+        await SendMessageAsync(SignalingMessageFactory.CreateDcsLosOracleResponse(message));
     }
 
     /// <summary>
@@ -409,7 +425,7 @@ public class OpenFreqRtcClient : IRtcClient
         _rtpSender!.MarkTransmitStartTime();
     }
 
-    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)> frequencies, bool in3d)
+    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn, double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -422,10 +438,13 @@ public class OpenFreqRtcClient : IRtcClient
                 velocity: freq.velocity,
                 ambientNoiseType: freq.ambientNoiseType,
                 dcsPosition: freq.dcsPosition,
-                in3d: in3d,
+                in3d: true,
                 enc: freq.enc,
                 encKey: freq.encKey,
-                hqOn: freq.hqOn
+                hqOn: freq.hqOn,
+                latitudeDeg: freq.latitudeDeg,
+                longitudeDeg: freq.longitudeDeg,
+                altitudeMeters: freq.altitudeMeters
             ));
         }
 
@@ -453,7 +472,7 @@ public class OpenFreqRtcClient : IRtcClient
         OnConnectionStateChanged(ConnectionState.Disconnected, DisconnectReason.UserRequested);
     }
 
-    private async Task TransmissionHeartbeatAsync(int frequencyKhz, bool is3d)
+    private async Task TransmissionHeartbeatAsync(int frequencyKhz)
     {
         while (!_cts.Token.IsCancellationRequested)
         {
@@ -462,7 +481,7 @@ public class OpenFreqRtcClient : IRtcClient
                 break;
             }
 
-            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d));
+            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true));
             await Task.Delay(333, _cts.Token); // ~3 times per second
         }
     }
@@ -673,6 +692,13 @@ public class OpenFreqRtcClient : IRtcClient
                         SignalingMessageFactory.DeserializePayload<SatelliteEphemerisUpdateMessage>(message.Payload);
                     if (ephemeris != null)
                         SatelliteEphemerisReceived?.Invoke(this, new SatelliteEphemerisEventArgs(ephemeris.Satellites));
+                    break;
+
+                case SignalingMessageTypes.DcsLosOracleRequest:
+                    var losOracleRequest =
+                        SignalingMessageFactory.DeserializePayload<DcsLosOracleRequestMessage>(message.Payload);
+                    if (losOracleRequest != null)
+                        DcsLosOracleRequestReceived?.Invoke(this, new DcsLosOracleRequestEventArgs(losOracleRequest));
                     break;
             }
         }

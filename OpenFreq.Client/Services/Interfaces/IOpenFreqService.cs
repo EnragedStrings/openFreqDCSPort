@@ -19,7 +19,6 @@ public interface IOpenFreqService : IDisposable
     int RecordingDeviceIndex { get; set; }
     int PlaybackDeviceIndex { get; set; }
     int AudioParamsUpdateFrequency { get; set; }
-    bool Apply3dAudioEffects { get; set; }
     bool SidetoneEnabled { get; set; }
     bool MicNormalizationEnabled { get; set; }
     bool InputMeterEnabled { get; set; }
@@ -103,7 +102,6 @@ public interface IOpenFreqService : IDisposable
     Task StartToneTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies);
     Task StopToneTransmissionAsync(int frequencyKhz);
     Task UpdateDisplayNameAsync(string newDisplayName);
-    Task NotifyModeAsync(bool is3d);
 
     void SetVolume(int frequencyKhz, Guid slotId, float volumeValue);
     void SetPan(int frequencyKhz, Guid slotId, int pan);

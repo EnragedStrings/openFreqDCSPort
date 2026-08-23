@@ -43,6 +43,13 @@ public class SignalingServer
     private readonly SemaphoreSlim _peerUpdateSignal = new(0, 1);
     private static readonly TimeSpan PeerUpdateDebounce = TimeSpan.FromMilliseconds(250);
 
+    // Pending remote-oracle LOS requests awaiting a client's DcsLosOracleResponseMessage, keyed by
+    // RequestId -- see RequestRemoteLineOfSightAsync. Entries are removed by whichever side
+    // resolves first (the response arriving, or the caller's timeout), so a slow/never-responding
+    // client can't leak these.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<DcsLosOracleResponseMessage>>
+        _pendingLosOracleRequests = new();
+
     // High-performance logging delegates
     private static readonly Action<ILogger, int, Exception?> LogServerStarted =
         LoggerMessage.Define<int>(
@@ -388,6 +395,12 @@ public class SignalingServer
                 case SignalingMessageTypes.SatcomGeometryUpdate:
                     await HandleSatcomGeometryUpdate(session, message);
                     break;
+                case SignalingMessageTypes.DcsPresenceUpdate:
+                    await HandleDcsPresenceUpdate(session, message);
+                    break;
+                case SignalingMessageTypes.DcsLosOracleResponse:
+                    HandleDcsLosOracleResponse(message);
+                    break;
 
                 default:
                     if (_logger.IsEnabled(LogLevel.Warning))
@@ -659,6 +672,74 @@ public class SignalingServer
         session.SatcomPriority = geometryMsg.Priority;
 
         return Task.CompletedTask;
+    }
+
+    private Task HandleDcsPresenceUpdate(ClientSession session, SignalingMessage message)
+    {
+        if (!session.IsAuthenticated) return Task.CompletedTask;
+
+        var presenceMsg = SignalingMessageFactory.DeserializePayload<DcsPresenceUpdateMessage>(message.Payload);
+        if (presenceMsg == null) return Task.CompletedTask;
+
+        session.DcsLatitudeDeg = presenceMsg.LatitudeDeg;
+        session.DcsLongitudeDeg = presenceMsg.LongitudeDeg;
+        session.DcsAltitudeMeters = presenceMsg.AltitudeMeters;
+        session.DcsTheater = presenceMsg.Theater;
+        session.DcsPresenceUpdatedUtc = DateTime.UtcNow;
+
+        return Task.CompletedTask;
+    }
+
+    private void HandleDcsLosOracleResponse(SignalingMessage message)
+    {
+        var responseMsg = SignalingMessageFactory.DeserializePayload<DcsLosOracleResponseMessage>(message.Payload);
+        if (responseMsg == null) return;
+
+        if (_pendingLosOracleRequests.TryRemove(responseMsg.RequestId, out var tcs))
+            tcs.TrySetResult(responseMsg);
+    }
+
+    /// <summary>Asks <paramref name="oracleSession"/> to referee terrain LOS between two arbitrary
+    /// geodetic points via its own live DCS instance (see DcsLosOracleRequestMessage's own doc
+    /// comment) -- used for legs involving an SRS-bridged peer, which the server itself has no
+    /// terrain data to evaluate. Returns null if the client never responds within
+    /// <paramref name="timeout"/>, disconnects mid-request, or reports no terrain data available;
+    /// callers should fall back to the geometric-only signal model in that case, not block on it.
+    /// </summary>
+    public async Task<DcsLosOracleResponseMessage?> RequestRemoteLineOfSightAsync(ClientSession oracleSession,
+        double fromLat, double fromLon, double fromAlt, double toLat, double toLon, double toAlt, TimeSpan timeout)
+    {
+        var requestId = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<DcsLosOracleResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingLosOracleRequests.TryAdd(requestId, tcs))
+            return null; // requestId collision is astronomically unlikely, but fail closed rather than clobber
+
+        try
+        {
+            var request = SignalingMessageFactory.CreateDcsLosOracleRequest(new DcsLosOracleRequestMessage
+            {
+                RequestId = requestId,
+                FromLatitudeDeg = fromLat,
+                FromLongitudeDeg = fromLon,
+                FromAltitudeMeters = fromAlt,
+                ToLatitudeDeg = toLat,
+                ToLongitudeDeg = toLon,
+                ToAltitudeMeters = toAlt
+            });
+            await SendToClient(oracleSession, request);
+
+            using var cts = new CancellationTokenSource(timeout);
+            await using var registration = cts.Token.Register(() => tcs.TrySetCanceled());
+            return await tcs.Task;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            _pendingLosOracleRequests.TryRemove(requestId, out _);
+        }
     }
 
     private async Task SatcomTickLoopAsync(CancellationToken ct)

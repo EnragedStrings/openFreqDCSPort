@@ -143,14 +143,14 @@ public class SignalingIntegrationTests
         await bob.Client.JoinFrequencyAsync(Freq);
         await bob.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
 
-        await alice.Client.StartTransmissionAsync(Freq, is3d: true);
+        await alice.Client.StartTransmissionAsync(Freq);
 
         var tx = await bob.PeerTransmission.WaitForAsync(e => e.IsTransmitting);
         Assert.Equal(alice.PeerId, tx.PeerId);
         Assert.Equal(Freq, tx.FrequencyKhz);
         Assert.True(tx.Is3d);
 
-        await alice.Client.StopTransmissionAsync(Freq, is3d: true);
+        await alice.Client.StopTransmissionAsync(Freq);
 
         var stopped = await bob.PeerTransmission.WaitForAsync(e => !e.IsTransmitting);
         Assert.Equal(alice.PeerId, stopped.PeerId);
@@ -203,7 +203,7 @@ public class SignalingIntegrationTests
         await client.Client.JoinFrequencyAsync(Freq);
         await client.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
 
-        await client.Client.SendModeUpdateAsync(is3d: true);
+        await client.Client.SendModeUpdateAsync();
 
         var status = await client.AllPeersStatus.WaitForAsync(e =>
             e.AllPeers.TryGetValue(Freq, out var peers) &&

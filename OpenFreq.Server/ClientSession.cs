@@ -25,6 +25,23 @@ public class ClientSession(string id, string displayName, WebSocket webSocket, s
     public bool SatcomDebugRequested { get; set; }
     public int SatcomPriority { get; set; }
 
+    // Latest DCS presence this client reported (message-driven, low-rate, independent of SATCOM
+    // state -- see DcsPresenceUpdateMessage). Used by SrsLosOracleService to pick a live DCS client
+    // as a remote terrain-LOS oracle for SRS-bridged legs. Null DcsTheater/DcsPresenceUpdatedUtc
+    // means "not currently a usable oracle" (never reported, or stale -- see IsDcsPresenceFresh).
+    public double? DcsLatitudeDeg { get; set; }
+    public double? DcsLongitudeDeg { get; set; }
+    public double? DcsAltitudeMeters { get; set; }
+    public string? DcsTheater { get; set; }
+    public DateTime? DcsPresenceUpdatedUtc { get; set; }
+
+    // Matches the ~1-2s push interval (OpenFreqService.SendDcsPresenceUpdatesAsync) with headroom
+    // for one missed tick before treating the client as no longer a usable oracle.
+    private static readonly TimeSpan DcsPresenceStaleAfter = TimeSpan.FromSeconds(5);
+
+    public bool IsDcsPresenceFresh =>
+        DcsPresenceUpdatedUtc is { } updatedUtc && DateTime.UtcNow - updatedUtc <= DcsPresenceStaleAfter;
+
     public enum FrequencyClientStatus
     {
         Transmitting, Receiving

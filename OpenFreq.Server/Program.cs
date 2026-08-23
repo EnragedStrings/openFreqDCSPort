@@ -157,7 +157,7 @@ static class Program
             {
                 try
                 {
-                    srsBridge = new SrsBridgeServer(config, new OpenFreqRtcClientFactory(), loggerFactory, server.Clients);
+                    srsBridge = new SrsBridgeServer(config, new OpenFreqRtcClientFactory(), loggerFactory, server.Clients, server);
                     srsBridge.Start();
                 }
                 catch (Exception ex)

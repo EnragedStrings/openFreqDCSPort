@@ -46,13 +46,29 @@ public class FrequencyTransmission
     [JsonPropertyName("hqOn")]
     public bool HqOn { get; set; }
 
+    /// <summary>Geodetic position of the transmitter, when known. Unlike <see cref="DcsPosition"/>
+    /// (DCS mission-local X/Y/Z, only meaningful within one live DCS instance's own coordinate
+    /// frame), these are plain lat/lon/alt -- comparable across any two transmitters regardless of
+    /// whether either side has a DCS export at all, which is what makes them usable for an
+    /// SRS-bridged peer (SRS reports its own position this way; the bridge has no DCS-local frame
+    /// to convert into). Null when the sender has no position fix at all.</summary>
+    [JsonPropertyName("lat")]
+    public double? LatitudeDeg { get; set; }
+
+    [JsonPropertyName("lon")]
+    public double? LongitudeDeg { get; set; }
+
+    [JsonPropertyName("alt")]
+    public double? AltitudeMeters { get; set; }
+
     public FrequencyTransmission()
     {
     }
 
     public FrequencyTransmission(int khz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
         bool in3d, AmbientNoiseType ambientNoiseType = AmbientNoiseType.None, Vector3? dcsPosition = null,
-        bool enc = false, int encKey = 0, bool hqOn = false)
+        bool enc = false, int encKey = 0, bool hqOn = false, double? latitudeDeg = null,
+        double? longitudeDeg = null, double? altitudeMeters = null)
     {
         Khz = khz;
         TxPowerWatts = txPowerWatts;
@@ -65,5 +81,8 @@ public class FrequencyTransmission
         Enc = enc;
         EncKey = encKey;
         HqOn = hqOn;
+        LatitudeDeg = latitudeDeg;
+        LongitudeDeg = longitudeDeg;
+        AltitudeMeters = altitudeMeters;
     }
 }

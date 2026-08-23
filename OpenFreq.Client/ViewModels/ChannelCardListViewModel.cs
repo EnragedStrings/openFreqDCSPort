@@ -180,7 +180,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.StateChanged += OnFalconSharedMemoryStateChanged;
         _dcsExportService.RadioChanged += OnDcsRadioChanged;
         _dcsExportService.ToneChanged += OnDcsToneChanged;
-        _dcsExportService.GameModeChanged += OnDcsGameModeChanged;
         _dcsExportService.StateChanged += OnDcsStateChanged;
         _dcsExportService.AircraftChanged += OnDcsAircraftChanged;
 
@@ -777,13 +776,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
 
         await Task.CompletedTask;
-    }
-
-    private void OnDcsGameModeChanged(object? sender, DcsGameModeChangedEventArgs e)
-    {
-        if (!_settings.ModeIsDcs) return;
-
-        Dispatcher.UIThread.Post(() => _settings.Is3dMode = e.NewIsInGame);
     }
 
     /// <summary>Synthetic network-channel identity DAMA (channels 31-40, PRST login) SATCOM
@@ -1484,7 +1476,6 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
         _dcsExportService.RadioChanged -= OnDcsRadioChanged;
         _dcsExportService.ToneChanged -= OnDcsToneChanged;
-        _dcsExportService.GameModeChanged -= OnDcsGameModeChanged;
         _dcsExportService.StateChanged -= OnDcsStateChanged;
         _openFreqService.ConnectionStateChanged -= OnOpenFreqConnectionStateChanged;
         _openFreqService.SatcomLinkStateReceived -= OnSatcomLinkStateReceived;

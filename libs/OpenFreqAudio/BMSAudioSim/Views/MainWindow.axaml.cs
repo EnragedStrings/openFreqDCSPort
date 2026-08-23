@@ -1153,12 +1153,6 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         _radioPlayback.SetSquelchLevel(_viewModel.FrequencyKhz, radioSlotId, (float)(e.NewValue / 10));
     }
 
-    private void OnEnable3dEffectsChanged(object? sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox checkBox)
-            _radioPlayback.Apply3dEffects = checkBox.IsChecked.GetValueOrDefault();
-    }
-
     private void OnAmbientNoiseTypeChanged(object? sender, RoutedEventArgs e)
     {
         if (_viewModel.Signal1Continuous && _signal1Params is not null)

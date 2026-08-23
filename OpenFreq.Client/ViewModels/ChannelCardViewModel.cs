@@ -536,9 +536,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (RadioStationData.Type == RadioStationData.RadioStationType.DCS &&
             DcsRadioId?.Contains(":guard", StringComparison.OrdinalIgnoreCase) == true)
             return "this is a guard-monitor pseudo-channel (no PTT)";
-        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS &&
-            Settings is { ModeIsGci: false, Is3dMode: true })
-            return "BMS 3D mode -- use the in-cockpit comms switch instead";
+        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS)
+            return "BMS mode -- use the in-cockpit comms switch instead";
         return null;
     }
 
@@ -566,9 +565,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
             DcsRadioId?.Contains(":guard", StringComparison.OrdinalIgnoreCase) == true)
             return;
 
-        // Don't allow click transmissions in BMS 3d mode - use the comms switch there.
-        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS &&
-            Settings is { ModeIsGci: false, Is3dMode: true })
+        // Don't allow click transmissions for BMS channels - use the comms switch there.
+        if (RadioStationData.Type == RadioStationData.RadioStationType.BMS)
             return;
 
         WeakReferenceMessenger.Default.Send(new StopTransmissionMessage(Id, FrequencyKhz));

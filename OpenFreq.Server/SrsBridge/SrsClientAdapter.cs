@@ -603,7 +603,7 @@ public sealed class SrsClientAdapter : IAsyncDisposable
         if (newlyTransmitting == null) return;
 
         foreach (var khz in newlyTransmitting)
-            _ = _shadowClient.StartTransmissionAsync(khz, is3d: false);
+            _ = _shadowClient.StartTransmissionAsync(khz);
     }
 
     /// <summary>Runs on a periodic timer: any frequency with no voice packets for
@@ -628,7 +628,7 @@ public sealed class SrsClientAdapter : IAsyncDisposable
 
         if (stopped == null) return;
         foreach (var khz in stopped)
-            _ = _shadowClient.StopTransmissionAsync(khz, is3d: false);
+            _ = _shadowClient.StopTransmissionAsync(khz);
     }
 
     /// <summary>Decodes one Opus payload and forwards the PCM to the shadow client on the given
@@ -660,7 +660,15 @@ public sealed class SrsClientAdapter : IAsyncDisposable
 
         var frequencies = new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position,
             Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType,
-            bool enc, int encKey, bool hqOn)>();
+            bool enc, int encKey, bool hqOn, double? latitudeDeg, double? longitudeDeg,
+            double? altitudeMeters)>();
+
+        // SRS only ever reports geodetic lat/lng/alt (never a DCS mission-local position -- it has
+        // no concept of one), so dcsPosition stays null here; a receiving OpenFreq client falls
+        // back to the geodetic fields for its own free-space distance estimate (see
+        // OpenFreqService.TryResolveDistanceAndAltitudes). Real terrain LOS for this leg is the
+        // remote-oracle mechanism (phase 4c/4d), not something set here.
+        var srsPosition = LastKnownState?.LatLngPosition;
 
         for (var i = 0; i < freqHz.Length; i++)
         {
@@ -680,16 +688,16 @@ public sealed class SrsClientAdapter : IAsyncDisposable
                 frequencyKhz: (int)Math.Round(freqHz[i] / 1000.0),
                 txPowerWatts: DefaultTxPowerWatts,
                 ppm: 0.0,
-                // geodetic->local-grid mapping not wired yet, see phase 4
                 position: null, velocity: null, dcsPosition: null,
                 ambientNoiseType: AmbientNoiseType.None,
                 enc: encryption != 0, encKey: encryption,
-                hqOn: modulation == SrsModulation.HAVEQUICK));
+                hqOn: modulation == SrsModulation.HAVEQUICK,
+                latitudeDeg: srsPosition?.Lat, longitudeDeg: srsPosition?.Lng, altitudeMeters: srsPosition?.Alt));
         }
 
         if (frequencies.Count > 0)
         {
-            _shadowClient.SendAudio(new Memory<short>(pcm, 0, decoded), frequencies, in3d: false);
+            _shadowClient.SendAudio(new Memory<short>(pcm, 0, decoded), frequencies);
         }
         else if (_logger.IsEnabled(LogLevel.Debug))
         {
@@ -814,8 +822,29 @@ public sealed class SrsClientAdapter : IAsyncDisposable
             var (slotEnc, slotEncKey) = ResolveSlotEncryption(primary.Khz);
             var processor = GetOrCreateAudioProcessor(e.PeerId);
             if (isNewTalkSpurt) processor.ResetForNewTalkSpurt();
+
+            var rxPosition = LastKnownState?.LatLngPosition;
+            var audioParams = SrsSignalQuality.CreateAudioParams(primary.Khz, primary.TxPowerWatts, primary.Ppm,
+                primary.LatitudeDeg, primary.LongitudeDeg, primary.AltitudeMeters,
+                rxPosition?.Lat, rxPosition?.Lng, rxPosition?.Alt);
+
+            // Terrain LOS layered on top of the geometric-only model above: a real connected DCS
+            // client (the transmitter itself, or any other one on the same mission) referees it,
+            // since the server has no terrain data of its own -- see SrsLosOracleService's doc
+            // comment. Non-blocking: a cold/unavailable oracle just means no LOS-based blocking
+            // gets applied yet, not that the signal is treated as blocked.
+            if (primary.LatitudeDeg != null && primary.LongitudeDeg != null && primary.AltitudeMeters != null &&
+                rxPosition != null)
+            {
+                var visible = _bridge.LosOracle.TryGetLineOfSight($"{e.PeerId}:{ClientGuid}", e.PeerId,
+                    primary.LatitudeDeg.Value, primary.LongitudeDeg.Value, primary.AltitudeMeters.Value,
+                    rxPosition.Lat, rxPosition.Lng, rxPosition.Alt);
+                if (visible == false)
+                    audioParams.SignalBlocked = true;
+            }
+
             processedPcm = processor.Process(e.AudioData.Span, slotEnc, slotEncKey, primary.Enc, primary.EncKey,
-                primary.AmbientNoiseType);
+                primary.AmbientNoiseType, audioParams);
         }
 
         var encoded = new byte[processedPcm.Length * 2];

@@ -27,7 +27,7 @@ public class SrsFakeRosterTests
     }
 
     private static SrsBridgeServer CreateBridge(ConcurrentDictionary<string, ClientSession> openFreqClients)
-        => new(new ServerConfig(), null!, NullLoggerFactory.Instance, openFreqClients);
+        => new(new ServerConfig(), null!, NullLoggerFactory.Instance, openFreqClients, null!);
 
     [Fact]
     public void GetRosterSnapshot_IncludesFakeEntryForRealOpenFreqClient()

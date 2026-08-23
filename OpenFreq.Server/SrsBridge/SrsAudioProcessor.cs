@@ -16,13 +16,12 @@ namespace OpenFreqServer.SrsBridge;
 /// continuous state across packets, matching how a real receiving slot's DSP chain persists for
 /// as long as it's tuned rather than resetting every buffer.
 ///
-/// Fading is currently always "clear" (RadioEffect.Params is seeded from
-/// FastPathAudioSim.GetDefaultAudioParams, whose DropoutRate/DeepFadeRate are both 0, so
-/// RadioEffect.Process's fading stage never actually triggers). Real geometric distance-based
-/// signal quality is a later pass (SrsSignalQuality.cs) -- only the encryption/COMSEC chain is
-/// fully live here, since unlike fading it doesn't depend on signal quality at all. Once that
-/// later pass lands, updating RadioEffect.Params with real values is the only change needed here;
-/// the chain itself is already wired correctly.
+/// RadioEffect.Params is updated every call from the caller-supplied AudioParams (see
+/// SrsSignalQuality.cs for how those get computed) rather than fixed at construction, so fading/
+/// distance/horizon degradation tracks the transmitter's actual position instead of staying
+/// permanently "clear." Real terrain LOS is not part of that yet (phase 4b-4d of the SRS bridge
+/// plan) -- SrsSignalQuality is geometric-only for now, same as OpenFreq's own no-terrain
+/// fallback.
 /// </summary>
 public sealed class SrsAudioProcessor
 {
@@ -69,10 +68,16 @@ public sealed class SrsAudioProcessor
     /// slotEnc/slotEncKey describe the SRS receiver's own radio (which radio it's tuned to
     /// determines this); streamEnc/streamEncKey the transmitting OpenFreq peer's. ambientNoiseType
     /// is the transmitter's own cockpit acoustic environment, already carried on the wire with no
-    /// signal-quality dependency, so it's wired in now rather than deferred.</summary>
+    /// signal-quality dependency, so it's wired in now rather than deferred. audioParams is this
+    /// buffer's freshly-computed signal quality (see SrsSignalQuality.CreateAudioParams) -- applied
+    /// to RadioEffect before processing, same as a receiving OpenFreq client updates its own
+    /// stream's params on every packet.</summary>
     public short[] Process(ReadOnlySpan<short> pcmIn, bool slotEnc, int slotEncKey, bool streamEnc,
-        int streamEncKey, AmbientNoiseType ambientNoiseType)
+        int streamEncKey, AmbientNoiseType ambientNoiseType, AudioParams audioParams)
     {
+        if (audioParams.SignalBlocked)
+            return new short[pcmIn.Length];
+
         var (matchedCipher, wrongKey, passiveCiphertext) = KySecureReceiveState.Classify(
             slotEnc, slotEncKey, slotCryptoCapable: true, streamEnc, streamEncKey);
 
@@ -116,6 +121,7 @@ public sealed class SrsAudioProcessor
 
         _sampleClock += buffer.Length;
 
+        _radioEffect.Params = audioParams;
         _radioEffect.AmbientNoise = ambientNoiseType;
         _radioEffect.Process(buffer, 0, buffer.Length, ambientNoiseVolume: 1.0f);
 

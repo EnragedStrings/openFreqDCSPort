@@ -124,6 +124,7 @@ public class OpenFreqService : IOpenFreqService
 
     // Cache cleanup
     private CancellationTokenSource? _cleanupCts;
+    private CancellationTokenSource? _dcsPresenceCts;
 
     private const float SquelchLevelOff = 0f;
     private const float SquelchLevelOn = 1f;
@@ -176,26 +177,6 @@ public class OpenFreqService : IOpenFreqService
     }
 
     public int AudioParamsUpdateFrequency { get; set; }
-
-    public bool Apply3dAudioEffects
-    {
-        get;
-        set
-        {
-            bool was = field;
-            field = value;
-            _playbackService?.Apply3dEffects = value;
-
-            // "Game mode" = 3D effects on. This is the unified signal for both BMS (driven by
-            // flying state) and GCI (toggled manually), so auto-record keys off it rather than
-            // the BMS-only flying state. Only react to real transitions.
-            if (AutoRecordInGameMode && was != value)
-            {
-                if (value && IsConnected) StartRecording();
-                else if (!value) StopRecording();
-            }
-        }
-    }
 
     public bool SidetoneEnabled
     {
@@ -377,6 +358,7 @@ public class OpenFreqService : IOpenFreqService
         _client.ErrorOccurred += OnClientErrorOccurred;
         _client.SatcomLinkStateReceived += OnClientSatcomLinkStateReceived;
         _client.SatelliteEphemerisReceived += OnClientSatelliteEphemerisReceived;
+        _client.DcsLosOracleRequestReceived += OnClientDcsLosOracleRequestReceived;
 
         RecordingDeviceIndex = recordingDeviceIndex;
         var previousPlaybackDeviceIndex = _playbackDeviceIndex;
@@ -407,7 +389,6 @@ public class OpenFreqService : IOpenFreqService
             _playbackService.EnsureMasterStreamRunning();
         }
 
-        _playbackService.Apply3dEffects = Apply3dAudioEffects;
         _playbackService.SidetoneEnabled = SidetoneEnabled;
         _playbackService.SidetoneVolume = (float)SidetoneVolume;
         _playbackService.AmbientNoiseVolume = (float)AmbientNoiseVolume;
@@ -423,6 +404,9 @@ public class OpenFreqService : IOpenFreqService
         // Initialize Audio Params cache cleanup
         _cleanupCts = new CancellationTokenSource();
         _ = CleanupAudioParamsCacheAsync(_cleanupCts.Token);
+
+        _dcsPresenceCts = new CancellationTokenSource();
+        _ = SendDcsPresenceUpdatesAsync(_dcsPresenceCts.Token);
 
         OnStatusMessage("OpenFreq service initialized");
     }
@@ -468,8 +452,8 @@ public class OpenFreqService : IOpenFreqService
 
     private void OnFlyingStateChanged(object? sender, FlyingStateChangedEventArgs e)
     {
-        // Auto-record keys off Apply3dAudioEffects ("game mode"), which BMS flying state drives,
-        // so it is handled there — not here. This handler only loads the heightmap on takeoff.
+        // This handler only loads the heightmap on takeoff (auto-record triggers on connect, see
+        // OnClientAuthenticated).
         if (e is not { OldFlyingState: false, NewFlyingState: true }) return;
         var heightmapPath = Path.Join(_falconSharedMemoryService.TheaterTerrainDir, "NewTerrain", "HeightMaps",
             "HeightMap.raw");
@@ -523,6 +507,7 @@ public class OpenFreqService : IOpenFreqService
                 _client.ErrorOccurred -= OnClientErrorOccurred;
                 _client.SatcomLinkStateReceived -= OnClientSatcomLinkStateReceived;
                 _client.SatelliteEphemerisReceived -= OnClientSatelliteEphemerisReceived;
+                _client.DcsLosOracleRequestReceived -= OnClientDcsLosOracleRequestReceived;
 
                 _logger.LogDebug("Disconnecting client: {ClientHashCode}", _client.GetHashCode());
                 await _client.DisconnectAsync();
@@ -787,7 +772,7 @@ public class OpenFreqService : IOpenFreqService
             if (_playbackService != null) _playbackService.SidetoneEnabled = SidetoneEnabled;
         }
 
-        await _client.StartTransmissionAsync(frequencyKhz, Apply3dAudioEffects);
+        await _client.StartTransmissionAsync(frequencyKhz);
         OnStatusMessage($"Transmitting on {frequencyKhz / 1000d:F3}");
     }
 
@@ -819,7 +804,7 @@ public class OpenFreqService : IOpenFreqService
             UpdateMicCaptureState();
         }
 
-        await _client.StopTransmissionAsync(frequencyKhz, Apply3dAudioEffects);
+        await _client.StopTransmissionAsync(frequencyKhz);
         OnStatusMessage($"Stopped transmitting on {frequencyKhz / 1000d:F3} MHz");
     }
 
@@ -912,12 +897,6 @@ public class OpenFreqService : IOpenFreqService
             _recordHandle, Bass.LastError);
         _recordHandle = 0;
         MicLevelChanged?.Invoke(this, new MicLevelChangedEventArgs(0, 0));
-    }
-
-    public async Task NotifyModeAsync(bool is3d)
-    {
-        if (_client == null || !_client.IsConnected) return;
-        await _client.SendModeUpdateAsync(is3d);
     }
 
     public async Task UpdateDisplayNameAsync(string newDisplayName)
@@ -1200,7 +1179,8 @@ public class OpenFreqService : IOpenFreqService
             // Send to ALL active frequencies
             var frequenciesData =
                 new List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
-                    Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn)>();
+                    Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn,
+                    double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)>();
 
             // List of frequencies that got disabled in the meantime
             var disabledFrequencies = new List<int>();
@@ -1225,6 +1205,7 @@ public class OpenFreqService : IOpenFreqService
                 var position = GetOwnPosition(frequencyKhz, txSlotId) ?? new Vector3(0, 0, 0);
                 var velocity = GetOwnVelocity(frequencyKhz, txSlotId);
                 var dcsPosition = GetOwnDcsLocalPosition(frequencyKhz, txSlotId);
+                var geodeticPosition = GetOwnGeodeticPosition(frequencyKhz, txSlotId);
 
                 var txPowerWatts = radioStationData.RadioStation.Preset.GetTxPower(GetRadioType(frequencyKhz));
                 if (radioStationData.Enc != _lastLoggedTxEncByFreq.GetValueOrDefault(frequencyKhz))
@@ -1237,7 +1218,8 @@ public class OpenFreqService : IOpenFreqService
                 frequenciesData.Add((frequencyKhz,
                     txPowerWatts, radioStationData.RadioStation.Ppm,
                     position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,
-                    radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn));
+                    radioStationData.Enc, radioStationData.EncKey, radioStationData.HqOn,
+                    geodeticPosition?.LatitudeDeg, geodeticPosition?.LongitudeDeg, geodeticPosition?.AltitudeMeters));
             }
 
             if (frequenciesData.Count == 0)
@@ -1262,7 +1244,7 @@ public class OpenFreqService : IOpenFreqService
                     first.ambientNoiseType);
             }
 
-            _client?.SendAudio(audioData, frequenciesData, Apply3dAudioEffects);
+            _client?.SendAudio(audioData, frequenciesData);
 
             // Clean up any frequencies which might have been disabled in the meantime
             foreach (var disabledFrequency in disabledFrequencies)
@@ -1395,6 +1377,24 @@ public class OpenFreqService : IOpenFreqService
         return new Vector3(position.X, position.Y, position.Z);
     }
 
+    /// <summary>Own geodetic position, when available -- unlike <see cref="GetOwnDcsLocalPosition"/>
+    /// this travels on the wire in <see cref="FrequencyTransmission"/> so a receiver with no DCS
+    /// export of its own (an SRS-bridged peer) can still compute a distance-based free-space signal
+    /// estimate; see <see cref="FreeSpacePathModel"/>. DCS-mode only for now, same as the local-
+    /// position case -- BMS/GCI have no geodetic fix to report.</summary>
+    private (double LatitudeDeg, double LongitudeDeg, double AltitudeMeters)? GetOwnGeodeticPosition(
+        int frequencyKhz, Guid slotId)
+    {
+        _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
+        if (tunedFrequencyData?.RadioStation.Type != RadioStationData.RadioStationType.DCS)
+            return null;
+
+        if (_dcsExportService.State != ServiceState.Connected)
+            return null;
+
+        return (_dcsExportService.Latitude, _dcsExportService.Longitude, _dcsExportService.AltitudeMsl);
+    }
+
     private Vector3? GetOwnVelocity(int frequencyKhz, Guid slotId)
     {
         _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
@@ -1510,10 +1510,9 @@ public class OpenFreqService : IOpenFreqService
         OnStatusMessage($"Authenticated - Peer ID: {e.PeerId}, Audio Port: {e.AudioPort}");
         OnStatusMessage($"DCS LOS constraint {(DcsLineOfSightEnabled ? "enabled" : "disabled")} by server");
         OnAllPeersStatusUpdateReceived(sender, new AllPeersStatusEventArgs(e.Peers));
-        // Push current mode to server immediately so it knows our Is3d state before
-        // we join any channels — prevents the AllPeersStatus broadcast on join from
-        // showing us in the wrong lobby/game section.
-        _ = _client?.SendModeUpdateAsync(Apply3dAudioEffects);
+        _ = _client?.SendModeUpdateAsync();
+
+        if (AutoRecordInGameMode) StartRecording();
     }
 
     private void OnClientFrequencyJoined(object? sender, FrequencyJoinedEventArgs e)
@@ -1584,7 +1583,7 @@ public class OpenFreqService : IOpenFreqService
         var status = e.IsTransmitting
             ? Channel.ChannelTransmissionStatus.Transmitting
             : Channel.ChannelTransmissionStatus.Idle;
-        OnFrequencyTransmissionStatusChanged(e.FrequencyKhz, status, Apply3dAudioEffects);
+        OnFrequencyTransmissionStatusChanged(e.FrequencyKhz, status, is3d: true);
     }
 
     private void OnClientPeerTransmissionStatusChanged(object? sender, PeerTransmissionEventArgs e)
@@ -1626,13 +1625,7 @@ public class OpenFreqService : IOpenFreqService
 
         foreach (var frequencyTransmission in e.Metadata.Frequencies)
         {
-            if (frequencyTransmission.In3d != Apply3dAudioEffects)
-            {
-                _logger.LogDebug("Audio data received but not matching 3D settings - dropping");
-                continue;
-            }
-
-            if (Apply3dAudioEffects && _activeTransmissionsAndMutedFrequencies.ContainsKey(frequencyTransmission.Khz))
+            if (_activeTransmissionsAndMutedFrequencies.ContainsKey(frequencyTransmission.Khz))
             {
                 _logger.LogDebug("Receiving transmission when we are sending - dropping");
                 continue;
@@ -1640,13 +1633,8 @@ public class OpenFreqService : IOpenFreqService
 
             var streamId = GetStreamId(e.PeerId, frequencyTransmission.Khz);
 
-            // Calculate audio params - always sync when 3D enabled, default otherwise
-            var audioParams = Apply3dAudioEffects
-                ? CalculateAudioParamsSync(frequencyTransmission, e.PeerId)
-                : FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Khz);
-
-            if (Apply3dAudioEffects)
-                _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
+            var audioParams = CalculateAudioParamsSync(frequencyTransmission, e.PeerId);
+            _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
 
             if (audioParams.SignalBlocked)
             {
@@ -1690,7 +1678,7 @@ public class OpenFreqService : IOpenFreqService
                 }
             }
 
-            var ambientNoiseType = Apply3dAudioEffects ? frequencyTransmission.AmbientNoiseType : AmbientNoiseType.None;
+            var ambientNoiseType = frequencyTransmission.AmbientNoiseType;
 
             // Push audio data immediately
             _playbackService?.PushAudioData(streamId, e.AudioData, ambientNoiseType,
@@ -1791,85 +1779,63 @@ public class OpenFreqService : IOpenFreqService
         return RadioStationPreset.IsVHF(frequencyKhz) ? -113.0d : -107.0d;
     }
 
-    private AudioParams? TryCreateDcsFreeSpaceAudioParams(FrequencyTransmission frequencyTransmission,
-        (int FreqKhz, Guid SlotId) slotKey, double receiverSensitivityDb)
+    /// <summary>Resolves a distance/altitude pair for the free-space fallback model, preferring
+    /// DCS mission-local positions (most precise -- both sides in the same live mission) and
+    /// falling back to geodetic lat/lon/alt when either side has no DCS-local position at all
+    /// (e.g. the transmitter is an SRS-bridged peer, which only ever reports geodetic position --
+    /// see FrequencyTransmission.LatitudeDeg/LongitudeDeg/AltitudeMeters).</summary>
+    private (double DistanceMeters, double TxAltitudeMeters, double RxAltitudeMeters)?
+        TryResolveDistanceAndAltitudes(FrequencyTransmission frequencyTransmission,
+            (int FreqKhz, Guid SlotId) slotKey)
     {
-        if (OwnPositionMode != IOpenFreqService.Mode.DCS ||
-            frequencyTransmission.DcsPosition == null ||
-            slotKey == default)
+        if (OwnPositionMode != IOpenFreqService.Mode.DCS || slotKey == default)
             return null;
 
         var ownDcsPosition = GetOwnDcsLocalPosition(slotKey.FreqKhz, slotKey.SlotId);
-        if (ownDcsPosition == null)
+        if (ownDcsPosition != null && frequencyTransmission.DcsPosition != null)
+        {
+            var remote = frequencyTransmission.DcsPosition;
+            var dx = remote.X - ownDcsPosition.X;
+            var dy = remote.Y - ownDcsPosition.Y;
+            var dz = remote.Z - ownDcsPosition.Z;
+            return (Math.Sqrt(dx * dx + dy * dy + dz * dz), ownDcsPosition.Y, remote.Y);
+        }
+
+        var ownGeodetic = GetOwnGeodeticPosition(slotKey.FreqKhz, slotKey.SlotId);
+        if (ownGeodetic != null && frequencyTransmission.LatitudeDeg != null &&
+            frequencyTransmission.LongitudeDeg != null && frequencyTransmission.AltitudeMeters != null)
+        {
+            var distance = FreeSpacePathModel.GreatCircleDistanceMeters(
+                ownGeodetic.Value.LatitudeDeg, ownGeodetic.Value.LongitudeDeg, ownGeodetic.Value.AltitudeMeters,
+                frequencyTransmission.LatitudeDeg.Value, frequencyTransmission.LongitudeDeg.Value,
+                frequencyTransmission.AltitudeMeters.Value);
+            return (distance, ownGeodetic.Value.AltitudeMeters, frequencyTransmission.AltitudeMeters.Value);
+        }
+
+        return null;
+    }
+
+    private AudioParams? TryCreateDcsFreeSpaceAudioParams(FrequencyTransmission frequencyTransmission,
+        (int FreqKhz, Guid SlotId) slotKey, double receiverSensitivityDb)
+    {
+        var resolved = TryResolveDistanceAndAltitudes(frequencyTransmission, slotKey);
+        if (resolved == null)
             return null;
 
-        var remote = frequencyTransmission.DcsPosition;
-        var dx = remote.X - ownDcsPosition.X;
-        var dy = remote.Y - ownDcsPosition.Y;
-        var dz = remote.Z - ownDcsPosition.Z;
-        var distanceMeters = Math.Max(1.0d, Math.Sqrt(dx * dx + dy * dy + dz * dz));
-        var frequencyHz = Math.Max(1.0d, frequencyTransmission.Khz * 1000.0d);
-        var txPowerDbm = 10.0d * Math.Log10(Math.Max(0.001d, frequencyTransmission.TxPowerWatts) * 1000.0d);
-        var fsplDb = 20.0d * Math.Log10(4.0d * Math.PI * distanceMeters * frequencyHz / 299792458.0d);
-        var weatherLossDb = 0.02d * (distanceMeters / 1000.0d);
-
-        var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyTransmission.Khz,
-            (float)frequencyTransmission.Ppm);
-        audioParams.ReceivedDb = (float)(txPowerDbm - fsplDb - weatherLossDb);
-        audioParams.ReceivedSnrDb = audioParams.ReceivedDb - (float)receiverSensitivityDb;
-        UpdateFadingRates(audioParams);
-        return audioParams;
+        return FreeSpacePathModel.CreateBaseAudioParams(frequencyTransmission.Khz,
+            frequencyTransmission.TxPowerWatts, frequencyTransmission.Ppm,
+            Math.Max(1.0d, resolved.Value.DistanceMeters), receiverSensitivityDb);
     }
 
     private void ApplyDcsDistanceAndHorizonLoss(AudioParams audioParams,
         FrequencyTransmission frequencyTransmission, (int FreqKhz, Guid SlotId) slotKey)
     {
-        if (OwnPositionMode != IOpenFreqService.Mode.DCS ||
-            frequencyTransmission.DcsPosition == null ||
-            slotKey == default)
+        var resolved = TryResolveDistanceAndAltitudes(frequencyTransmission, slotKey);
+        if (resolved == null)
             return;
 
-        var ownDcsPosition = GetOwnDcsLocalPosition(slotKey.FreqKhz, slotKey.SlotId);
-        if (ownDcsPosition == null)
-            return;
-
-        var remote = frequencyTransmission.DcsPosition;
-        var dx = remote.X - ownDcsPosition.X;
-        var dy = remote.Y - ownDcsPosition.Y;
-        var dz = remote.Z - ownDcsPosition.Z;
-        var distanceMeters = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-        var distanceNm = distanceMeters / 1852.0d;
-
-        var extraLossDb = 0.0d;
-        if (distanceNm > 60.0d)
-            extraLossDb += (Math.Min(distanceNm, 140.0d) - 60.0d) * 0.10d;
-        if (distanceNm > 140.0d)
-            extraLossDb += (Math.Min(distanceNm, 220.0d) - 140.0d) * 0.25d;
-        if (distanceNm > 220.0d)
-            extraLossDb += (distanceNm - 220.0d) * 0.75d;
-
-        var horizonMeters = FastPathAudioSim.CalculateRadioHorizonMeters(ownDcsPosition.Y, remote.Y);
-        if (horizonMeters > 1.0d)
-        {
-            var horizonRatio = distanceMeters / horizonMeters;
-            if (horizonRatio > 0.75d)
-            {
-                var nearHorizon = Math.Min(horizonRatio, 1.0d) - 0.75d;
-                extraLossDb += Math.Pow(nearHorizon / 0.25d, 2.0d) * 12.0d;
-            }
-
-            if (horizonRatio > 1.0d)
-                extraLossDb += 24.0d + (horizonRatio - 1.0d) * 80.0d;
-
-            if (horizonRatio > 1.15d)
-                audioParams.SignalBlocked = true;
-        }
-
-        if (extraLossDb > 0.001d)
-            ApplyAttenuation(audioParams, extraLossDb);
-
-        if (audioParams.ReceivedSnrDb <= -18.0f)
-            audioParams.SignalBlocked = true;
+        FreeSpacePathModel.ApplyHorizonLoss(audioParams, resolved.Value.DistanceMeters,
+            resolved.Value.TxAltitudeMeters, resolved.Value.RxAltitudeMeters);
     }
 
     private static void ApplyAttenuation(AudioParams audioParams, double attenuationDb)
@@ -1941,6 +1907,36 @@ public class OpenFreqService : IOpenFreqService
         => _audioParamsCache.TryGetValue(cacheKey, out var cached)
             ? cached.Params
             : FastPathAudioSim.GetDefaultAudioParams(khz);
+
+    // Low-rate presence push so the server knows who's running DCS and roughly where, independent
+    // of SATCOM state -- see DcsPresenceUpdateMessage's own doc comment. Interval matches
+    // ClientSession.DcsPresenceStaleAfter's 5s staleness window with headroom for missed ticks.
+    private static readonly TimeSpan DcsPresenceUpdateInterval = TimeSpan.FromSeconds(1.5);
+
+    private async Task SendDcsPresenceUpdatesAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(DcsPresenceUpdateInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (_dcsExportService.State != ServiceState.Connected || _client is not { IsAuthenticated: true })
+                    continue;
+
+                await _client.SendDcsPresenceUpdateAsync(new DcsPresenceUpdateMessage
+                {
+                    LatitudeDeg = _dcsExportService.Latitude,
+                    LongitudeDeg = _dcsExportService.Longitude,
+                    AltitudeMeters = _dcsExportService.AltitudeMsl,
+                    Theater = _dcsExportService.Theater
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when stopping
+        }
+    }
 
 
     // Periodical Cache cleanup
@@ -2016,6 +2012,31 @@ public class OpenFreqService : IOpenFreqService
     private void OnClientSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs args) =>
         SatelliteEphemerisReceived?.Invoke(this, args);
 
+    // Server-initiated request to referee terrain LOS between two arbitrary geodetic points via
+    // this client's own live DCS instance, for a leg the server itself has no terrain data to
+    // evaluate (an SRS-bridged peer) -- see DcsLosOracleRequestMessage's own doc comment. Answered
+    // fully independently of DCS mode/state gating elsewhere in this file: any client with a live
+    // DCS export can serve as an oracle for someone else's leg, not just its own.
+    private static readonly TimeSpan DcsLosOracleTimeout = TimeSpan.FromMilliseconds(500);
+
+    private async void OnClientDcsLosOracleRequestReceived(object? sender, DcsLosOracleRequestEventArgs args)
+    {
+        var request = args.Message;
+        var result = await _dcsExportService.RequestRemoteLineOfSightAsync(
+            request.FromLatitudeDeg, request.FromLongitudeDeg, request.FromAltitudeMeters,
+            request.ToLatitudeDeg, request.ToLongitudeDeg, request.ToAltitudeMeters, DcsLosOracleTimeout);
+
+        if (_client is not { IsAuthenticated: true }) return;
+
+        await _client.SendDcsLosOracleResponseAsync(new DcsLosOracleResponseMessage
+        {
+            RequestId = request.RequestId,
+            TerrainAvailable = result?.TerrainAvailable ?? false,
+            Visible = result?.Visible ?? false,
+            Loss = result?.Loss ?? 1.0
+        });
+    }
+
     public async Task SendSatcomGeometryUpdateAsync(SatcomGeometryUpdateMessage message)
     {
         if (_client is not { IsAuthenticated: true }) return;
@@ -2027,6 +2048,9 @@ public class OpenFreqService : IOpenFreqService
         // Stop the cache cleanup
         _cleanupCts?.Cancel();
         _cleanupCts?.Dispose();
+
+        _dcsPresenceCts?.Cancel();
+        _dcsPresenceCts?.Dispose();
 
         // Stop all transmissions and free the recording handle
         StopMicCapture();

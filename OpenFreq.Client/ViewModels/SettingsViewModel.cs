@@ -293,16 +293,6 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public string InputGainText => $"{InputGainDb:F1} dB";
 
 
-    // This is displayed in the Top Bar but shared throughout the app
-    [ObservableProperty] public partial bool Is3dMode { get; set; }
-
-    partial void OnIs3dModeChanged(bool value)
-    {
-        _logger.LogInformation("Game mode changed to {Mode}", value ? "In-game" : "Lobby");
-        _openFreqService.Apply3dAudioEffects = value;
-        _ = _openFreqService.NotifyModeAsync(value);
-    }
-
     partial void OnConnectionModeChanged(IOpenFreqService.Mode value)
     {
         _logger.LogInformation("Connection mode changed to {Mode}", value);
@@ -316,7 +306,6 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 _acmiClientService.Stop();
                 break;
             case IOpenFreqService.Mode.GCI:
-                Is3dMode = false;
                 _hotkeyService.ResumePttKeys();
                 _dcsExportService.Stop();
                 _falconSharedMemoryService.Stop();

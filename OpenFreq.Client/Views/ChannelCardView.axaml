@@ -230,8 +230,7 @@
                 <!-- Signal/SNR Readout & Squelch Indicator Row -->
                 <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
                       ColumnDefinitions="*,Auto"
-                      Margin="0,5,0,0"
-                      IsVisible="{Binding Settings.Is3dMode}">
+                      Margin="0,5,0,0">
 
                     <!-- Numeric signal + SNR readout, for debugging. Shown for every channel type
                          (including DCS/BMS, which are IsEditable=false) — this isn't an editing

@@ -5,9 +5,10 @@ using OpenFreqServer.SrsBridge;
 namespace OpenFreq.Server.Tests.SrsBridge;
 
 /// <summary>
-/// Covers the headless OpenFreq->SRS DSP chain (Phase 3): the encryption/COMSEC path, which is
-/// fully live in this pass, and that fading stays a no-op absent real signal-quality input (that's
-/// a later pass). See SrsAudioProcessor's own doc comment for the phasing rationale.
+/// Covers the headless OpenFreq->SRS DSP chain: the encryption/COMSEC path, and that a blocked
+/// signal produces silence regardless of encryption state. Tests here pass a fixed "clear as day"
+/// AudioParams so they isolate the COMSEC chain from SrsSignalQuality's own distance/horizon math
+/// (covered separately in SrsSignalQualityTests) -- see SrsAudioProcessor's own doc comment.
 /// </summary>
 public class SrsAudioProcessorTests
 {
@@ -21,6 +22,10 @@ public class SrsAudioProcessorTests
 
     private static SrsAudioProcessor CreateProcessor() => new(NullLogger.Instance);
 
+    // "Clear as day" -- DropoutRate/DeepFadeRate 0, SignalBlocked false -- so these tests exercise
+    // only the COMSEC/encryption chain, not SrsSignalQuality (covered separately).
+    private static AudioParams ClearAudioParams() => FastPathAudioSim.GetDefaultAudioParams(0);
+
     [Fact]
     public void ClearTransmission_PassesThroughAudibleSignal()
     {
@@ -28,7 +33,7 @@ public class SrsAudioProcessorTests
         var input = ToneBuffer(960);
 
         var output = processor.Process(input, slotEnc: false, slotEncKey: 0, streamEnc: false, streamEncKey: 0,
-            AmbientNoiseType.None);
+            AmbientNoiseType.None, ClearAudioParams());
 
         Assert.Equal(input.Length, output.Length);
         // No fading (default AudioParams has DropoutRate/DeepFadeRate = 0) and no encryption
@@ -43,7 +48,7 @@ public class SrsAudioProcessorTests
         var input = ToneBuffer(960);
 
         var output = processor.Process(input, slotEnc: true, slotEncKey: 3, streamEnc: true, streamEncKey: 3,
-            AmbientNoiseType.None);
+            AmbientNoiseType.None, ClearAudioParams());
 
         Assert.Equal(input.Length, output.Length);
         // CVSD coloration modifies the waveform but it's still meant to be intelligible voice, not
@@ -61,7 +66,7 @@ public class SrsAudioProcessorTests
         // transmitter is encrypted -- real KY-58 hardware in this state just passes raw
         // ciphertext texture through continuously (PassiveCiphertext), not the original tone.
         var output = processor.Process(input, slotEnc: false, slotEncKey: 0, streamEnc: true, streamEncKey: 3,
-            AmbientNoiseType.None);
+            AmbientNoiseType.None, ClearAudioParams());
 
         Assert.Equal(input.Length, output.Length);
         Assert.NotEqual(input, output);
@@ -80,7 +85,7 @@ public class SrsAudioProcessorTests
         for (var i = 0; i < 60; i++) // 60 * 20ms = 1.2s, comfortably past the ~0.65s to reach Muted
         {
             lastOutput = processor.Process(input, slotEnc: true, slotEncKey: 1, streamEnc: true, streamEncKey: 2,
-                AmbientNoiseType.None);
+                AmbientNoiseType.None, ClearAudioParams());
         }
 
         Assert.All(lastOutput, s => Assert.Equal(0, s));
@@ -99,13 +104,13 @@ public class SrsAudioProcessorTests
         // silencing every later transmission from this peer including clear ones.
         for (var i = 0; i < 60; i++)
             processor.Process(input, slotEnc: true, slotEncKey: 1, streamEnc: true, streamEncKey: 2,
-                AmbientNoiseType.None);
+                AmbientNoiseType.None, ClearAudioParams());
 
         // A new PTT starts (server detects a new talk spurt and resets before processing this
         // buffer) with a totally different, clear transmission on the same peer.
         processor.ResetForNewTalkSpurt();
         var output = processor.Process(input, slotEnc: false, slotEncKey: 0, streamEnc: false, streamEncKey: 0,
-            AmbientNoiseType.None);
+            AmbientNoiseType.None, ClearAudioParams());
 
         Assert.Contains(output, s => Math.Abs(s) > 1000);
     }
@@ -117,8 +122,24 @@ public class SrsAudioProcessorTests
         var input = ToneBuffer(960);
 
         var output = processor.Process(input, slotEnc: false, slotEncKey: 0, streamEnc: false, streamEncKey: 0,
-            AmbientNoiseType.AirF16);
+            AmbientNoiseType.AirF16, ClearAudioParams());
 
         Assert.Equal(input.Length, output.Length);
+    }
+
+    [Fact]
+    public void SignalBlocked_ProducesSilenceRegardlessOfEncryptionState()
+    {
+        var processor = CreateProcessor();
+        var input = ToneBuffer(960);
+
+        var blocked = ClearAudioParams();
+        blocked.SignalBlocked = true;
+
+        var output = processor.Process(input, slotEnc: false, slotEncKey: 0, streamEnc: false, streamEncKey: 0,
+            AmbientNoiseType.None, blocked);
+
+        Assert.Equal(input.Length, output.Length);
+        Assert.All(output, s => Assert.Equal(0, s));
     }
 }

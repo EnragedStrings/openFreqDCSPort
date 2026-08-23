@@ -454,6 +454,20 @@ public sealed class SrsClientAdapter : IAsyncDisposable
     {
         if (_shadowClient == null) return;
 
+        // The shadow client can be transiently unauthenticated mid-reconnect (its underlying
+        // OpenFreq WebSocket dropped and is being re-established -- see OpenFreqRtcClient's own
+        // reconnect logic). JoinFrequencyAsync/LeaveFrequencyAsync throw in that state; letting
+        // that propagate would hit RunAsync's catch-all and tear down this entire SRS client's
+        // TCP session over what is normally a few-second hiccup. Skip this round instead --
+        // OpenFreqRtcClient's own ReconnectAsync re-joins whatever it had joined before the drop
+        // from its own internal state once it's back, and the next SRS update after that will
+        // pick up any diff since (radios don't change while the pilot isn't touching them).
+        if (!_shadowClient.IsAuthenticated)
+        {
+            _logger.LogDebug("Shadow client for {Guid} not authenticated yet, skipping radio diff", ClientGuid);
+            return;
+        }
+
         var wantedKhz = new HashSet<int>();
         if (client.RadioInfo != null)
         {

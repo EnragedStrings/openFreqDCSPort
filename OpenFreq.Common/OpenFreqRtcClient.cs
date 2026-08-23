@@ -137,9 +137,19 @@ public class OpenFreqRtcClient : IRtcClient
         }
 
         _webSocket = new ClientWebSocket();
-        // Detect a silently dead link
-        _webSocket.Options.KeepAliveInterval = TimeSpan.FromSeconds(3);
-        _webSocket.Options.KeepAliveTimeout = TimeSpan.FromSeconds(3);
+
+        // Detect a silently dead link -- tight enough for a human pilot to notice a real WAN
+        // drop quickly. A loopback connection (the SRS bridge's in-process "shadow" client
+        // dialing its own server at 127.0.0.1) has no such failure mode -- there's no WAN link
+        // to go silently dead, only the local process's own scheduling latency (GC pause,
+        // thread-pool pressure from other bridged clients' audio DSP, etc). Holding it to the
+        // same 3s/3s budget as a real network client made those momentary hiccups look like a
+        // dead link: the shadow client would abort, drop every frequency it had joined off the
+        // OpenFreq roster, and only rejoin once ReconnectAsync finished -- observed as SRS users'
+        // frequencies populating, then disappearing, then (eventually) coming back.
+        var isLoopback = ip != null && IPAddress.IsLoopback(ip);
+        _webSocket.Options.KeepAliveInterval = isLoopback ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(3);
+        _webSocket.Options.KeepAliveTimeout = isLoopback ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(3);
         await _webSocket.ConnectAsync(new Uri($"ws://{ipPort.ipAddress}:{ipPort.port}"), connectCts.Token);
 
         // Start message receiver

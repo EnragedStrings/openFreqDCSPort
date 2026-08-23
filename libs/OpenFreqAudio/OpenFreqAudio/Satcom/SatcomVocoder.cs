@@ -56,7 +56,11 @@ public sealed class SatcomVocoder
 
         foreach (var sample in pcmIn)
         {
-            if (!_downsampler.Process(sample, out var down8K))
+            // Normalize PCM16 to [-1,1] at the boundary -- every stage downstream (analysis RMS,
+            // SatcomFrameQuantizer's dBFS-style GainMinDb/GainMaxDb range, the decoder's
+            // energy*sqrt(order) excitation gain) is calibrated assuming a normalized amplitude-1
+            // signal, not raw PCM16 magnitude. ClampToInt16 below undoes this on the way out.
+            if (!_downsampler.Process(sample / (double)short.MaxValue, out var down8K))
                 continue;
 
             _analysisBuffer[_analysisFill++] = down8K;
@@ -77,7 +81,7 @@ public sealed class SatcomVocoder
             {
                 _upsampler.Process(s8K, upsampled);
                 foreach (var s in upsampled)
-                    output.Add(ClampToInt16(s));
+                    output.Add(ClampToInt16(s * short.MaxValue));
             }
             _ = frameBits; // reserved: available for callers that want bits/frame telemetry
         }

@@ -27,6 +27,45 @@ namespace OpenFreqAudio.Tests
         }
 
         [Fact]
+        public void SynthesisFilterImpulseResponseDecaysInsteadOfSaturating()
+        {
+            // Regression test for a sign bug in LpcSynthesisFilter.Process: y[n] must be
+            // excitation[n] + sum(a[i]*y[n-i]) to match SatcomLpc.LevinsonDurbin/ReflectionToLpc's
+            // own convention (Rabiner & Schafer's autocorrelation method). The previous "-="
+            // feedback sign was self-consistently wrong -- individually-clamped |k|<1 reflection
+            // coefficients only guarantee stability under the CORRECT sign; with the wrong sign,
+            // even mild resonance diverged until the output clamp pinned it into a saturated
+            // every-other-sample square wave, which is what "very high pitch/awful" SATCOM receive
+            // audio traced back to.
+            //
+            // Reflection coefficients as SatcomVocoderEncoder.Analyze actually produced them for a
+            // loud, clean 150 Hz tone (a near-worst-case, close to the |k|<0.999 clamp boundary on
+            // k1) -- not an arbitrary synthetic array, so this ties directly to the real repro.
+            var reflection = new[]
+            {
+                0.0, 0.99070, -0.73833, -0.41080, -0.27474, -0.19850, -0.14906, -0.11424, -0.08849, -0.06888, -0.05368
+            };
+            var lpc = SatcomLpc.ReflectionToLpc(reflection, 10);
+            var filter = new LpcSynthesisFilter(10);
+
+            var impulseResponse = new double[100];
+            for (var n = 0; n < impulseResponse.Length; n++)
+                impulseResponse[n] = filter.Process(n == 0 ? 1.0 : 0.0, lpc);
+
+            // A genuinely stable resonator's impulse response rings and then settles back toward
+            // zero; a filter driven unstable by a sign error instead grows without bound until
+            // it's pinned at the output clamp and stays there. Comparing the tail to a modest
+            // ceiling (not the clamp bound itself) catches that failure mode without pinning the
+            // test to an exact decay curve.
+            var tailMaxAbs = 0.0;
+            for (var n = 70; n < impulseResponse.Length; n++)
+                tailMaxAbs = Math.Max(tailMaxAbs, Math.Abs(impulseResponse[n]));
+
+            Assert.True(tailMaxAbs < 20.0,
+                $"Expected a unit impulse's response to have decayed close to zero by sample 70, got {tailMaxAbs}");
+        }
+
+        [Fact]
         public void ReflectionToLpcAlwaysProducesAStableFilterRegardlessOfInput()
         {
             // Any reflection coefficients clamped to (-1,1) must yield a stable all-pole filter
@@ -193,6 +232,75 @@ namespace OpenFreqAudio.Tests
             for (var i = 0; i < n; i++)
                 buf[i] = (short)(8000 * Math.Sin(2 * Math.PI * toneHz * i / sampleRate));
             return buf;
+        }
+
+        private static int CountZeroCrossings(short[] buf, int start, int len)
+        {
+            var crossings = 0;
+            for (var i = start + 1; i < start + len; i++)
+                if (buf[i - 1] != 0 && Math.Sign(buf[i]) != Math.Sign(buf[i - 1]))
+                    crossings++;
+            return crossings;
+        }
+
+        [Fact]
+        public void OutputStaysNearInputPitchInsteadOfNyquistBuzz()
+        {
+            // Regression test for the LpcSynthesisFilter sign bug (see SatcomLpcTests) at the full
+            // ProcessBuffer level: a runaway synthesis filter alternates every sample, which is a
+            // tone at Nyquist (4 kHz at the vocoder's 8 kHz internal rate) regardless of the actual
+            // input pitch -- audible as a harsh high-pitched buzz instead of voice.
+            const int sr = 48000;
+            const double toneHz = 150;
+            var vocoder = new SatcomVocoder(networkSampleRate: sr, frameDurationSeconds: 0.0225, seed: 1);
+            var n = (int)(sr * 1.5);
+            var input = new short[n];
+            for (var i = 0; i < n; i++)
+                input[i] = (short)(8000 * Math.Sin(2 * Math.PI * toneHz * i / sr));
+
+            var output = vocoder.ProcessBuffer(input, frameErrorRate: 0.0, burstSeverity: 0.0);
+
+            // Measure the last 0.5s via zero-crossing rate, giving the pitch tracker/decoder time
+            // to settle.
+            var tailLen = Math.Min(output.Length, sr / 2);
+            var tailStart = output.Length - tailLen;
+            var crossings = CountZeroCrossings(output, tailStart, tailLen);
+            var estimatedHz = crossings / 2.0 / (tailLen / (double)sr);
+
+            // A healthy vocoder's output won't exactly match the input pitch (it's a synthetic
+            // excitation shaped by LPC formants, not a pass-through), but it must stay in a
+            // plausible voice-range ballpark -- nowhere near the ~4000 Hz Nyquist buzz the sign bug
+            // produced.
+            Assert.True(estimatedHz < 800.0,
+                $"Expected output pitch well under the vocal range ceiling, got ~{estimatedHz:F0} Hz (Nyquist-buzz symptom)");
+        }
+
+        [Fact]
+        public void ModerateAmplitudeInputProducesAudibleNotSilentOutput()
+        {
+            // Regression test for a PCM16-vs-normalized scale mismatch: SatcomVocoderEncoder.Analyze
+            // computed Energy directly from raw PCM16-scale samples (thousands), but
+            // SatcomFrameQuantizer's GainMinDb/GainMaxDb range and the decoder's excitation gain are
+            // calibrated for a normalized (0 dBFS = amplitude 1.0) signal. Every realistic mic input
+            // clamped to the quantizer's top gain bin, and the decoder's un-rescaled gain then
+            // produced automatically near-silent output (approx -66 dBFS peak) regardless of how
+            // loud the actual input was.
+            const int sr = 48000;
+            var vocoder = new SatcomVocoder(networkSampleRate: sr, frameDurationSeconds: 0.0225, seed: 4);
+            var n = (int)(sr * 1.0);
+            var input = new short[n];
+            for (var i = 0; i < n; i++)
+                input[i] = (short)(6000 * Math.Sin(2 * Math.PI * 150 * i / sr));
+
+            var output = vocoder.ProcessBuffer(input, frameErrorRate: 0.0, burstSeverity: 0.0);
+
+            var tailStart = Math.Max(0, output.Length - sr / 4);
+            var maxAbs = 0;
+            for (var i = tailStart; i < output.Length; i++)
+                maxAbs = Math.Max(maxAbs, Math.Abs((int)output[i]));
+
+            Assert.True(maxAbs > 500,
+                $"Expected clearly audible output (a few hundred+ out of a 32767 range) for a moderately loud input, got peak {maxAbs}");
         }
 
         [Fact]

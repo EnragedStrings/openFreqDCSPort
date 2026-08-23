@@ -262,6 +262,9 @@
                                 <!-- Recording Settings Card -->
                                 <controls1:RecordingSettingsCard />
 
+                                <!-- Radio Overlay Settings Card -->
+                                <controls1:OverlaySettingsCard />
+
                                 <!-- SFX Card -->
                                 <controls:Card>
                                     <StackPanel Margin="16">
@@ -969,6 +972,9 @@
                                 <!-- Recording Settings Card -->
                                 <controls1:RecordingSettingsCard />
 
+                                <!-- Radio Overlay Settings Card -->
+                                <controls1:OverlaySettingsCard />
+
                                 <!-- SFX Card -->
                                 <controls:Card>
                                     <StackPanel Margin="16">
@@ -1082,6 +1088,14 @@
                                            Classes="StatusText" />
                             </StackPanel>
                         </StackPanel>
+
+                        <!-- Radio Overlay Toggle -->
+                        <Button Classes="Flat"
+                                DockPanel.Dock="Right"
+                                Command="{Binding ToggleOverlayCommand}"
+                                ToolTip.Tip="Toggle radio overlay">
+                            <avalonia:MaterialIcon Kind="PictureInPictureBottomRight" Width="20" Height="20" />
+                        </Button>
 
                     </DockPanel>
                 </controls:Card>

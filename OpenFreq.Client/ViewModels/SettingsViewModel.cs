@@ -282,6 +282,22 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     public string GlobalPttHotkeyDisplay => GlobalPttHotkey?.DisplayName ?? "None";
 
+    /// <summary>Show/hide the radio overlay window (see RadioOverlayWindow) automatically once the
+    /// client finishes connecting -- see MainWindowViewModel.OnConnectionStateChanged.</summary>
+    [ObservableProperty] public partial bool OverlayEnabled { get; set; } = false;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OverlayToggleHotkeyDisplay))]
+    public partial HotkeyBinding? OverlayToggleHotkey { get; set; }
+
+    public string OverlayToggleHotkeyDisplay => OverlayToggleHotkey?.DisplayName ?? "None";
+
+    /// <summary>Last known overlay window position, updated live as the user drags it (see
+    /// MainWindowViewModel.OnOverlayWindowPositionChanged) and persisted the same way any other
+    /// setting is -- on clean shutdown / PersistImmediately, not a dedicated save path.</summary>
+    [ObservableProperty] public partial int? OverlayLeft { get; set; }
+    [ObservableProperty] public partial int? OverlayTop { get; set; }
+
     [ObservableProperty] public partial bool InputMeterEnabled { get; set; }
 
     [ObservableProperty]
@@ -611,6 +627,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(DcsRadio7PttHotkey));
         OnPropertyChanged(nameof(DcsRadio7PttHotkeyDisplay));
         GlobalPttHotkey = settings.GlobalPttHotkey;
+        OverlayEnabled = settings.OverlayEnabled;
+        OverlayToggleHotkey = settings.OverlayToggleHotkey;
+        OverlayLeft = settings.OverlayLeft;
+        OverlayTop = settings.OverlayTop;
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
@@ -808,6 +828,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             DcsRadioPans = new Dictionary<string, int>(_dcsRadioPans, StringComparer.OrdinalIgnoreCase),
             DcsPttHotkeys = new Dictionary<string, HotkeyBinding>(_dcsPttHotkeys, StringComparer.OrdinalIgnoreCase),
             GlobalPttHotkey = GlobalPttHotkey,
+            OverlayEnabled = OverlayEnabled,
+            OverlayToggleHotkey = OverlayToggleHotkey,
+            OverlayLeft = OverlayLeft,
+            OverlayTop = OverlayTop,
             BmsSquelchUhfHotkey = BmsUhfSquelchHotkey,
             BmsSquelchVhfHotkey = BmsVhfSquelchHotkey,
             MasterVolume = MasterVolume,

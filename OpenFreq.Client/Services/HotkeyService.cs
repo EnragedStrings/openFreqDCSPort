@@ -30,6 +30,7 @@ public class HotkeyService : IHotkeyService
     // Unified binding storage with custom comparer
     private readonly Dictionary<HotkeyBinding, List<Guid>> _pttBindings = new(new HotkeyBindingComparer());
     private readonly Dictionary<HotkeyBinding, List<Guid>> _squelchToggleBindings = new(new HotkeyBindingComparer());
+    private readonly Dictionary<HotkeyBinding, List<Guid>> _toggleOverlayBindings = new(new HotkeyBindingComparer());
 
 #if WINDOWS
     // DirectInput for joystick support (Windows only)
@@ -705,6 +706,14 @@ public class HotkeyService : IHotkeyService
             HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(
                 IHotkeyService.HotkeyType.SquelchToggle, squelchChannels));
         }
+
+        // Check overlay toggle bindings
+        if (_toggleOverlayBindings.TryGetValue(binding, out var overlayChannels))
+        {
+            _activeKeyBindings[e.Data.KeyCode] = binding;
+            HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(
+                IHotkeyService.HotkeyType.ToggleOverlay, overlayChannels));
+        }
     }
 
     private void OnKeyReleased(object? sender, KeyboardHookEventArgs e)
@@ -746,6 +755,7 @@ public class HotkeyService : IHotkeyService
         {
             IHotkeyService.HotkeyType.Ptt => _pttBindings,
             IHotkeyService.HotkeyType.SquelchToggle => _squelchToggleBindings,
+            IHotkeyService.HotkeyType.ToggleOverlay => _toggleOverlayBindings,
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
         };
     }

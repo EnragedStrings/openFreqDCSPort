@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Satcom;
 using SGPdotNET.Propagation;
 using SGPdotNET.TLE;
+
+[assembly: InternalsVisibleTo("OpenFreq.Server.Tests")]
 
 namespace OpenFreqServer.Satcom;
 
@@ -34,7 +37,15 @@ public sealed class SatcomEphemerisService : IDisposable
     private readonly ConcurrentDictionary<string, SatcomSatellitePosition> _positions = new();
     private readonly Dictionary<string, CachingRemoteTleProvider> _tleProviders = new();
     private readonly Dictionary<string, DateTime> _lastGoodPropagationUtc = new();
+    private readonly Dictionary<string, DateTime> _lastFailedFetchUtc = new();
     private Timer? _timer;
+
+    /// <summary>CachingRemoteTleProvider.GetTle re-attempts a live network fetch on every call
+    /// once its own on-disk-cache-freshness window (MaxAge) has passed, and never advances its
+    /// internal LastRefresh on failure -- so with no throttling here, an unreachable CelesTrak
+    /// would otherwise be retried (and logged) on literally every propagation tick forever. See
+    /// PropagateLiveTle.</summary>
+    private static readonly TimeSpan FailedFetchRetryBackoff = TimeSpan.FromSeconds(30);
 
     public SatcomEphemerisService(IReadOnlyList<SatcomSatelliteDefinition> catalog, SatcomServerConfig config,
         ILogger logger)
@@ -117,9 +128,18 @@ public sealed class SatcomEphemerisService : IDisposable
             return;
         }
 
+        if (_lastFailedFetchUtc.TryGetValue(sat.Id, out var lastFailure) &&
+            nowUtc - lastFailure < FailedFetchRetryBackoff)
+        {
+            // Still backing off after a recent fetch failure -- whatever _positions already
+            // holds (last-known-good marked stale, or the disk-cache fallback below) stays as-is
+            // until the backoff elapses, instead of hammering CelesTrak and this log every tick.
+            return;
+        }
+
         try
         {
-            var tle = provider.GetTle((int)noradId);
+            var tle = provider.GetTle(noradId);
             var eci = new Sgp4(tle).FindPosition(nowUtc);
             var geo = eci.ToGeodetic();
 
@@ -127,9 +147,12 @@ public sealed class SatcomEphemerisService : IDisposable
                 sat.Id, geo.Latitude.Degrees, geo.Longitude.Degrees, geo.Altitude * 1000.0,
                 nowUnixMs, IsStale: false);
             _lastGoodPropagationUtc[sat.Id] = nowUtc;
+            _lastFailedFetchUtc.Remove(sat.Id);
         }
         catch (Exception ex)
         {
+            _lastFailedFetchUtc[sat.Id] = nowUtc;
+
             var lastGood = _lastGoodPropagationUtc.GetValueOrDefault(sat.Id, DateTime.MinValue);
             var staleFor = nowUtc - lastGood;
 
@@ -142,10 +165,57 @@ public sealed class SatcomEphemerisService : IDisposable
                 _logger.LogWarning(ex, "SATCOM: LiveTle propagation failed for {SatelliteId}, using last-known position (stale {StaleFor})",
                     sat.Id, staleFor);
             }
+            else if (TryPropagateFromDiskCache(sat, noradId, nowUtc, nowUnixMs))
+            {
+                // No in-memory position yet (e.g. server just (re)started) and the network fetch
+                // failed -- CachingRemoteTleProvider only reads its own on-disk cache file when
+                // it's within EphemerisFetchIntervalHours (see SGP.NET's
+                // CachingRemoteTleProvider.FetchNewTles); once that window passes it always
+                // attempts a live fetch and throws on failure with no disk fallback of its own,
+                // even though the cached elements (whatever their age) are almost always a far
+                // better estimate than the satellite definition's placeholder Static* fields. So
+                // we read the same file ourselves here, independent of that freshness window.
+                _logger.LogWarning(ex, "SATCOM: LiveTle propagation failed for {SatelliteId} with no in-memory position yet; " +
+                    "using the on-disk TLE cache instead of a static fallback", sat.Id);
+            }
             else
             {
                 FallBackToStatic(sat, nowUnixMs, $"propagation failed and no usable cached position ({ex.Message})");
             }
+        }
+    }
+
+    /// <summary>Reads and propagates from CachingRemoteTleProvider's own on-disk cache file
+    /// directly, bypassing its MaxAge freshness check -- see the doc comment at its call site in
+    /// PropagateLiveTle. Returns false (does not touch _positions) if the file is missing,
+    /// unparseable, or doesn't contain this satellite's NORAD id.</summary>
+    internal bool TryPropagateFromDiskCache(SatcomSatelliteDefinition sat, int noradId, DateTime nowUtc, long nowUnixMs)
+    {
+        var cacheFile = Path.Combine(ResolveCacheDirectory(), $"sat_{noradId}.tle");
+        if (!File.Exists(cacheFile)) return false;
+
+        try
+        {
+            // Line 0 is CachingRemoteTleProvider's own fetch timestamp (see its
+            // WriteOutNewTles) -- skip it and parse the remaining 3-line-per-satellite TLE block
+            // the same way its base RemoteTleProvider.PopulateTleTable does.
+            var lines = File.ReadAllLines(cacheFile).Skip(1).ToArray();
+            var tle = Tle.ParseElements(lines, threeLine: true)
+                .FirstOrDefault(t => (int)t.NoradNumber == noradId);
+            if (tle == null) return false;
+
+            var eci = new Sgp4(tle).FindPosition(nowUtc);
+            var geo = eci.ToGeodetic();
+
+            _positions[sat.Id] = new SatcomSatellitePosition(
+                sat.Id, geo.Latitude.Degrees, geo.Longitude.Degrees, geo.Altitude * 1000.0,
+                nowUnixMs, IsStale: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "SATCOM: failed to parse on-disk TLE cache for {SatelliteId}", sat.Id);
+            return false;
         }
     }
 

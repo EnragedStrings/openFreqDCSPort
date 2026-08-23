@@ -43,6 +43,7 @@ public interface IHotkeyService : IDisposable, ILifecycleService
     public enum HotkeyType
     {
         Ptt, // used for PTT
-        SquelchToggle // toggle squelch on/off
+        SquelchToggle, // toggle squelch on/off
+        ToggleOverlay // show/hide the radio overlay window (app-scoped, not per-channel)
     }
 }

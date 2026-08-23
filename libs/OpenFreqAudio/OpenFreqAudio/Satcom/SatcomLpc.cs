@@ -86,9 +86,12 @@ public static class SatcomLpc
     }
 }
 
-/// <summary>All-pole LPC synthesis filter: y[n] = excitation[n] - sum(a[i]*y[n-i]). Stateful
-/// across calls (keeps the last `order` output samples) so consecutive frames don't click at the
-/// seam; <see cref="Reset"/> between unrelated streams.</summary>
+/// <summary>All-pole LPC synthesis filter: y[n] = excitation[n] + sum(a[i]*y[n-i]) -- the sign
+/// here must match SatcomLpc.LevinsonDurbin/ReflectionToLpc's own convention (Rabiner &amp;
+/// Schafer's autocorrelation method: prediction x&#770;[n] = sum a_i*x[n-i], so the reconstructed
+/// signal is x[n] = e[n] + x&#770;[n]). Stateful across calls (keeps the last `order` output
+/// samples) so consecutive frames don't click at the seam; <see cref="Reset"/> between unrelated
+/// streams.</summary>
 public sealed class LpcSynthesisFilter
 {
     private readonly double[] _history;
@@ -109,7 +112,7 @@ public sealed class LpcSynthesisFilter
     {
         double prediction = 0;
         for (var i = 1; i <= _order; i++)
-            prediction -= lpcCoefficients[i] * _history[i - 1];
+            prediction += lpcCoefficients[i] * _history[i - 1];
 
         var output = excitation + prediction;
         if (double.IsNaN(output) || double.IsInfinity(output)) output = 0.0;

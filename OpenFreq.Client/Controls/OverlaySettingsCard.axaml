@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Material.Styles.Controls;assembly=Material.Styles"
+             xmlns:avalonia="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:OpenFreqClient.ViewModels"
+             x:Class="OpenFreq.Client.Controls.OverlaySettingsCard"
+             x:DataType="vm:MainWindowViewModel">
+
+  <controls:Card>
+    <StackPanel Margin="16">
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+        <avalonia:MaterialIcon Kind="PictureInPictureBottomRight"
+                               Width="16" Height="16"
+                               Margin="0,0,8,0"
+                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+        <TextBlock Text="Radio Overlay" Classes="SectionHeader" Margin="0" />
+      </StackPanel>
+      <TextBlock Classes="InputLabel" Margin="0,0,0,8" TextWrapping="Wrap"
+                 Text="A small always-on-top window showing your tuned radios and who's transmitting -- stays visible over DCS in windowed/borderless mode." />
+
+      <Button Content="Show Overlay" Command="{Binding ToggleOverlayCommand}"
+              IsVisible="{Binding !IsOverlayVisible}"
+              HorizontalAlignment="Stretch"
+              Margin="0,0,0,8" />
+      <Button Content="Hide Overlay" Command="{Binding ToggleOverlayCommand}"
+              IsVisible="{Binding IsOverlayVisible}"
+              HorizontalAlignment="Stretch"
+              Margin="0,0,0,8" />
+
+      <CheckBox Content="Show automatically when connected"
+                IsChecked="{Binding Settings.OverlayEnabled}"
+                Margin="0,0,0,8" />
+
+      <TextBlock Text="Toggle Hotkey" Classes="InputLabel" Margin="0,0,0,4" />
+      <Grid ColumnDefinitions="*,Auto">
+        <Button Grid.Column="0"
+                Command="{Binding BeginCaptureOverlayToggleHotkeyCommand}"
+                BorderBrush="{DynamicResource MaterialDividerBrush}"
+                BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                ToolTip.Tip="{Binding Settings.OverlayToggleHotkeyDisplay}">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <avalonia:MaterialIcon Kind="KeyboardOutline" Width="18" Height="18" />
+            <TextBlock Text="{Binding Settings.OverlayToggleHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                       VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                       TextTrimming="LeadingCharacterEllipsis" MaxWidth="150" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="1" Content="Clear"
+                Command="{Binding ClearOverlayToggleHotkeyCommand}"
+                Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+      </Grid>
+    </StackPanel>
+  </controls:Card>
+
+</UserControl>

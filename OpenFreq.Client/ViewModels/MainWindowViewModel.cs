@@ -30,6 +30,7 @@ using OpenFreqAudio;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services;
 using OpenFreqClient.Services.Interfaces;
+using OpenFreqClient.Views;
 using OpenFreqClient.Views.Util;
 
 namespace OpenFreqClient.ViewModels;
@@ -72,6 +73,13 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     private LocationViewModel? _subscribedLocation;
     private readonly Dictionary<ChannelCardViewModel, PropertyChangedEventHandler> _channelHandlers = new();
 
+    // Radio overlay window -- kept alive across toggles (Hide, not Close) so a dragged position
+    // survives within the session and RadioOverlayViewModel's flatten/filter subscriptions aren't
+    // torn down and rebuilt every toggle. See OnIsOverlayVisibleChanged.
+    private RadioOverlayWindow? _overlayWindow;
+    private RadioOverlayViewModel? _overlayViewModel;
+    private HotkeyBinding? _registeredOverlayToggleHotkey;
+
     [ObservableProperty] public partial bool OpenFreqConnected { get; set; }
 
     /// <summary>True while a session recording is in progress. Drives the REC indicator + button label.</summary>
@@ -80,6 +88,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty] public partial bool TacviewConnected { get; set; }
 
     [ObservableProperty] public partial bool IsPeersPanelExpanded { get; set; } = true;
+
+    [ObservableProperty] public partial bool IsOverlayVisible { get; set; } = false;
 
     [ObservableProperty] public partial string StatusMessage { get; set; } = "Disconnected";
 
@@ -180,6 +190,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         Settings.PersistImmediately += OnSettingsPersistImmediately;
         ChannelList.PropertyChanged += OnChannelListPropertyChanged;
         UpdateLocationSubscription();
+
+        _hotkeyService.HotkeyPressed += OnOverlayHotkeyPressed;
 
         // Load config
         _ = LoadConfigurationAsync();
@@ -800,6 +812,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                     window.WindowState = WindowState.Minimized;
                 });
             }
+
+            if (Settings.OverlayEnabled)
+                Dispatcher.UIThread.Post(() => IsOverlayVisible = true);
         }
         else if (state == ConnectionState.Disconnected)
         {
@@ -966,6 +981,57 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     }
 
     [RelayCommand]
+    private void ToggleOverlay() => IsOverlayVisible = !IsOverlayVisible;
+
+    /// <summary>Not the MapPickerWindow tracking-window's polling pattern -- the overlay's
+    /// DataContext (RadioOverlayViewModel) projects the same live ChannelCardViewModel instances
+    /// already used elsewhere, which are already [ObservableProperty]-backed, so Avalonia's normal
+    /// binding keeps it live with no timer needed. Hide (not Close) on hide, so the window instance
+    /// and any dragged position survive for the next toggle within this session.</summary>
+    partial void OnIsOverlayVisibleChanged(bool value)
+    {
+        if (value)
+        {
+            if (_overlayWindow == null)
+            {
+                _overlayViewModel = new RadioOverlayViewModel(ChannelList);
+                _overlayWindow = new RadioOverlayWindow(_overlayViewModel);
+                _overlayWindow.Position = new PixelPoint(
+                    Settings.OverlayLeft ?? GetDefaultOverlayLeft(), Settings.OverlayTop ?? 60);
+                _overlayWindow.PositionChanged += OnOverlayWindowPositionChanged;
+            }
+
+            _overlayWindow.Show();
+        }
+        else
+        {
+            _overlayWindow?.Hide();
+        }
+    }
+
+    private void OnOverlayWindowPositionChanged(object? sender, PixelPointEventArgs e)
+    {
+        Settings.OverlayLeft = e.Point.X;
+        Settings.OverlayTop = e.Point.Y;
+    }
+
+    /// <summary>First-run default: top-right corner of the primary screen's working area. Falls
+    /// back to a fixed value if no screen info is available yet.</summary>
+    private static int GetDefaultOverlayLeft()
+    {
+        var desktop = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+        var workingArea = desktop?.MainWindow?.Screens?.Primary?.WorkingArea;
+        return workingArea != null ? workingArea.Value.Right - 260 : 1600;
+    }
+
+    [RelayCommand]
+    private Task BeginCaptureOverlayToggleHotkeyAsync() =>
+        CaptureSettingsHotkeyAsync(binding => Settings.OverlayToggleHotkey = binding);
+
+    [RelayCommand]
+    private void ClearOverlayToggleHotkey() => Settings.OverlayToggleHotkey = null;
+
+    [RelayCommand]
     private void TogglePeersPanel()
     {
         IsPeersPanelExpanded = !IsPeersPanelExpanded;
@@ -1006,6 +1072,35 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         {
             _openFreqService.SetOwnPositionMode(Settings.ConnectionMode);
         }
+        else if (e.PropertyName == nameof(SettingsViewModel.OverlayToggleHotkey))
+        {
+            SyncOverlayToggleHotkeyRegistration();
+        }
+    }
+
+    /// <summary>Keeps the overlay-toggle keybind registered with the hotkey service in sync with
+    /// Settings, mirroring ChannelCardListViewModel.SyncGlobalPttHotkeyRegistration -- registration
+    /// needs the actual old binding to unregister, and Settings only exposes the current value.
+    /// It's app-scoped rather than per-channel, so it's registered under
+    /// IHotkeyService.GlobalPttChannelId the same "no specific channel" sentinel the global PTT
+    /// keybind uses.</summary>
+    private void SyncOverlayToggleHotkeyRegistration()
+    {
+        if (_registeredOverlayToggleHotkey != null)
+            _hotkeyService.UnregisterHotkey(IHotkeyService.HotkeyType.ToggleOverlay, _registeredOverlayToggleHotkey,
+                IHotkeyService.GlobalPttChannelId);
+
+        _registeredOverlayToggleHotkey = Settings.OverlayToggleHotkey;
+
+        if (_registeredOverlayToggleHotkey != null)
+            _hotkeyService.RegisterHotkey(IHotkeyService.HotkeyType.ToggleOverlay, _registeredOverlayToggleHotkey,
+                IHotkeyService.GlobalPttChannelId);
+    }
+
+    private void OnOverlayHotkeyPressed(object? sender, HotkeyPressedEventArgs e)
+    {
+        if (e.Type != IHotkeyService.HotkeyType.ToggleOverlay) return;
+        Dispatcher.UIThread.Post(ToggleOverlay);
     }
 
     private void OnFrequencyTransmissionStatusChanged(object? sender, FrequencyTransmissionStatusEventArgs e)
@@ -1148,7 +1243,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _hotkeyService.HotkeyPressed -= OnOverlayHotkeyPressed;
+        if (_overlayWindow != null)
+            _overlayWindow.PositionChanged -= OnOverlayWindowPositionChanged;
+
         await SaveConfigurationAsync();
+
+        // Bypasses the Hide-not-Close rule OnIsOverlayVisibleChanged otherwise follows -- this is
+        // actual app teardown, so the window shouldn't linger as an orphaned process resource.
+        _overlayWindow?.Close();
+        _overlayViewModel?.Dispose();
 
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
         _openFreqService.StatusMessageReceived -= OnStatusMessageReceived;

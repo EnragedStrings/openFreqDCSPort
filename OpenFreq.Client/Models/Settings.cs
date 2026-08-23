@@ -69,4 +69,10 @@ public class OpenFreqSettings
     /// DCS/BMS-synced channels instead of the cockpit-driven values. Default false: cockpit
     /// controls win.</summary>
     public bool DcsManualRadioControlOverride { get; set; } = false;
+
+    // Radio overlay (always-on-top window showing tuned radios + TX/RX -- see RadioOverlayWindow)
+    public bool OverlayEnabled { get; set; } = false;
+    public int? OverlayLeft { get; set; }
+    public int? OverlayTop { get; set; }
+    public HotkeyBinding? OverlayToggleHotkey { get; set; }
 }

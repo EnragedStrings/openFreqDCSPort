@@ -111,6 +111,7 @@ public class RadioPlayback : IDisposable
         public CipherTextNoiseGenerator CipherNoise { get; } = new(SampleRate);
         public CvsdColorationEffect CvsdEffect { get; } = new();
         public bool WasMatchedCipherActive { get; set; }
+        public KySecureOutcome? LastLoggedComsecOutcome { get; set; }
 
         // Regardless of our sample rate, we want to band-pass our radio sound between a fixed
         // ~300 Hz low edge and a band-dependent high edge (see FastPathAudioSim.RadioBandConfig.
@@ -1529,6 +1530,15 @@ public class RadioPlayback : IDisposable
                         var comsecOutcome = slot.KySecureState.Update(carrierPresent, matchedCipher, wrongKey,
                             passiveCiphertext, samples);
 
+                        if (comsecOutcome != slot.LastLoggedComsecOutcome)
+                        {
+                            _logger.LogWarning(
+                                "RadioPlayback COMSEC: freq={FreqKhz} outcome={Outcome} slotEnc={SlotEnc} slotKey={SlotKey} slotCryptoCapable={SlotCryptoCapable} streamEnc={StreamEnc} streamKey={StreamKey} matched={Matched} wrongKey={WrongKey} passiveCiphertext={Passive}",
+                                freq, comsecOutcome, slot.Enc, slot.EncKey, slot.CryptoCapable,
+                                dominant?.Enc ?? false, dominant?.EncKey ?? 0, matchedCipher, wrongKey, passiveCiphertext);
+                            slot.LastLoggedComsecOutcome = comsecOutcome;
+                        }
+
                         // "Modified PTT tone": a short cue at the moment this slot starts
                         // successfully receiving a decrypted secure transmission.
                         bool matchedCipherNow = comsecOutcome == KySecureOutcome.Pass && matchedCipher;
@@ -1752,38 +1762,81 @@ public class RadioPlayback : IDisposable
                         }
                     }
                 }
-                // Straight mix when we're not applying any FX
+                // Straight mix when we're not applying any FX (distance/squelch/AGC etc. are
+                // skipped here on purpose -- lobby/GCI mode has no position data to derive them
+                // from). KY-58/COMSEC gating is NOT one of those position-dependent effects
+                // though -- it's a per-slot key match, independent of 3D simulation -- so unlike
+                // squelch it must still run here, per slot, exactly as the 3D path does at
+                // (see the Apply3dEffects branch above). Without this, an unencrypted GCI slot
+                // heard an encrypted transmitter's raw plaintext-mixed audio with no gating at
+                // all, regardless of key state.
                 else
                 {
-                    // The straight mix is identical for every slot on this frequency,
-                    // so build it once into _dspScratch.
-                    Array.Clear(_dspScratch, 0, samples);
-
-                    int numTransmitting = freqStreams.Count;
-                    if (numTransmitting > 0)
-                    {
-                        // Mix all streams with proper normalization
-                        foreach (var t in freqStreams)
-                        {
-                            for (int i = 0; i < t.Samples.Length; ++i)
-                            {
-                                _dspScratch[i] += t.Samples.Span[i];
-                            }
-                        }
-
-                        // Normalize by number of streams to prevent clipping
-                        float mixGain = 1.0f / (float)Math.Sqrt(numTransmitting);
-                        for (int i = 0; i < samples; ++i)
-                        {
-                            _dspScratch[i] *= mixGain;
-                        }
-                    }
-
-                    // No squelch in non-FX mode (matches original behavior).
-                    // Fan out the dry mix to each slot with its pan and volume.
                     foreach (var slot in tunedSlots)
                     {
                         if (slot.IsNoiseMuted) continue;
+
+                        var transecStreams = freqStreams.Where(s => s.HqOn == slot.HqOn).ToList();
+                        var dominant = transecStreams.Count > 0 ? transecStreams[0] : null;
+                        bool carrierPresent = dominant != null;
+
+                        var (matchedCipher, wrongKey, passiveCiphertext) = carrierPresent
+                            ? KySecureReceiveState.Classify(slot.Enc, slot.EncKey, slot.CryptoCapable,
+                                dominant!.Enc, dominant.EncKey)
+                            : (false, false, false);
+                        var comsecOutcome = slot.KySecureState.Update(carrierPresent, matchedCipher, wrongKey,
+                            passiveCiphertext, samples);
+
+                        if (comsecOutcome != slot.LastLoggedComsecOutcome)
+                        {
+                            _logger.LogWarning(
+                                "RadioPlayback COMSEC (no-FX): freq={FreqKhz} outcome={Outcome} slotEnc={SlotEnc} slotKey={SlotKey} slotCryptoCapable={SlotCryptoCapable} streamEnc={StreamEnc} streamKey={StreamKey} matched={Matched} wrongKey={WrongKey} passiveCiphertext={Passive}",
+                                freq, comsecOutcome, slot.Enc, slot.EncKey, slot.CryptoCapable,
+                                dominant?.Enc ?? false, dominant?.EncKey ?? 0, matchedCipher, wrongKey, passiveCiphertext);
+                            slot.LastLoggedComsecOutcome = comsecOutcome;
+                        }
+
+                        bool matchedCipherNow = comsecOutcome == KySecureOutcome.Pass && matchedCipher;
+                        if (matchedCipherNow && !slot.WasMatchedCipherActive)
+                            TriggerRxTone();
+                        slot.WasMatchedCipherActive = matchedCipherNow;
+
+                        Array.Clear(_dspScratch, 0, samples);
+                        switch (comsecOutcome)
+                        {
+                            case KySecureOutcome.Pass:
+                                int numTransmitting = transecStreams.Count;
+                                if (numTransmitting > 0)
+                                {
+                                    foreach (var t in transecStreams)
+                                        for (int i = 0; i < t.Samples.Length; ++i)
+                                            _dspScratch[i] += t.Samples.Span[i];
+
+                                    float mixGain = 1.0f / (float)Math.Sqrt(numTransmitting);
+                                    for (int i = 0; i < samples; ++i)
+                                        _dspScratch[i] *= mixGain;
+
+                                    if (matchedCipher)
+                                        for (int i = 0; i < samples; ++i)
+                                            _dspScratch[i] = slot.CvsdEffect.Process(_dspScratch[i]);
+                                }
+                                break;
+                            case KySecureOutcome.NoiseBurst:
+                            case KySecureOutcome.PassiveCiphertext:
+                                for (int i = 0; i < samples; ++i)
+                                    _dspScratch[i] = slot.CipherNoise.NextSample();
+                                break;
+                            case KySecureOutcome.Beep:
+                                for (int i = 0; i < samples; ++i)
+                                    _dspScratch[i] = (float)Math.Sin(
+                                        2.0 * Math.PI * WrongKeyBeepFrequencyHz * (i + _sampleNum) / SampleRate)
+                                        * WrongKeyBeepAmplitude;
+                                break;
+                            case KySecureOutcome.Muted:
+                            case KySecureOutcome.Idle:
+                            default:
+                                break; // silence
+                        }
 
                         // Set AGC back to unity so there's not sudden jumps
                         // when we turn FX back on.

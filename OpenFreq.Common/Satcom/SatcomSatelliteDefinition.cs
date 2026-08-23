@@ -37,11 +37,20 @@ public sealed class SatcomSatelliteDefinition
     public double Health { get; init; } = 1.0;
 
     /// <summary>3 dB half-power footprint radius, degrees of geocentric angle from boresight.
-    /// CALIBRATED_APPROXIMATION.</summary>
-    public double FootprintHalfPowerDeg { get; init; } = 9.0;
+    /// CALIBRATED_APPROXIMATION -- defaults model an Earth-coverage horn antenna (the publicly
+    /// documented architecture for legacy UHF MILSATCOM transponders on FLTSATCOM/LEASAT/UFO,
+    /// as opposed to a narrow spot beam), which illuminates nearly the entire visible Earth disk
+    /// from GEO. The binding constraint for a real user is almost always the ground-station
+    /// elevation mask/horizon, not the satellite's footprint -- these defaults keep the footprint
+    /// gain from being the limiting factor before the elevation mask is.</summary>
+    public double FootprintHalfPowerDeg { get; init; } = 70.0;
 
-    /// <summary>Geocentric angle beyond which gain is effectively zero. CALIBRATED_APPROXIMATION.</summary>
-    public double FootprintCutoffDeg { get; init; } = 17.0;
+    /// <summary>Geocentric angle beyond which gain is effectively zero. CALIBRATED_APPROXIMATION.
+    /// ~81 degrees is the geometric geocentric angle at which a GEO satellite reaches a ground
+    /// observer's true horizon (arccos(EarthRadius / GeoRadius)), so this cutoff sits just inside
+    /// that horizon limit -- the elevation mask naturally becomes the binding constraint first for
+    /// an Earth-coverage antenna, matching real legacy UHF SATCOM behavior.</summary>
+    public double FootprintCutoffDeg { get; init; } = 81.0;
 }
 
 /// <summary>Resolved runtime position for one satellite at one moment -- what both the server's

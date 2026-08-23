@@ -98,8 +98,17 @@ public sealed class SatcomLinkEngine
         var txTerminal = txState?.Terminal ?? rxState.Terminal; // idle-state proxy: "what would my own uplink look like"
         var txTerrainLos = txState?.TerrainLosClear ?? rxState.TerrainLosClear;
 
-        var uplink = SatcomLinkEngineCore.EvaluateLeg(net, satellite, satPos.Value, txTerminal, net.UplinkHz, isUplinkLeg: true);
-        var downlink = SatcomLinkEngineCore.EvaluateLeg(net, satellite, satPos.Value, rxState.Terminal, net.DownlinkHz, isUplinkLeg: false);
+        // Dedicated (point-to-point, no DAMA login) nets are simply tuned to an assigned
+        // transponder frequency by the operator -- unlike DAMA's admin-fixed uplink/downlink
+        // pair, use each terminal's own reported tuned frequency for both legs when available.
+        // Real dedicated UHF SATCOM channels are single-frequency/half-duplex (the satellite
+        // relays back on the same channel), so both legs use the same tuned value here rather
+        // than separate up/down frequencies.
+        var uplinkHz = !net.Waveform.IsDama() && txTerminal.TunedFrequencyHz is { } txTuned ? txTuned : net.UplinkHz;
+        var downlinkHz = !net.Waveform.IsDama() && rxState.Terminal.TunedFrequencyHz is { } rxTuned ? rxTuned : net.DownlinkHz;
+
+        var uplink = SatcomLinkEngineCore.EvaluateLeg(net, satellite, satPos.Value, txTerminal, uplinkHz, isUplinkLeg: true);
+        var downlink = SatcomLinkEngineCore.EvaluateLeg(net, satellite, satPos.Value, rxState.Terminal, downlinkHz, isUplinkLeg: false);
 
         // Whether each leg was ALREADY unusable (below horizon/Earth-occluded/antenna-blocked)
         // before terrain-LOS was even applied -- needed below to report the real cause instead of

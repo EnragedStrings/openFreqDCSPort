@@ -143,12 +143,11 @@ exactly one implementation of the physics, not a client copy and a server copy t
 `OpenFreq.Server/Satcom/SatcomEphemerisService.cs`. Two first-class, independently-selectable
 modes per satellite (`SatcomEphemerisMode`) -- not "live with a fallback":
 
-- **StaticGeo** (default): fixed longitude/altitude, no time dependence, zero network
-  dependency. The out-of-the-box catalog (`SatcomServerConfig.Default`) ships two generic,
-  clearly-fictional GEO slots ("SATCOM-ALPHA"/"SATCOM-BRAVO") so the feature works immediately
-  with no admin setup, and so historical/offline DCS missions aren't forced onto today's real
-  satellite positions.
-- **LiveTle**: real orbital position. Elements are fetched from CelesTrak
+- **StaticGeo**: fixed longitude/altitude, no time dependence, zero network dependency. No
+  network-outage risk, and doesn't force historical/offline DCS missions onto today's real
+  satellite positions -- switch any catalog entry to this mode for a guaranteed-available
+  fallback.
+- **LiveTle** (default catalog): real orbital position, fetched from CelesTrak
   (`https://celestrak.org/NORAD/elements/gp.php?CATNR=<id>&FORMAT=TLE`) roughly every 2 hours
   (matching CelesTrak's own published GP/TLE update cadence -- SOURCE_DERIVED, not arbitrary) by
   `SGPdotNET.TLE.CachingRemoteTleProvider` (from the **SGP.NET** NuGet package -- a vetted,
@@ -159,12 +158,18 @@ modes per satellite (`SatcomEphemerisMode`) -- not "live with a fallback":
   as a tested, documented utility (Vallado's GMST polynomial, TEME<->ECEF rotation,
   `OpenFreq.Common.Tests/Satcom/SatcomOrbitMathTests.cs`) but the vetted library is preferred for
   the actual live-ephemeris path.
-  **Requires an admin-supplied, currently-valid NORAD catalog id** -- this project ships no
-  default LiveTle entries and asserts nothing about which real satellites are appropriate;
-  verify against current CelesTrak data before use.
+  The out-of-the-box catalog (`SatcomServerConfig.Default`) ships the real 11-satellite UHF
+  Follow-On (UFO) constellation (`ufo-1`..`ufo-11`) in this mode -- their NORAD catalog numbers
+  are PROJECT_OBSERVED (looked up against CelesTrak's own live GP query and cross-checked against
+  independent sources, 2026-08-22); nothing about their current operational status/coverage is
+  asserted (several are decades old and may be retired or have drifted from their original
+  station-kept longitude) -- their live position, at whatever it actually is right now, always
+  comes from a fresh fetch/SGP4 propagation, never a value baked into this project.
   Never crashes or hard-fails without internet: fetch/propagation failure marks the last-known
   position stale (kept, not snapped) for up to 24h, then falls back to the satellite definition's
-  own configured Static longitude/altitude.
+  own configured Static longitude/altitude (0 deg by default for the UFO entries, since there's no
+  verified current longitude to assert per bird -- if that fallback is ever actually hit, treat it
+  as "no real position known" rather than a real one).
 
 Real UHF MILSATCOM constellations (MUOS, legacy FLTSATCOM/UFO) have specific longitude/transponder
 assignments that aren't publicly catalogued in the operational detail this project could model
@@ -177,17 +182,23 @@ transponder-capability fields regardless of ephemeris mode.
 whichever satellite has the best link margin" behavior, which is not how real net-assigned UHF
 SATCOM terminals work:
 
-- **Assigned** (default): fixed satellite per net, from admin config
+- **Assigned**: fixed satellite per net, from admin config
   (`SatcomNetDefinition.AssignedSatelliteId`). Never auto-picked by margin/distance. If the
   assigned satellite is below horizon/unserviceable, the radio reports no service and waits --
   it does not secretly pick another satellite.
 - **Manual**: same behavior as Assigned; distinguished only by provenance (e.g. a mission-scripted
   override vs. the static net table) -- this pass doesn't yet differentiate them operationally.
-- **AutoBestVisible**: ranks visible, capacity-available satellites by link margin, but only
-  switches with **hysteresis** -- a minimum margin improvement
-  (`AutoSelectMarginHysteresisDb`, GAMEPLAY_CONFIG) *and* a minimum hold duration on the current
-  satellite (`AutoSelectMinHoldSeconds`, GAMEPLAY_CONFIG) before a handover is even considered.
-  Never simply "closest/best satellite this exact tick".
+- **AutoBestVisible** (default net): ranks visible, capacity-available satellites by link margin
+  (downlink C/N0 from the terminal's own position), but only switches with **hysteresis** -- a
+  minimum margin improvement (`AutoSelectMarginHysteresisDb`, GAMEPLAY_CONFIG) *and* a minimum
+  hold duration on the current satellite (`AutoSelectMinHoldSeconds`, GAMEPLAY_CONFIG) before a
+  handover is even considered. Never simply "closest/best satellite this exact tick". Selection is
+  per (client, net) session, not shared across a whole net: each receiving client independently
+  picks whichever catalog satellite it can best see from its own position, and
+  `SatcomLinkEngine.Evaluate` then checks the active transmitter's uplink leg against THAT
+  specific satellite. Two stations can only hear each other when both can actually close a link to
+  a shared bird -- there's no separate "force everyone onto one satellite" step, it falls out of
+  each receiver's own per-leg LOS evaluation.
 
 ## 6. Link budget (SOURCE_EXACT/PHYSICAL_CALCULATION formulas + two CALIBRATED_APPROXIMATION inputs)
 
@@ -393,14 +404,23 @@ WAVs through the exact same `SatcomVocoder` class the live path uses. See its ow
     "propagationHz": 1.0,
     "debugTelemetryEnabled": true,
     "satellites": [
-      { "id": "satcom-alpha", "displayName": "SATCOM-ALPHA (generic, mission-defined GEO slot)",
-        "ephemerisMode": "StaticGeo", "staticLongitudeDeg": 100.0 },
-      { "id": "satcom-real-example", "displayName": "VERIFY BEFORE USE",
-        "ephemerisMode": "LiveTle", "noradId": 0 }
+      { "id": "ufo-1", "displayName": "UFO 1 (USA 98)", "ephemerisMode": "LiveTle", "noradId": 22563 },
+      { "id": "ufo-2", "displayName": "UFO 2 (USA 95)", "ephemerisMode": "LiveTle", "noradId": 22787 },
+      { "id": "ufo-3", "displayName": "UFO 3 (USA 104)", "ephemerisMode": "LiveTle", "noradId": 23132 },
+      { "id": "ufo-4", "displayName": "UFO 4 (USA 108)", "ephemerisMode": "LiveTle", "noradId": 23467 },
+      { "id": "ufo-5", "displayName": "UFO 5 (USA 111)", "ephemerisMode": "LiveTle", "noradId": 23589 },
+      { "id": "ufo-6", "displayName": "UFO 6 (USA 114)", "ephemerisMode": "LiveTle", "noradId": 23696 },
+      { "id": "ufo-7", "displayName": "UFO 7 (USA 127)", "ephemerisMode": "LiveTle", "noradId": 23967 },
+      { "id": "ufo-8", "displayName": "UFO 8 (USA 138)", "ephemerisMode": "LiveTle", "noradId": 25258 },
+      { "id": "ufo-9", "displayName": "UFO 9 (USA 140)", "ephemerisMode": "LiveTle", "noradId": 25501 },
+      { "id": "ufo-10", "displayName": "UFO 10 (USA 146)", "ephemerisMode": "LiveTle", "noradId": 25967 },
+      { "id": "ufo-11", "displayName": "UFO 11 (USA 174)", "ephemerisMode": "LiveTle", "noradId": 28117 },
+      { "id": "satcom-static-example", "displayName": "Offline/fallback example",
+        "ephemerisMode": "StaticGeo", "staticLongitudeDeg": 100.0 }
     ],
     "nets": [
       { "netId": "a10-arc210-satcom", "displayName": "A-10C II ARC-210 UHF SATCOM (default net)",
-        "selectionMode": "Assigned", "assignedSatelliteId": "satcom-alpha",
+        "selectionMode": "AutoBestVisible",
         "waveform": "Dama5k", "bandwidthHz": 5000,
         "uplinkHz": 300000000, "downlinkHz": 260000000 }
     ]

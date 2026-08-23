@@ -44,13 +44,15 @@ public class DcsRadioState
     /// out. Always false for radios other than the ARC-210.</summary>
     public bool SatcomBandActive { get; set; }
 
-    /// <summary>PROJECT_OBSERVED: the ARC-210's SATCOM channel/net pushbutton (argument 561)
-    /// advances a virtual channel number 1-6 each press, wrapping 6 back to 1, independent of the
-    /// 31-40 knob band above (see OpenFreqDCS.lua's buildA10C2Radios). Two stations must match
-    /// BOTH SatcomBandActive AND this channel number to be on the same virtual SATCOM link -- see
-    /// ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz. Always 1 (the DCS-observed default)
-    /// for radios other than the ARC-210.</summary>
-    public int SatcomChannel { get; set; } = 1;
+    /// <summary>PROJECT_OBSERVED (user-reported): true whenever the ARC-210's channel knob is on
+    /// one of channels 26-30, the half-duplex/dedicated SATCOM band -- point-to-point, no PRST/DAMA
+    /// login, the operator tunes directly to an assigned transponder frequency the same way as any
+    /// normal LOS channel. Distinct from <see cref="SatcomBandActive"/> (31-40, DAMA): a dedicated
+    /// channel's real dialed FrequencyHz IS the SATCOM carrier and is used as-is, never redirected
+    /// to a synthetic virtual frequency the way DAMA channels are -- see
+    /// ChannelCardListViewModel.SyncDcsRadioOnUiThread. Always false for radios other than the
+    /// ARC-210.</summary>
+    public bool SatcomDedicatedActive { get; set; }
 
     public int FrequencyKhz => (int)Math.Round(FrequencyHz / 1000d);
     public int SecondaryFrequencyKhz => (int)Math.Round(SecondaryFrequencyHz / 1000d);
@@ -74,7 +76,7 @@ public class DcsRadioState
             ToneOn = ToneOn,
             SatcomSelected = SatcomSelected,
             SatcomBandActive = SatcomBandActive,
-            SatcomChannel = SatcomChannel
+            SatcomDedicatedActive = SatcomDedicatedActive
         };
     }
 }

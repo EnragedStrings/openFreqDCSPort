@@ -43,6 +43,9 @@ public sealed class SatcomSatelliteSelector
         // whichever satellite is actually selected).
         string? bestId = null;
         var bestCn0 = double.NegativeInfinity;
+        // Dedicated nets rank against the terminal's own tuned frequency (see
+        // SatcomLinkEngine.Evaluate for why); DAMA nets always use the net's fixed downlink.
+        var downlinkHz = !net.Waveform.IsDama() && terminal.TunedFrequencyHz is { } tuned ? tuned : net.DownlinkHz;
 
         foreach (var sat in catalog)
         {
@@ -50,7 +53,7 @@ public sealed class SatcomSatelliteSelector
             var pos = ephemeris.GetPosition(sat.Id);
             if (pos == null) continue;
 
-            var leg = SatcomLinkEngineCore.EvaluateLeg(net, sat, pos.Value, terminal, net.DownlinkHz, isUplinkLeg: false);
+            var leg = SatcomLinkEngineCore.EvaluateLeg(net, sat, pos.Value, terminal, downlinkHz, isUplinkLeg: false);
             if (!leg.Usable) continue;
 
             if (leg.Cn0DbHz > bestCn0)

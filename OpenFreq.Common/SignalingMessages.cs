@@ -204,6 +204,10 @@ public class SatcomGeometryUpdateMessage
     [JsonPropertyName("terrainLos")] public bool TerrainLosClear { get; set; }
     [JsonPropertyName("debugRequested")] public bool DebugRequested { get; set; }
 
+    /// <summary>Only meaningful for a Dedicated-waveform net: the terminal's own currently-tuned
+    /// carrier frequency, Hz -- see SatcomTerminalState.TunedFrequencyHz.</summary>
+    [JsonPropertyName("tunedFrequencyHz")] public double? TunedFrequencyHz { get; set; }
+
     /// <summary>Generic, non-classified DAMA request priority (higher = served first when the
     /// net is at capacity). NOT a model of real (classified) precedence values -- a GAMEPLAY_CONFIG
     /// abstraction only. Defaults to 0 (normal).</summary>

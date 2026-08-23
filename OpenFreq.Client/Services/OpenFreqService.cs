@@ -62,6 +62,12 @@ public class OpenFreqService : IOpenFreqService
     // Which slotId is currently TX-ing on each frequency (needed for own-position lookup during record).
     private readonly ConcurrentDictionary<int, Guid> _activeTransmissionSlots = new();
 
+    // Temporary diagnostic: last-logged TX enc state per frequency, so SendAudio's per-packet log
+    // only fires on change rather than every 20ms packet. Nullable so the very first packet on a
+    // frequency always logs once, even if Enc happens to be false -- a bool default would make an
+    // always-false stream indistinguishable from "nothing logged yet".
+    private readonly ConcurrentDictionary<int, bool?> _lastLoggedTxEncByFreq = new();
+
     private bool IsAnySlotTuned(int frequencyKhz) =>
         _tunedSlots.Keys.Any(k => k.FreqKhz == frequencyKhz);
 
@@ -967,12 +973,17 @@ public class OpenFreqService : IOpenFreqService
 
     public void SetEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
     {
-        if (_tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData))
+        var foundTxSlot = _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
+        if (foundTxSlot)
         {
-            tunedFrequencyData.Enc = enc;
+            tunedFrequencyData!.Enc = enc;
             tunedFrequencyData.EncKey = encKey;
             tunedFrequencyData.HqOn = hqOn;
         }
+        _logger.LogWarning(
+            "SetEncryption: freq={FreqKhz} slotId={SlotId} enc={Enc} encKey={EncKey} foundTxSlot={FoundTxSlot} knownTunedSlotsForFreq={KnownSlots}",
+            frequencyKhz, slotId, enc, encKey, foundTxSlot,
+            string.Join(",", _tunedSlots.Keys.Where(k => k.FreqKhz == frequencyKhz).Select(k => k.SlotId)));
 
         _playbackService?.SetSlotEncryption(frequencyKhz, slotId, enc, encKey, hqOn, cryptoCapable);
     }
@@ -1216,6 +1227,13 @@ public class OpenFreqService : IOpenFreqService
                 var dcsPosition = GetOwnDcsLocalPosition(frequencyKhz, txSlotId);
 
                 var txPowerWatts = radioStationData.RadioStation.Preset.GetTxPower(GetRadioType(frequencyKhz));
+                if (radioStationData.Enc != _lastLoggedTxEncByFreq.GetValueOrDefault(frequencyKhz))
+                {
+                    _logger.LogWarning(
+                        "SendAudio TX metadata: freq={FreqKhz} txSlotId={TxSlotId} enc={Enc} encKey={EncKey}",
+                        frequencyKhz, txSlotId, radioStationData.Enc, radioStationData.EncKey);
+                    _lastLoggedTxEncByFreq[frequencyKhz] = radioStationData.Enc;
+                }
                 frequenciesData.Add((frequencyKhz,
                     txPowerWatts, radioStationData.RadioStation.Ppm,
                     position, velocity, dcsPosition, radioStationData.RadioStation.Preset.AmbientNoiseType,

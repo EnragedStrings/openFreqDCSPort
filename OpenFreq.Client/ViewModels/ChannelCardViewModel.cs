@@ -58,32 +58,27 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Upper bound for a tunable frequency in MHz. Raised above the UHF military band
-    /// ceiling (400 MHz) specifically so a manually-created GCI channel can be pointed at one of
-    /// ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz's six synthetic frequencies (around
-    /// 999.001-999.006 MHz) -- for manual two-client SATCOM testing without a second DCS instance.
-    /// Superseded in practice by <see cref="IsManualSatcomMode"/> (which sets the frequency for
-    /// you), but kept as the outer bound since that mode just writes into FrequencyKhz like any
-    /// other path. See docs/SATCOM_SIMULATION.md.</summary>
+    /// ceiling (400 MHz) specifically so a manually-created GCI channel can be pointed at
+    /// ChannelCardListViewModel.DamaSatcomVirtualFrequencyKhz (~999.000 MHz) -- for manual
+    /// two-client DAMA SATCOM testing without a second DCS instance. Superseded in practice by
+    /// <see cref="IsManualSatcomMode"/> (which sets the frequency for you), but kept as the outer
+    /// bound since that mode just writes into FrequencyKhz like any other path. See
+    /// docs/SATCOM_SIMULATION.md.</summary>
     private const double MaxFrequencyMhz = 1000d;
 
-    /// <summary>Manually-created (GCI/stationary) channel set to SATCOM mode instead of a real
-    /// dial frequency -- the client-side equivalent of a DCS ARC-210 whose cockpit controls are in
-    /// the SATCOM configuration, for testing/using SATCOM without a DCS instance driving this
-    /// channel. Only meaningful for editable channels; DCS-synced channels get this from
+    /// <summary>Manually-created (GCI/stationary) channel set to DAMA SATCOM mode instead of a
+    /// real dial frequency -- the client-side equivalent of a DCS ARC-210 whose cockpit controls
+    /// are in the 31-40 DAMA configuration, for testing/using SATCOM without a DCS instance driving
+    /// this channel. Only meaningful for editable channels; DCS-synced channels get this from
     /// SatcomAcquisitionState instead (see FrequencyDisplayText/SatcomSubtitleText below, which
-    /// both treat the two as equivalent).</summary>
+    /// both treat the two as equivalent). There's no manual equivalent yet for the dedicated/
+    /// half-duplex (26-30) net, since that one is defined by using whatever real frequency is
+    /// already dialed rather than a synthetic one -- a GCI channel just tuned to a given frequency
+    /// already behaves like a normal LOS channel unless the server also treats it as a dedicated
+    /// SATCOM session, which nothing here currently requests for manually-created channels.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FrequencyDisplayText), nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
     public partial bool IsManualSatcomMode { get; set; }
-
-    /// <summary>Which of the six virtual SATCOM channels/nets (see DcsRadioState.SatcomChannel and
-    /// OpenFreqDCS.lua's argument-561 tracking) this manual channel is on. Only takes effect while
-    /// <see cref="IsManualSatcomMode"/> is on. Advance with NextSatcomChannel/PreviousSatcomChannel
-    /// below rather than setting directly, so it stays wrapped to 1-6 the same way the real
-    /// cockpit pushbutton does.</summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
-    public partial int ManualSatcomChannel { get; set; } = 1;
 
     /// <summary>The real (non-SATCOM) frequency this channel was tuned to before SATCOM mode was
     /// turned on, restored when it's turned back off.</summary>
@@ -94,7 +89,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (value)
         {
             _preManualSatcomFrequencyKhz = FrequencyKhz;
-            FrequencyKhz = ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(ManualSatcomChannel);
+            FrequencyKhz = ChannelCardListViewModel.DamaSatcomVirtualFrequencyKhz;
         }
         else
         {
@@ -102,26 +97,16 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         }
     }
 
-    partial void OnManualSatcomChannelChanged(int value)
-    {
-        if (IsManualSatcomMode)
-            FrequencyKhz = ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz(value);
-    }
-
-    [RelayCommand]
-    private void NextSatcomChannel() => ManualSatcomChannel = ManualSatcomChannel % 6 + 1;
-
-    [RelayCommand]
-    private void PreviousSatcomChannel() => ManualSatcomChannel = (ManualSatcomChannel + 4) % 6 + 1;
-
     /// <summary>What the read-only frequency readout should show. DCS OBSERVED BEHAVIOR: the
     /// ARC-210's cockpit dial (and therefore DCS's export) keeps showing its last-tuned
-    /// frequency (typically ~133.000 MHz, wherever PRST last parked it) even once SATCOM is
-    /// selected -- there's no real "SATCOM channel" for DCS to report. Shown for as long as the
-    /// cockpit controls are in the SATCOM configuration (during acquisition and once ready
-    /// alike), not just once SatcomAcquisitionState reaches Ready, since the frequency is
-    /// already misleading the moment the switches move. IsManualSatcomMode (a manually-created
-    /// channel's own SATCOM toggle) shows the same text for the same reason.</summary>
+    /// frequency (typically ~133.000 MHz, wherever PRST last parked it) even once DAMA SATCOM is
+    /// selected -- there's no real "SATCOM channel" for DCS to report there. Shown for as long as
+    /// the cockpit controls are in the DAMA configuration (during acquisition and once ready
+    /// alike), not just once SatcomAcquisitionState reaches Ready, since the frequency is already
+    /// misleading the moment the switches move. IsManualSatcomMode (a manually-created channel's
+    /// own DAMA toggle) shows the same text for the same reason. Dedicated/half-duplex (26-30)
+    /// SATCOM is deliberately NOT included here -- its dialed frequency IS the real SATCOM carrier
+    /// and stays meaningful to show as-is.</summary>
     public string FrequencyDisplayText =>
         IsManualSatcomMode || SatcomAcquisitionState != SatcomState.Normal ? "SATCOM VOICE" : $"{FrequencyMhzString} MHz";
 
@@ -515,7 +500,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            if (IsManualSatcomMode) return $"SATCOM CH {ManualSatcomChannel}";
+            if (IsManualSatcomMode) return "SATCOM (DAMA)";
             if (SatcomAcquisitionState == SatcomState.Normal) return null;
             if (IsSatcomAcquiring) return SatcomStatusText;
 

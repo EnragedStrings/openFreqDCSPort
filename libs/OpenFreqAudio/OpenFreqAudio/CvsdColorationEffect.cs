@@ -23,7 +23,9 @@ public sealed class CvsdColorationEffect
     // Blended with the dry signal rather than replacing it outright — a full-strength quantizer
     // read as harsh static rather than a subtle "digital" grain. Tune this (0 = no effect,
     // 1 = original full-strength quantizer) to taste.
-    private const float WetMix = 0.65f;
+    // SIMULATION CHOICE: was 0.65, but that read as "very difficult to understand the speech"
+    // in practice -- lowered so the CVSD grain stays audible without fighting intelligibility.
+    private const float WetMix = 0.35f;
 
     private float _step = StepMin;
     private float _quantized;

@@ -45,6 +45,12 @@ public sealed class RtpSourceContext : IDisposable
     // Last valid metadata from this source, used to reconstruct concealment packets
     private AudioPacketMetadata? LastValidMetadata { get; set; }
 
+    // Temporary diagnostic: tracks the last logged real-packet/concealment Enc state so we can
+    // see whether Enc survives to ProcessReadyPacket, and how much of a talk-spurt is concealment
+    // (GenerateConcealmentAudio currently drops enc/encKey/hqOn when rebuilding FrequencyTransmission).
+    private bool? _lastLoggedRealEnc;
+    private bool? _lastLoggedConcealmentEnc;
+
     // Used by the pool to prune sources that have gone silent
     public long LastActivityTicks { get; set; }
 
@@ -149,6 +155,15 @@ public sealed class RtpSourceContext : IDisposable
 
         LastValidMetadata = metadata;
 
+        var realEnc = metadata.Frequencies?.FirstOrDefault()?.Enc ?? false;
+        if (realEnc != _lastLoggedRealEnc)
+        {
+            Logger.LogWarning(
+                "SSRC={Ssrc:X8}: real-packet metadata clientId={ClientId} enc={Enc} encKey={EncKey}",
+                Ssrc, metadata.ClientId, realEnc, metadata.Frequencies?.FirstOrDefault()?.EncKey ?? 0);
+            _lastLoggedRealEnc = realEnc;
+        }
+
         Memory<short> decodedAudio;
         if (OpusDecoder != null)
         {
@@ -216,7 +231,10 @@ public sealed class RtpSourceContext : IDisposable
                     velocity: freq.Velocity,
                     in3d: freq.In3d,
                     ambientNoiseType: freq.AmbientNoiseType,
-                    dcsPosition: freq.DcsPosition
+                    dcsPosition: freq.DcsPosition,
+                    enc: freq.Enc,
+                    encKey: freq.EncKey,
+                    hqOn: freq.HqOn
                 ));
             }
         }
@@ -226,6 +244,15 @@ public sealed class RtpSourceContext : IDisposable
             ClientId = LastValidMetadata?.ClientId ?? "Recovered",
             Frequencies = frequencies
         };
+
+        var concealmentEnc = frequencies.FirstOrDefault()?.Enc ?? false;
+        if (concealmentEnc != _lastLoggedConcealmentEnc)
+        {
+            Logger.LogWarning(
+                "SSRC={Ssrc:X8}: concealment/PLC metadata clientId={ClientId} enc={Enc} (source enc was {SourceEnc})",
+                Ssrc, metadata.ClientId, concealmentEnc, LastValidMetadata?.Frequencies?.FirstOrDefault()?.Enc ?? false);
+            _lastLoggedConcealmentEnc = concealmentEnc;
+        }
 
         await ToPlay.WriteAsync(new AudioReceivedEventArgs
         {

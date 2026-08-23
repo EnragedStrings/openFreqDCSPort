@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Common;
+using OpenFreqServer.SrsBridge;
 using Serilog;
 using Serilog.Events;
 
@@ -150,6 +152,23 @@ static class Program
                 return;
             }
 
+            SrsBridgeServer? srsBridge = null;
+            if (config.SrsBridgeEnabled)
+            {
+                try
+                {
+                    srsBridge = new SrsBridgeServer(config, new OpenFreqRtcClientFactory(), loggerFactory, server.Clients);
+                    srsBridge.Start();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"SRS bridge failed to start, check srsBridge.port ({config.SrsBridge.Port}) is not in use: {ex.Message}");
+                    Log.Error(ex, "Failed to start SRS bridge");
+                    srsBridge = null;
+                }
+            }
+
             if (tui != null)
             {
                 // Start TUI (blocks until quit or shutdown requested)
@@ -166,6 +185,8 @@ static class Program
 
             // Now properly shut down
             Log.Information("Shutting down server...");
+            if (srsBridge != null)
+                await srsBridge.DisposeAsync();
             await server.StopAsync();
             tui?.Stop();
         }
@@ -231,7 +252,8 @@ static class Program
                     MaxChannelsPerClient = 10,
                     EnableOpusCompression = true,
                     DcsLineOfSightEnabled = true,
-                    BroadcastPeerUpdates = true
+                    BroadcastPeerUpdates = true,
+                    SrsBridgeEnabled = false
                 };
 
                 var json = Json.Json.Instance.Serialize(defaultConfig);

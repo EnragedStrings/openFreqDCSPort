@@ -50,7 +50,8 @@ public sealed class SatcomServerCoordinator : IDisposable
     public void HandleGeometryUpdate(string clientId, SatcomGeometryUpdateMessage msg, SatcomNetDefinition net, long nowMs)
     {
         var terminal = new SatcomTerminalState(msg.LatitudeDeg, msg.LongitudeDeg, msg.AltitudeMeters,
-            msg.HeadingRad, msg.PitchRad, msg.BankRad, AttitudeIsApproximate: false);
+            msg.HeadingRad, msg.PitchRad, msg.BankRad, AttitudeIsApproximate: false,
+            TunedFrequencyHz: msg.TunedFrequencyHz);
 
         _linkEngine.UpdateGeometry(clientId, net.NetId, terminal, msg.RadioPowered, msg.PttPressed,
             msg.TerrainLosClear, nowMs);

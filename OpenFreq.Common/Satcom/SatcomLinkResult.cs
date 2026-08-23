@@ -3,10 +3,16 @@ namespace OpenFreq.Common.Satcom;
 /// <summary>Geodetic state of one terminal (aircraft), as much as is known -- for the remote peer
 /// this is frequently an approximation (see docs/SATCOM_SIMULATION.md's TX/RX distance
 /// limitation) rather than their own real telemetry.</summary>
+/// <param name="TunedFrequencyHz">Only meaningful for a Dedicated-waveform net (see
+/// SatcomWaveformExtensions.IsDama): the terminal's own currently-tuned carrier frequency, used
+/// AS the uplink/downlink frequency for that leg instead of the net's fixed UplinkHz/DownlinkHz --
+/// real dedicated/point-to-point UHF SATCOM channels are simply tuned to an assigned transponder
+/// frequency, unlike DAMA's shared, admin-fixed channel pair. Null (falls back to the net's fixed
+/// frequencies) for DAMA nets or when the terminal hasn't reported one yet.</param>
 public readonly record struct SatcomTerminalState(
     double LatitudeDeg, double LongitudeDeg, double AltitudeMeters,
     double? HeadingRad, double? PitchRad, double? BankRad,
-    bool AttitudeIsApproximate);
+    bool AttitudeIsApproximate, double? TunedFrequencyHz = null);
 
 /// <summary>One evaluated leg (terminal-to-satellite uplink, or satellite-to-terminal downlink).</summary>
 public readonly record struct SatcomLegResult(

@@ -81,15 +81,14 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     // docs/SATCOM_SIMULATION.md).
     private readonly SatcomAcquisitionStateMachine _arc210SatcomStateMachine = new();
 
-    /// <summary>Last SatcomChannel value logged by SyncDcsRadioOnUiThread, so an in-place
-    /// channel/net pushbutton change while already logged in gets its own log line instead of
-    /// being silently absorbed (there's no SatcomState transition to hang that log on).</summary>
-    private int _lastLoggedSatcomChannel = 1;
+    /// <summary>DAMA (channels 31-40, PRST login required) SATCOM net id -- matches
+    /// SatcomServerConfig.Default's "a10-arc210-satcom" entry.</summary>
+    private const string DamaSatcomNetId = "a10-arc210-satcom";
 
-    /// <summary>Single default SATCOM net id -- matches SatcomServerConfig.Default's "a10-arc210-satcom"
-    /// entry. One net is correct as long as SATCOM only exists on the A-10's ARC-210 (see above);
-    /// a future multi-net pass would derive this from DCS/radio config instead of a constant.</summary>
-    private const string DefaultSatcomNetId = "a10-arc210-satcom";
+    /// <summary>Half-duplex/dedicated (channels 26-30, no login, tuned directly to an assigned
+    /// transponder frequency) SATCOM net id -- matches SatcomServerConfig.Default's
+    /// "a10-arc210-satcom-dedicated" entry.</summary>
+    private const string DedicatedSatcomNetId = "a10-arc210-satcom-dedicated";
 
     /// <summary>Latest satellite positions from the server's low-rate broadcast, keyed by
     /// satellite id -- used to compute az/el for the local (bounded-range) terrain-LOS ray and for
@@ -787,26 +786,19 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         Dispatcher.UIThread.Post(() => _settings.Is3dMode = e.NewIsInGame);
     }
 
-    /// <summary>Base of the synthetic network-channel identity SATCOM traffic joins while active,
-    /// distinct from whatever real dial frequency DCS happens to be reporting for the ARC-210 (DCS
-    /// keeps reporting its last-tuned LOS dial frequency, typically ~133.000 MHz, even in SATCOM
-    /// mode -- see FrequencyDisplayText). Deliberately far outside any frequency a DCS radio could
-    /// actually be dialed to in this sim, so SATCOM traffic can never collide with a real LOS
-    /// channel. One of six distinct virtual frequencies -- see
-    /// <see cref="GetSatcomVirtualFrequencyKhz"/> -- since real ARC-210 SATCOM has a separate
-    /// 1-6 channel/net pushbutton (argument 561, PROJECT_OBSERVED) independent of the 31-40 login
-    /// band; two stations must match both to talk.</summary>
-    private const int SatcomVirtualFrequencyKhzBase = 999_000;
+    /// <summary>Synthetic network-channel identity DAMA (channels 31-40, PRST login) SATCOM
+    /// traffic joins while active, distinct from whatever real dial frequency DCS happens to be
+    /// reporting for the ARC-210 (DCS keeps reporting its last-tuned LOS dial frequency, typically
+    /// ~133.000 MHz, even in SATCOM mode -- see FrequencyDisplayText). Deliberately far outside any
+    /// frequency a DCS radio could actually be dialed to in this sim, so DAMA traffic can never
+    /// collide with a real LOS channel. Half-duplex/dedicated SATCOM (channels 26-30) does NOT use
+    /// this -- it stays on its own real tuned frequency, since that IS the assigned transponder
+    /// frequency the operator dialed in (see SyncDcsRadioOnUiThread).</summary>
+    public const int DamaSatcomVirtualFrequencyKhz = 999_000;
 
-    /// <summary>Maps a DCS-reported SATCOM channel/net number (1-6, DcsRadioState.SatcomChannel)
-    /// to the synthetic frequency that channel's traffic joins. Out-of-range values (shouldn't
-    /// happen -- OpenFreqDCS.lua wraps 1-6 itself, and manually-created GCI SATCOM channels are
-    /// clamped the same way in ChannelCardViewModel) fall back to channel 1's frequency.</summary>
-    public static int GetSatcomVirtualFrequencyKhz(int satcomChannel)
-    {
-        if (satcomChannel is < 1 or > 6) satcomChannel = 1;
-        return SatcomVirtualFrequencyKhzBase + satcomChannel;
-    }
+    /// <summary>Last logged half-duplex/dedicated (26-30) active state, so entering/leaving it gets
+    /// its own log line the same way DAMA acquisition transitions do.</summary>
+    private bool _lastDedicatedSatcomActive;
 
     private void SyncDcsRadioOnUiThread(DcsRadioState radio)
     {
@@ -819,9 +811,18 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         // radio on other aircraft, and feeding their (always-false) SatcomSelected into this
         // shared state machine would reset the ARC-210's acquisition progress mid-sync. Computed
         // BEFORE the channel sync below so the channel joins the right network frequency (real
-        // dial vs. synthetic SATCOM) from the very same sync pass, not one frame behind.
+        // dial vs. synthetic DAMA) from the very same sync pass, not one frame behind.
+        //
+        // Two independent SATCOM bands: DAMA (31-40, PRST login via the state machine below, joins
+        // the synthetic DamaSatcomVirtualFrequencyKhz) and dedicated/half-duplex (26-30, no login,
+        // stays on the real tuned frequency -- see DcsRadioState.SatcomDedicatedActive). A channel
+        // is in at most one at a time; the knob can't be in both bands simultaneously.
         SatcomState? satcomState = null;
         var effectiveFrequencyKhz = radio.FrequencyKhz;
+        string? satcomNetId = null;
+        double? satcomTunedFrequencyHz = null;
+        var satcomLoginReady = false;
+
         if (radio.Name == "ARC-210")
         {
             // Power is folded in here (not in the Lua export) so both signals fail safe the
@@ -834,19 +835,31 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             if (satcomState != previousSatcomState)
             {
                 _logger.LogInformation(
-                    "SATCOM acquisition {Old} -> {New} (loginTrigger={LoginTrigger} bandActive={BandActive} radioOn={RadioOn} channel={Channel})",
-                    previousSatcomState, satcomState, loginTrigger, bandActive, radio.IsOn, radio.SatcomChannel);
+                    "SATCOM DAMA acquisition {Old} -> {New} (loginTrigger={LoginTrigger} bandActive={BandActive} radioOn={RadioOn})",
+                    previousSatcomState, satcomState, loginTrigger, bandActive, radio.IsOn);
             }
-            else if (satcomState != SatcomState.Normal && radio.SatcomChannel != _lastLoggedSatcomChannel)
+
+            var dedicatedActive = radio.IsOn && radio.SatcomDedicatedActive;
+            if (dedicatedActive != _lastDedicatedSatcomActive)
             {
-                // Cockpit channel/net pushbutton (id561) advanced while already logged in --
-                // worth its own log line since it changes which virtual frequency this radio
-                // joins without a SatcomState transition to piggyback the log on.
-                _logger.LogInformation("SATCOM channel/net changed to {Channel}", radio.SatcomChannel);
+                _logger.LogInformation("SATCOM dedicated (26-30) {State}", dedicatedActive ? "ENTERED" : "LEFT");
+                _lastDedicatedSatcomActive = dedicatedActive;
             }
-            _lastLoggedSatcomChannel = radio.SatcomChannel;
+
             if (satcomState != SatcomState.Normal)
-                effectiveFrequencyKhz = GetSatcomVirtualFrequencyKhz(radio.SatcomChannel);
+            {
+                effectiveFrequencyKhz = DamaSatcomVirtualFrequencyKhz;
+                satcomNetId = DamaSatcomNetId;
+                satcomLoginReady = satcomState == SatcomState.Ready;
+            }
+            else if (dedicatedActive)
+            {
+                // Real dialed frequency IS the SATCOM carrier here -- no substitution, and no
+                // login delay: active as soon as it's tuned and the radio is powered.
+                satcomNetId = DedicatedSatcomNetId;
+                satcomTunedFrequencyHz = radio.FrequencyHz;
+                satcomLoginReady = true;
+            }
         }
 
         var channel = SyncDcsChannelOnUiThread(
@@ -865,7 +878,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         {
             channel.SatcomAcquisitionState = satcomState.Value;
             channel.SatcomAcquisitionElapsedSeconds = _arc210SatcomStateMachine.AcquisitionElapsedSeconds;
-            UpdateSatcomLinkQuality(channel, satcomState.Value, radio.IsOn);
+        }
+
+        if (channel != null && satcomNetId != null)
+        {
+            UpdateSatcomLinkQuality(channel, satcomNetId, satcomLoginReady, radio.IsOn, satcomTunedFrequencyHz);
         }
 
         SyncGuardMonitorOnUiThread(radio, key);
@@ -875,11 +892,20 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     /// frame -- the server is authoritative for satellite assignment, link budget, and DAMA (see
     /// docs/SATCOM_SIMULATION.md). This ViewModel no longer computes any of that itself; it only
     /// sends what only the client can know (own position/attitude, cockpit login-ready state, PTT,
-    /// and a local DCS terrain-LOS check toward the last-known assigned satellite) and displays
-    /// whatever the server pushes back via OnSatcomLinkStateReceived.</summary>
-    private void UpdateSatcomLinkQuality(ChannelCardViewModel channel, SatcomState satcomState, bool radioPowered)
+    /// a local DCS terrain-LOS check toward the last-known assigned satellite, and -- for the
+    /// dedicated/half-duplex net -- its own tuned carrier frequency) and displays whatever the
+    /// server pushes back via OnSatcomLinkStateReceived.
+    ///
+    /// KNOWN LIMITATION: switching a channel between the DAMA and dedicated nets (or vice versa)
+    /// leaves the previous net's server-side session keyed under the same channel id but no longer
+    /// updated with fresh geometry; it isn't explicitly torn down (only RemoveClient on disconnect
+    /// does that today), so its evaluation results could theoretically still arrive interleaved
+    /// with the new net's for a channel that just switched. Not expected to matter in practice
+    /// (switching nets mid-flight is rare and self-corrects once fresh updates for the new net
+    /// dominate), but worth fixing with explicit per-net teardown in a follow-up pass.</summary>
+    private void UpdateSatcomLinkQuality(ChannelCardViewModel channel, string netId, bool loginReady,
+        bool radioPowered, double? tunedFrequencyHz)
     {
-        var loginReady = satcomState == SatcomState.Ready;
         var pttPressed = channel.TransmissionStatus == Channel.ChannelTransmissionStatus.Transmitting;
 
         var terrainLosClear = ComputeSatcomTerrainLosClear(channel.Id);
@@ -887,7 +913,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         var message = new SatcomGeometryUpdateMessage
         {
             ChannelKey = channel.Id.ToString(),
-            NetId = DefaultSatcomNetId,
+            NetId = netId,
             LatitudeDeg = _dcsExportService.Latitude,
             LongitudeDeg = _dcsExportService.Longitude,
             AltitudeMeters = _dcsExportService.AltitudeMsl,
@@ -899,14 +925,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             PttPressed = pttPressed,
             TerrainLosClear = terrainLosClear,
             DebugRequested = _settings.DebugMode,
+            TunedFrequencyHz = tunedFrequencyHz,
             Priority = 0
         };
 
         _logger.LogDebug(
-            "SATCOM geometry update \"{ChannelName}\": lat={Lat:F4} lon={Lon:F4} alt={Alt:F0} " +
-            "powered={Powered} loginReady={LoginReady} ptt={Ptt} terrainLos={TerrainLos}",
-            channel.Name, message.LatitudeDeg, message.LongitudeDeg, message.AltitudeMeters,
-            radioPowered, loginReady, pttPressed, terrainLosClear);
+            "SATCOM geometry update \"{ChannelName}\" net={NetId}: lat={Lat:F4} lon={Lon:F4} alt={Alt:F0} " +
+            "powered={Powered} loginReady={LoginReady} ptt={Ptt} terrainLos={TerrainLos} tunedHz={TunedHz}",
+            channel.Name, netId, message.LatitudeDeg, message.LongitudeDeg, message.AltitudeMeters,
+            radioPowered, loginReady, pttPressed, terrainLosClear, tunedFrequencyHz);
 
         _ = _openFreqService.SendSatcomGeometryUpdateAsync(message);
     }

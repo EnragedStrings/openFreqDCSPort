@@ -431,9 +431,17 @@ local function getArc210DisplayFrequencyHz()
     local configuredIds = config.a10c2 and config.a10c2.arc210IndicatorIds or { 18 }
     local tried = {}
 
+    -- Return as soon as the indicator itself responds with parsed values (`values ~= nil`), NOT
+    -- only when a frequency was successfully parsed out of it. PROJECT_OBSERVED: while the
+    -- ARC-210 is in channel/preset display mode (including but not limited to the 31-50 SATCOM/
+    -- DAMA band), freq_label_mhz/freq_label_khz aren't present -- but the indicator is still
+    -- alive and other fields (active_channel, comsec_submode) are still valid and worth
+    -- returning. The old `if frequency then` check discarded all of that and fell through to the
+    -- expensive every-2-seconds full 0..100 indicator re-scan below every single frame the radio
+    -- was in channel mode, which is also why active_channel was never available during SATCOM.
     if OpenFreqDCS.arc210IndicatorId then
         local frequency, raw, indicatorId, values = tryGetArc210DisplayFrequencyFromIndicator(OpenFreqDCS.arc210IndicatorId)
-        if frequency then
+        if values then
             return frequency, raw, indicatorId, values
         end
         tried[OpenFreqDCS.arc210IndicatorId] = true
@@ -443,7 +451,7 @@ local function getArc210DisplayFrequencyHz()
         for _, indicatorId in ipairs(configuredIds) do
             if type(indicatorId) == "number" and not tried[indicatorId] then
                 local frequency, raw, foundIndicatorId, values = tryGetArc210DisplayFrequencyFromIndicator(indicatorId)
-                if frequency then
+                if values then
                     OpenFreqDCS.arc210IndicatorId = foundIndicatorId
                     OpenFreqDCS.arc210IndicatorScanSummary = "configured:" .. tostring(foundIndicatorId)
                     return frequency, raw, foundIndicatorId, values
@@ -567,6 +575,14 @@ local function buildA10C2Radios()
         arc164Frequency = arc164DialFrequency
     end
 
+    -- PROJECT_OBSERVED: the ARC-210's cockpit display (the same list_indication data already used
+    -- for frequency/COMSEC) exposes an exact "active_channel" integer -- the radio's own ground
+    -- truth for which of its 40 preset channels is selected, independent of (and more reliable
+    -- than) decoding the channel-select knob's continuous argument value. Present alongside
+    -- freq_label_mhz/khz when a channel has a plain frequency, and (per getArc210DisplayFrequencyHz's
+    -- fix above) still available even when it doesn't, e.g. in the 31-50 SATCOM/DAMA band.
+    local arc210ActiveChannel = tonumber(arc210DisplayValues and arc210DisplayValues.active_channel)
+
     -- ARC-210 built-in COMSEC (independent of the shared external KY-58 unit below)
     local arc210Enc, arc210EncKey, arc210HqOn = getArc210ComsecState(arc210DisplayValues)
 
@@ -616,77 +632,102 @@ local function buildA10C2Radios()
     -- tone instead of mic audio. Spring-loaded back to center on release, already handled by DCS.
     local arc186ToneOn = getArgument(mainPanel, 148, 0) > 0.5
 
-    -- ARC-210 SATCOM detection (DCS OBSERVED BEHAVIOR, not a documented DCS API). Two distinct
-    -- conditions, per real ARC-210 DAMA/ANDVT channel-plan behavior: channels 31-40 on the
-    -- channel-select knob (552) are all DAMA ANDVT VOICE channels, but only Channel 31 runs the
-    -- actual PRST login procedure (secondary selector 553 reading "PRST"). Once logged in, the
-    -- radio stays in SATCOM as long as the knob stays anywhere in the 31-40 band (and the radio
-    -- stays powered) -- it does NOT require sitting exactly on Channel 31/PRST the whole time.
-    -- Only computes the raw cockpit-argument match here; the acquisition timer and band-sustain/
-    -- logout state machine live client-side (see ChannelCardListViewModel/
-    -- SatcomAcquisitionStateMachine) since they need a monotonic clock independent of this
-    -- export's own sample rate.
+    -- ARC-210 SATCOM detection (DCS OBSERVED BEHAVIOR, not a documented DCS API). Channels
+    -- 31-50 on the channel-select knob (552) cover the radio's DAMA ANDVT VOICE channel plan
+    -- (channels 41-50 confirmed as an additional DAMA sub-band alongside 31-40). Switching into
+    -- SATCOM should engage as soon as the knob lands anywhere in 31-50 with PRST selected --
+    -- it does not require dialing all the way to Channel 31 specifically. Only computes the raw
+    -- cockpit-argument match here; the acquisition timer and band-sustain/logout state machine
+    -- live client-side (see ChannelCardListViewModel/SatcomAcquisitionStateMachine) since they
+    -- need a monotonic clock independent of this export's own sample rate.
     local satcomConfig = config.a10c2 and config.a10c2.satcom
     local arc210Chan552 = getArgument(mainPanel, satcomConfig and satcomConfig.channelSelectorArgument or 552, nil)
     local arc210Sel553 = getArgument(mainPanel, satcomConfig and satcomConfig.secondarySelectorArgument or 553, nil)
     local satcomTolerance = numberOr(satcomConfig and satcomConfig.tolerance, 0.01)
     local channel31Value = numberOr(satcomConfig and satcomConfig.channel31Value, 0.8499)
-    local arc210Channel31 = arc210Chan552 ~= nil and
+    local arc210Channel31ByArg = arc210Chan552 ~= nil and
         math.abs(arc210Chan552 - channel31Value) <= satcomTolerance
     local arc210Prst = arc210Sel553 ~= nil and
         math.abs(arc210Sel553 - numberOr(satcomConfig and satcomConfig.prstValue, 0.2000)) <= satcomTolerance
-    -- Login trigger: exact Channel 31 + PRST, unchanged from before.
-    local arc210SatcomSelected = arc210Channel31 and arc210Prst
-    -- Band-sustain: anywhere in the configured channel 31-40 argument-value envelope
-    -- (PROJECT_OBSERVED default: channel31Value..0.9850, id552's reading at Channel 31 and
-    -- Channel 40 respectively). Override channelBandMinValue/channelBandMaxValue in
-    -- OpenFreqDCSConfig.lua if your installation reads differently.
+    -- Band-sustain envelope for the argument-552 fallback path (PROJECT_OBSERVED default:
+    -- channel31Value..0.9850, id552's reading at Channel 31 and Channel 40 respectively).
+    -- Override channelBandMinValue/channelBandMaxValue in OpenFreqDCSConfig.lua if your
+    -- installation reads differently.
     local channelBandMinValue = numberOr(satcomConfig and satcomConfig.channelBandMinValue, channel31Value)
     local channelBandMaxValue = numberOr(satcomConfig and satcomConfig.channelBandMaxValue, channel31Value)
     local bandLow = math.min(channelBandMinValue, channelBandMaxValue) - satcomTolerance
     local bandHigh = math.max(channelBandMinValue, channelBandMaxValue) + satcomTolerance
-    local arc210SatcomBandActive = arc210Chan552 ~= nil and arc210Chan552 >= bandLow and arc210Chan552 <= bandHigh
+    local arc210SatcomBandActiveByArg = arc210Chan552 ~= nil and arc210Chan552 >= bandLow and arc210Chan552 <= bandHigh
+
+    -- Prefer the exact active_channel integer (see above) over the argument-552 tolerance
+    -- comparison whenever the display indicator has it available -- exact instead of approximate,
+    -- and needs no per-install calibration. Falls back to the argument-based check for the brief
+    -- window before the indicator is located (e.g. right after a DCS.exe restart) or if it's
+    -- ever unavailable for some other reason. NOTE: the argument-552 fallback band
+    -- (channelBandMinValue..channelBandMaxValue) is only calibrated for channels 31-40 -- it
+    -- cannot detect 41-50 without new per-install calibration data, so the fallback path stays
+    -- narrower than the primary active_channel path until that's captured.
+    local arc210SatcomLoginTrigger, arc210SatcomBandActive
+    if arc210ActiveChannel ~= nil then
+        arc210SatcomBandActive = arc210ActiveChannel >= 31 and arc210ActiveChannel <= 50
+        arc210SatcomLoginTrigger = arc210SatcomBandActive
+    else
+        arc210SatcomBandActive = arc210SatcomBandActiveByArg
+        arc210SatcomLoginTrigger = arc210Channel31ByArg
+    end
+    -- Login trigger: anywhere in the SATCOM band (31-50 via active_channel; Channel 31 only via
+    -- the narrower argument-552 fallback) + PRST.
+    local arc210SatcomSelected = arc210SatcomLoginTrigger and arc210Prst
 
     if OpenFreqDCS.lastArc210SatcomSelected ~= arc210SatcomSelected then
         writeDebug(string.format(
-            "ARC210 SATCOM %s: chan31=%s (id552=%s) prst=%s (id553=%s) band=%s",
+            "ARC210 SATCOM %s: loginTrigger=%s (id552=%s activeChannel=%s) prst=%s (id553=%s) band=%s",
             arc210SatcomSelected and "SELECTED" or "DESELECTED",
-            textOr(arc210Channel31), textOr(arc210Chan552), textOr(arc210Prst), textOr(arc210Sel553),
+            textOr(arc210SatcomLoginTrigger), textOr(arc210Chan552), textOr(arc210ActiveChannel), textOr(arc210Prst), textOr(arc210Sel553),
             textOr(arc210SatcomBandActive)))
         OpenFreqDCS.lastArc210SatcomSelected = arc210SatcomSelected
     end
     if OpenFreqDCS.lastArc210SatcomBandActive ~= arc210SatcomBandActive then
         writeDebug(string.format(
-            "ARC210 SATCOM BAND %s: id552=%s (band %s..%s)",
+            "ARC210 SATCOM BAND %s: activeChannel=%s id552=%s (arg-fallback band %s..%s)",
             arc210SatcomBandActive and "ENTERED" or "LEFT",
-            textOr(arc210Chan552), textOr(bandLow), textOr(bandHigh)))
+            textOr(arc210ActiveChannel), textOr(arc210Chan552), textOr(bandLow), textOr(bandHigh)))
         OpenFreqDCS.lastArc210SatcomBandActive = arc210SatcomBandActive
     end
 
-    -- SATCOM channel/net pushbutton (id561, PROJECT_OBSERVED) -- a momentary control, not a
-    -- rotary: reads ~1.000 while pressed and ~0 at rest. Edge-detected (rising 0->1) against
-    -- OpenFreqDCS's own persistent state (survives mission restarts, resets only on a full DCS.exe
-    -- restart -- see the "installed" guard at the top of this file) so a held press advances the
-    -- channel exactly once, not every frame it reads ~1.000. Both this channel number AND
-    -- arc210SatcomBandActive above have to match between two stations for them to hear each other
-    -- over SATCOM -- see ChannelCardListViewModel.GetSatcomVirtualFrequencyKhz.
-    local satcomChannelButtonArgument = numberOr(satcomConfig and satcomConfig.channelSelectorPushButtonArgument, 561)
-    local satcomChannelPressedValue = numberOr(satcomConfig and satcomConfig.channelPushButtonPressedValue, 1.000)
-    local arc210Chan561 = getArgument(mainPanel, satcomChannelButtonArgument, nil)
-    local arc210ChannelButtonPressed = arc210Chan561 ~= nil and
-        math.abs(arc210Chan561 - satcomChannelPressedValue) <= satcomTolerance
+    -- Full raw ARC-210 display dump (list_indication on the same indicator already used for
+    -- freq_label_mhz/khz and comsec_submode above), change-gated on the channel knob (id552)
+    -- moving to a new detent. Untruncated -- unlike the periodic summary line below, which cuts
+    -- displayRaw to 220 chars. DCS-SRS's own A10C2.lua module doesn't attempt SATCOM/channel
+    -- detection at all (verified against its public source, 2026-08-22) -- it only calls
+    -- get_frequency() on the radio device, same primary signal this module already uses. This
+    -- dump exists to check whether the cockpit display exposes some other field (a channel/
+    -- preset number, distinct from the frequency labels) that would be a more reliable
+    -- ground-truth signal than decoding this continuous knob argument with a tolerance window --
+    -- capture a few detent positions across channels 1-40 and compare the raw text.
+    if arc210Chan552 ~= nil and (OpenFreqDCS.lastLoggedArc210Chan552 == nil or
+        math.abs(arc210Chan552 - OpenFreqDCS.lastLoggedArc210Chan552) > 0.005) then
+        writeDebug(string.format("ARC210 DISPLAY RAW at id552=%s: %s", textOr(arc210Chan552), textOr(arc210DisplayRaw)))
+        OpenFreqDCS.lastLoggedArc210Chan552 = arc210Chan552
+    end
 
-    if OpenFreqDCS.satcomChannelNumber == nil then
-        OpenFreqDCS.satcomChannelNumber = 1
-    end
-    if arc210ChannelButtonPressed and not OpenFreqDCS.lastArc210ChannelButtonPressed then
-        OpenFreqDCS.satcomChannelNumber = (OpenFreqDCS.satcomChannelNumber % 6) + 1
+    -- Half-duplex/dedicated SATCOM channels (26-30, PROJECT_OBSERVED, user-reported): unlike the
+    -- 31-40 DAMA band, these are point-to-point -- no PRST login, no network access request -- the
+    -- operator just tunes the ARC-210 directly to an assigned transponder frequency the same way
+    -- as any normal LOS channel. Detected the same way as the DAMA band (active_channel, see
+    -- above); no argument-552 fallback range is configured for this band since it hasn't been
+    -- calibrated (channelBandMinValue/channelBandMaxValue above are for the 31-40 DAMA band only) --
+    -- this simply reads false until the display indicator is located, which is safe (never treats
+    -- an ordinary LOS channel as a dedicated SATCOM one).
+    local arc210DedicatedSatcomActive = arc210ActiveChannel ~= nil and
+        arc210ActiveChannel >= 26 and arc210ActiveChannel <= 30
+
+    if OpenFreqDCS.lastArc210DedicatedSatcomActive ~= arc210DedicatedSatcomActive then
         writeDebug(string.format(
-            "ARC210 SATCOM CHANNEL advanced to %d (id561=%s)",
-            OpenFreqDCS.satcomChannelNumber, textOr(arc210Chan561)))
+            "ARC210 DEDICATED SATCOM %s: activeChannel=%s",
+            arc210DedicatedSatcomActive and "ENTERED" or "LEFT", textOr(arc210ActiveChannel)))
+        OpenFreqDCS.lastArc210DedicatedSatcomActive = arc210DedicatedSatcomActive
     end
-    OpenFreqDCS.lastArc210ChannelButtonPressed = arc210ChannelButtonPressed
-    local arc210SatcomChannel = OpenFreqDCS.satcomChannelNumber
 
     -- ARC-210 power knob (551): 0 = OFF, 0.1 = TR+G, 0.2 = TR, 0.3 = ADF, 0.4 = CHG PRST,
     -- 0.5 = TEST, 0.6 = ZERO (PULL). The default power heuristic below (frequency > 1000 Hz)
@@ -705,8 +746,8 @@ local function buildA10C2Radios()
         OpenFreqDCS.nextRadioDebugTime = now + debugSeconds
         local arc210Display = oneLine(arc210DisplayRaw, 220)
         writeDebug(string.format(
-            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s satcomBand=%s satcomChan=%s(id561=%s) | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
-            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary), textOr(arc210SatcomBandActive), textOr(arc210SatcomChannel), textOr(arc210Chan561),
+            "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s activeChannel=%s satcomBand=%s satcomDedicated=%s | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
+            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(getVolume(mainPanel, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary), textOr(arc210ActiveChannel), textOr(arc210SatcomBandActive), textOr(arc210DedicatedSatcomActive),
             textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171, 238, 227, 228)), textOr(arc164SquelchOn), textOr(arc164PowerKnobOff),
             textOr(arc186Frequency), textOr(arc186RawFrequency), textOr(arc186IsOn), textOr(getArgument(mainPanel, 149, nil)), textOr(getVolume(mainPanel, 147, 238, 223, 224)), textOr(arc186SquelchOn), textOr(arc186ToneOn), textOr(arc186PowerKnobOff),
             textOr(ptt.arc210), textOr(ptt.arc164), textOr(ptt.arc186), textOr(getArgument(mainPanel, 751, nil)), textOr(getArgument(mainPanel, 752, nil))
@@ -735,7 +776,7 @@ local function buildA10C2Radios()
             toneOn = false,
             satcomSelected = arc210SatcomSelected,
             satcomBandActive = arc210SatcomBandActive,
-            satcomChannel = arc210SatcomChannel
+            satcomDedicatedActive = arc210DedicatedSatcomActive
         },
         {
             slot = 2,

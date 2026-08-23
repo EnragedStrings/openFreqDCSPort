@@ -61,6 +61,21 @@ public class SatcomLinkEngineCoreTests
     }
 
     [Fact]
+    public void HigherFrequencyIncreasesFreeSpacePathLossAndLowersCn0()
+    {
+        // Same geometry, only the carrier frequency differs -- FSPL grows with frequency, so a
+        // higher frequency must produce a lower (or equal) C/N0. This is the physics the
+        // dedicated/half-duplex SATCOM net's per-terminal tuned-frequency override (see
+        // SatcomLinkEngine.Evaluate/SatcomSatelliteSelector) actually depends on having an effect.
+        var terminal = new SatcomTerminalState(0.0, 0.0, 3000.0, 0.0, 0.0, 0.0, false);
+
+        var low = SatcomLinkEngineCore.EvaluateLeg(Net, Satellite, SatPos(), terminal, 250_000_000, isUplinkLeg: false);
+        var high = SatcomLinkEngineCore.EvaluateLeg(Net, Satellite, SatPos(), terminal, 2_500_000_000, isUplinkLeg: false);
+
+        Assert.True(high.Cn0DbHz < low.Cn0DbHz);
+    }
+
+    [Fact]
     public void TerminalToTerminalSeparationAloneDoesNotDetermineQuality()
     {
         // Both receivers see the same satellite from near-boresight geometry; only their distance

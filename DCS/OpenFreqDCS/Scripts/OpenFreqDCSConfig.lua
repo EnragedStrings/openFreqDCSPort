@@ -13,12 +13,18 @@ OpenFreqDCSConfig.a10c2.trustDevicePower = OpenFreqDCSConfig.a10c2.trustDevicePo
 OpenFreqDCSConfig.a10c2.arc210IndicatorIds = OpenFreqDCSConfig.a10c2.arc210IndicatorIds or { 18 }
 OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax = OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax or 100
 
--- ARC-210 SATCOM detection. DCS itself has no dedicated "SATCOM selected" argument -- the
--- observed proxy is the channel-select knob (552) landing on "Channel 31" and the secondary
--- selector (553) landing on "PRST". Both are continuous cockpit-argument values (not stepped
--- selectors), so they're compared with a tolerance rather than exact equality. See
--- DCS/README.md and docs/SATCOM_SIMULATION.md for how these values were observed and the
--- 3-second acquisition behavior gated on them.
+-- ARC-210 SATCOM detection. DCS itself has no dedicated "SATCOM selected" argument. The PRIMARY
+-- signal (PROJECT_OBSERVED) is the ARC-210 cockpit display's own "active_channel" field, read via
+-- list_indication on the same indicator already used for frequency/COMSEC -- an exact integer
+-- channel number straight from the radio's own state, needing no per-install calibration. The
+-- settings below (channel-select knob argument 552 landing on "Channel 31", tolerance-compared
+-- since it's a continuous value not a stepped selector) are only a FALLBACK for the brief window
+-- before that display indicator has been located (e.g. right after a DCS.exe restart), or if it's
+-- ever unavailable for some other reason -- see OpenFreqDCS.lua's getArc210DisplayFrequencyHz/
+-- buildA10C2Radios. PRST detection (secondary selector 553) has no known display-field equivalent
+-- yet and always uses the argument-tolerance approach. See DCS/README.md and
+-- docs/SATCOM_SIMULATION.md for how these values were observed and the acquisition behavior gated
+-- on them.
 OpenFreqDCSConfig.a10c2.satcom = OpenFreqDCSConfig.a10c2.satcom or {}
 OpenFreqDCSConfig.a10c2.satcom.channelSelectorArgument = OpenFreqDCSConfig.a10c2.satcom.channelSelectorArgument or 552
 OpenFreqDCSConfig.a10c2.satcom.channel31Value = OpenFreqDCSConfig.a10c2.satcom.channel31Value or 0.8499
@@ -29,30 +35,38 @@ OpenFreqDCSConfig.a10c2.satcom.prstValue = OpenFreqDCSConfig.a10c2.satcom.prstVa
 -- false-trigger, large enough to absorb normal cockpit-argument floating-point jitter.
 OpenFreqDCSConfig.a10c2.satcom.tolerance = OpenFreqDCSConfig.a10c2.satcom.tolerance or 0.01
 
--- Channels 31-40 on the ARC-210 channel-select knob are all DAMA ANDVT VOICE channels, but only
--- Channel 31 runs the actual PRST login procedure. Once logged in (5 continuous seconds on
--- Channel 31 + PRST), SATCOM should stay active as long as the knob remains anywhere in this
--- band (and the radio stays powered) -- moving outside it logs out and requires returning to
--- Channel 31 + PRST to log back in. channelBandMinValue defaults to channel31Value itself (id552's
--- own reading at Channel 31); channelBandMaxValue defaults to 0.9850, id552's PROJECT_OBSERVED
--- reading at Channel 40 (user-calibrated by stepping the knob through 31-40 and reading the
--- "ARC210 SATCOM BAND" debug line in Logs\OpenFreqDCS.log). Override either here, or per-install
--- under Saved Games\...\Mods\Services\OpenFreqDCS\Scripts, if your installation reads differently.
+-- Channels 31-50 on the ARC-210 channel-select knob are all DAMA ANDVT VOICE channels. Landing
+-- anywhere in this band with PRST selected starts the login procedure (5 continuous seconds),
+-- and SATCOM stays active as long as the knob remains anywhere in the band (and the radio stays
+-- powered) -- moving outside it logs out and requires PRST selected again on any 31-50 channel to
+-- log back in. It does NOT require dialing specifically to Channel 31. Normally this is checked
+-- via the exact active_channel display field (see above) and channelBandMinValue/
+-- channelBandMaxValue below never come into play; they only matter for the argument-552 fallback
+-- path, which is ONLY calibrated for the 31-40 sub-band (channels 41-50 need new per-install
+-- calibration data to detect via the fallback and currently won't). channelBandMinValue defaults
+-- to channel31Value itself (id552's own reading at Channel 31); channelBandMaxValue defaults to
+-- 0.9850, id552's PROJECT_OBSERVED reading at Channel 40 (user-calibrated by stepping the knob
+-- through 31-40 and reading the "ARC210 SATCOM BAND" debug line in Logs\OpenFreqDCS.log). Override
+-- either here, or per-install under Saved Games\...\Mods\Services\OpenFreqDCS\Scripts, if your
+-- installation reads differently.
 OpenFreqDCSConfig.a10c2.satcom.channelBandMinValue = OpenFreqDCSConfig.a10c2.satcom.channelBandMinValue
     or OpenFreqDCSConfig.a10c2.satcom.channel31Value
 OpenFreqDCSConfig.a10c2.satcom.channelBandMaxValue = OpenFreqDCSConfig.a10c2.satcom.channelBandMaxValue
     or 0.9850
 
--- SATCOM channel/net pushbutton (PROJECT_OBSERVED, separate from the 31-40 knob above): argument
--- 561 reads ~1.000 while pressed, ~0 at rest -- a momentary pushbutton, not a rotary. Both this
--- AND the 31-40 band above have to be satisfied, and matching, for two stations to talk over
--- SATCOM: the knob puts the radio in the DAMA/ANDVT band at all, this pushbutton picks which of 6
--- virtual channels/nets within it. Each press (rising edge, tracked in OpenFreqDCS.lua) advances
--- the channel 1 -> 6 then wraps back to 1; the aircraft always starts on channel 1.
-OpenFreqDCSConfig.a10c2.satcom.channelSelectorPushButtonArgument = OpenFreqDCSConfig.a10c2.satcom.channelSelectorPushButtonArgument
-    or 561
-OpenFreqDCSConfig.a10c2.satcom.channelPushButtonPressedValue = OpenFreqDCSConfig.a10c2.satcom.channelPushButtonPressedValue
-    or 1.000
+-- Channels 26-30 on the ARC-210 channel-select knob are half-duplex/dedicated SATCOM channels
+-- (PROJECT_OBSERVED, user-reported): point-to-point, no PRST/DAMA login -- the operator just tunes
+-- directly to an assigned transponder frequency the same way as any normal LOS channel. Detected
+-- via the same active_channel display field as the 31-50 band (see OpenFreqDCS.lua's
+-- arc210DedicatedSatcomActive); there's no argument-552 fallback range configured for this band
+-- since it hasn't needed one -- unlike 31-50, if the display indicator isn't available yet this
+-- band just reads as an ordinary LOS channel until it is, which is a safe default (never
+-- misclassifies a real LOS channel as SATCOM).
+--
+-- NOTE: argument 561 (previously tracked here as a "SATCOM channel/net pushbutton") was a
+-- misidentification -- it's actually the ARC-210's CT/CT-TD (FULL) COMSEC mode selection, already
+-- covered by comsec_submode in the display data (see getArc210ComsecState in OpenFreqDCS.lua) --
+-- and is not read separately here anymore.
 
 OpenFreqDCSConfig.f16c = OpenFreqDCSConfig.f16c or {}
 OpenFreqDCSConfig.f16c.enabled = OpenFreqDCSConfig.f16c.enabled ~= false

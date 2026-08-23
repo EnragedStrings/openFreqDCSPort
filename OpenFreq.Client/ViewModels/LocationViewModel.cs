@@ -284,16 +284,34 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
     {
         if (!_openFreqService.IsAuthenticated) return;
 
-        // Always leave the old frequency first
-        await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz, message.ChannelId);
-
-        if (!message.IsBmsChannel)
+        if (message.IsBmsChannel)
         {
-            // For non-BMS channels, immediately join the new frequency
-            await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, message.ChannelId, RadioStationData);
-            _openFreqService.SetPan(message.NewFrequencyKhz, message.ChannelId, message.CurrentPan);
+            // Always leave the old frequency first; the join is handled by OnBmsFrequencyChanged
+            // after checking power state.
+            await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz, message.ChannelId);
+            return;
         }
-        // For BMS channels, the join will be handled by OnBmsFrequencyChanged after checking power state
+
+        // Only reconnect when the frequency actually changed while connected. Exiting edit mode
+        // fires this message unconditionally, including when nothing changed (e.g. just renaming,
+        // or opening/closing the edit panel) -- leaving and rejoining in that case was dropping
+        // and recreating the channel's TunedFrequencyData/RadioConfig from scratch, silently
+        // resetting Enc/EncKey/HqOn back to their defaults even though nothing was actually edited.
+        if (!message.NeedsReconnect) return;
+
+        await _openFreqService.LeaveFrequencyAsync(message.OldFrequencyKhz, message.ChannelId);
+        await _openFreqService.JoinFrequencyAsync(message.NewFrequencyKhz, message.ChannelId, RadioStationData);
+        _openFreqService.SetPan(message.NewFrequencyKhz, message.ChannelId, message.CurrentPan);
+
+        // Join resets encryption state to defaults same as it does pan -- re-apply the channel's
+        // current Enc/EncKey/HqOn so a genuine frequency change (which does need to reconnect)
+        // doesn't silently drop encryption either.
+        var channel = Channels.FirstOrDefault(c => c.Id == message.ChannelId);
+        if (channel != null)
+        {
+            _openFreqService.SetEncryption(message.NewFrequencyKhz, message.ChannelId, channel.Enc,
+                channel.EncKey, channel.HqOn, channel.CryptoCapable);
+        }
     }
 
     private void OnConnectionStateChanged(object? sender, ConnectionStateChangedEventArgs e)

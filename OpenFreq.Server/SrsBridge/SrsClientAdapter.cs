@@ -360,7 +360,7 @@ public sealed class SrsClientAdapter : IAsyncDisposable
         if (ClientGuid == null || message.Client == null) return;
 
         await ApplyRadioDiffAsync(message.Client);
-        LastKnownState = message.Client;
+        MergeIntoLastKnownState(message.Client);
 
         // Reply to this session only: full current roster + minimal server settings.
         var reply = new SrsNetworkMessage
@@ -385,13 +385,30 @@ public sealed class SrsClientAdapter : IAsyncDisposable
         if (ClientGuid == null || message.Client == null) return;
 
         await ApplyRadioDiffAsync(message.Client);
-        LastKnownState = message.Client;
+        MergeIntoLastKnownState(message.Client);
 
         await _bridge.MulticastAsync(new SrsNetworkMessage
         {
             MsgType = message.MsgType,
             Client = LastKnownState
         }, excludeGuid: ClientGuid);
+    }
+
+    /// <summary>Updates <see cref="LastKnownState"/> from an incoming SYNC/UPDATE/RADIO_UPDATE
+    /// message, preserving the previously known RadioInfo when this message doesn't carry one.
+    /// Real SRS clients send plain UPDATE messages (coalition/position/metadata changes) with
+    /// RadioInfo left null -- it's only populated on RADIO_UPDATE, when radios actually changed.
+    /// Overwriting LastKnownState wholesale on every message was clobbering this client's radio
+    /// state with null on every intervening UPDATE, which fed straight into
+    /// ApplyRadioDiffAsync as "no radios tuned" (dropping every joined frequency) and, separately,
+    /// into the roster snapshot broadcast to other SRS clients (making their radios flicker away
+    /// too) until the next RADIO_UPDATE arrived a few seconds later.</summary>
+    private void MergeIntoLastKnownState(SrsClient client)
+    {
+        if (client.RadioInfo == null && LastKnownState != null)
+            client.RadioInfo = LastKnownState.RadioInfo;
+
+        LastKnownState = client;
     }
 
     /// <summary>External AWACS Mode login: assigns a coalition purely from a password match, no
@@ -468,14 +485,19 @@ public sealed class SrsClientAdapter : IAsyncDisposable
             return;
         }
 
+        // A null RadioInfo means this specific message didn't carry radio state at all (real SRS
+        // sends plain UPDATE messages for non-radio changes -- coalition, position, etc. -- with
+        // RadioInfo left unset). That is NOT the same as "all radios untuned": treating it as such
+        // was leaving every joined frequency on every such message, only to rejoin them all again
+        // once the next RADIO_UPDATE arrived seconds later. Nothing to diff here -- leave
+        // _joinedFrequenciesKhz exactly as it is.
+        if (client.RadioInfo == null) return;
+
         var wantedKhz = new HashSet<int>();
-        if (client.RadioInfo != null)
+        foreach (var radio in client.RadioInfo.Radios)
         {
-            foreach (var radio in client.RadioInfo.Radios)
-            {
-                if (!radio.IsTuned || radio.Modulation == SrsModulation.INTERCOM) continue;
-                wantedKhz.Add((int)Math.Round(radio.Freq / 1000.0));
-            }
+            if (!radio.IsTuned || radio.Modulation == SrsModulation.INTERCOM) continue;
+            wantedKhz.Add((int)Math.Round(radio.Freq / 1000.0));
         }
 
         foreach (var khz in wantedKhz.Except(_joinedFrequenciesKhz).ToList())

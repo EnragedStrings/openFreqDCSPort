@@ -469,11 +469,28 @@ WAVs through the exact same `SatcomVocoder` class the live path uses. See its ow
       { "netId": "a10-arc210-satcom", "displayName": "A-10C II ARC-210 UHF SATCOM (default net)",
         "selectionMode": "AutoBestVisible",
         "waveform": "Dama5k", "bandwidthHz": 5000,
-        "uplinkHz": 300000000, "downlinkHz": 260000000 }
+        "uplinkHz": 300000000, "downlinkHz": 260000000 },
+      { "netId": "a10-arc210-satcom-dedicated",
+        "displayName": "A-10C II ARC-210 UHF SATCOM (dedicated/half-duplex)",
+        "selectionMode": "AutoBestVisible",
+        "waveform": "Dedicated5k", "bandwidthHz": 5000,
+        "uplinkHz": 300000000, "downlinkHz": 300000000 }
     ]
   }
 }
 ```
+
+**Both net entries above are required** -- `ChannelCardListViewModel` hardcodes `netId`
+`a10-arc210-satcom` for the DAMA band (channels 31-40) and `a10-arc210-satcom-dedicated` for the
+half-duplex band (channels 26-30); a config missing either one (e.g. hand-written before this
+project added the dedicated net, or copied from an older version of this exact example) causes the
+server to silently ignore geometry updates for that band (`SignalingServer.HandleSatcomGeometryUpdate`
+drops any `SatcomGeometryUpdateMessage` whose `netId` doesn't resolve, by design -- never trust a
+client-supplied net id) -- the symptom is that band showing no SATCOM status/debug info at all, as
+if the feature weren't running, even though the other band works fine. If your server's own
+`OpenFreq.Server.json` has no `"satcom"` key at all, `SatcomServerConfig.Default` (both nets
+included) is used automatically and this doesn't apply -- this only matters once you've written a
+`"satcom"` block of your own to customize satellites/nets.
 
 Every `LiveTle` `noradId` must be an admin-supplied, currently-valid NORAD catalog number,
 re-verified against current CelesTrak data before use -- this project ships no example that

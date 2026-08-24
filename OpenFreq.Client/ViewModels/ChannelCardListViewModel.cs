@@ -870,6 +870,18 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 satcomNetId = DedicatedSatcomNetId;
                 satcomTunedFrequencyHz = radio.FrequencyHz;
                 satcomLoginReady = true;
+
+                // _arc210SatcomStateMachine only tracks the DAMA (31-40) login FSM, so satcomState
+                // above is whatever it reported for THAT band -- normally stuck at Normal here,
+                // since a dedicated channel never runs (or needs) that login procedure at all.
+                // channel.SatcomAcquisitionState below is assigned straight from satcomState, and
+                // every visible SATCOM UI element (IsSatcomActive, SatcomSubtitleText,
+                // SatcomLinkStatusText) gates on it being Ready -- left at Normal, this channel
+                // would report a fully-active dedicated SATCOM link server-side while showing
+                // nothing at all client-side. Override the DISPLAY state to Ready here; the DAMA
+                // machine's own internal State is untouched (it isn't relevant to this band and
+                // logs back out on its own once the knob leaves 31-40, same as before).
+                satcomState = SatcomState.Ready;
             }
         }
 

@@ -128,6 +128,16 @@ public class OpenFreqService : IOpenFreqService
     private readonly ConcurrentDictionary<(string PeerId, int FrequencyKhz), AudioParamsCacheEntry> _audioParamsCache =
         new();
 
+    // Last DCS-local position seen for each (peer, frequency) we've ever heard, refreshed on
+    // every packet regardless of _audioParamsCache's own throttling -- feeds
+    // PrewarmDcsLineOfSightAsync so the terrain LOS query for a peer we've heard before is
+    // already warm by the time they transmit AGAIN, instead of starting cold every single talk
+    // spurt (the SRS-style fix: see docs comment on PrewarmDcsLineOfSightAsync). A brand-new
+    // peer's very first-ever transmission on a frequency still starts cold -- unavoidable without
+    // peers broadcasting position independent of transmitting at all, which doesn't exist today.
+    private readonly ConcurrentDictionary<(string PeerId, int FrequencyKhz), (DcsVector3 Position, DateTime UpdatedUtc)>
+        _lastKnownPeerDcsPosition = new();
+
     // Pre-allocated sidetone conversion buffer — reused every recording callback (single-threaded).
     private float[] _sidetonePushBuffer = new float[4800]; // 100ms @ 48kHz, grows if needed
     private readonly MicLevelNormalizer _micNormalizer = new(OpenFreqRtcClient.SAMPLE_RATE);
@@ -140,6 +150,7 @@ public class OpenFreqService : IOpenFreqService
     // Cache cleanup
     private CancellationTokenSource? _cleanupCts;
     private CancellationTokenSource? _dcsPresenceCts;
+    private CancellationTokenSource? _losPrewarmCts;
 
     private const float SquelchLevelOff = 0f;
     private const float SquelchLevelOn = 1f;
@@ -423,6 +434,9 @@ public class OpenFreqService : IOpenFreqService
 
         _dcsPresenceCts = new CancellationTokenSource();
         _ = SendDcsPresenceUpdatesAsync(_dcsPresenceCts.Token);
+
+        _losPrewarmCts = new CancellationTokenSource();
+        _ = PrewarmDcsLineOfSightAsync(_losPrewarmCts.Token);
 
         OnStatusMessage("OpenFreq service initialized");
     }
@@ -1721,6 +1735,14 @@ public class OpenFreqService : IOpenFreqService
     {
         var cacheKey = (peerId, frequencyTransmission.Khz);
 
+        // Refreshed on every packet, independent of _audioParamsCache's own throttling below --
+        // see _lastKnownPeerDcsPosition's own doc comment.
+        if (frequencyTransmission.DcsPosition is { } dcsPos)
+        {
+            _lastKnownPeerDcsPosition[cacheKey] =
+                (new DcsVector3(dcsPos.X, dcsPos.Y, dcsPos.Z), DateTime.UtcNow);
+        }
+
         // All slots on the same frequency share the same RadioStationData (position/velocity).
         // Pick any tuned slot's key for position lookup.
         var anySlotKey = _tunedSlots.Keys.FirstOrDefault(k => k.FreqKhz == frequencyTransmission.Khz);
@@ -1978,6 +2000,52 @@ public class OpenFreqService : IOpenFreqService
         }
     }
 
+    // SRS-style fix for the "brief click" a blocked peer's first packet or two could slip through
+    // before their terrain-LOS result was ever computed: DcsExportService.RequestLineOfSight only
+    // ever got called reactively, from inside CalculateAudioParamsSync, which only runs once audio
+    // has already arrived -- so the very first LOS query for any (peer, frequency) pair started
+    // cold exactly when a real transmission was already racing it, and the fail-open default
+    // (deliberately kept -- see ApplyDcsLineOfSightLoss) covered that gap by briefly letting audio
+    // through. Real SRS avoids this by maintaining LOS/distance for known contacts continuously in
+    // the background, independent of who's transmitting -- this mirrors that, using the SAME
+    // pattern this codebase's own SATCOM path already uses (UpdateSatcomLinkQuality's terrain
+    // check runs every DCS export frame, not gated on transmission).
+    //
+    // Only re-queries for peers we've heard SOMETHING from before (_lastKnownPeerDcsPosition,
+    // refreshed on every packet) on a frequency we're currently tuned to -- a brand-new peer's
+    // very first-ever transmission still starts cold, since we have no position for them at all
+    // until they transmit once; nothing broadcasts peer position independent of audio today.
+    // DcsExportService.RequestLineOfSight has its own internal throttle/cache
+    // (LosRequestInterval/LosResultTtl), so calling it more often than that here is a no-op, not
+    // wasted UDP traffic.
+    private static readonly TimeSpan DcsLosPrewarmInterval = TimeSpan.FromSeconds(1.0);
+
+    private async Task PrewarmDcsLineOfSightAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(DcsLosPrewarmInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (!DcsLineOfSightEnabled || OwnPositionMode != IOpenFreqService.Mode.DCS ||
+                    _dcsExportService.State != ServiceState.Connected)
+                    continue;
+
+                var tunedFrequencies = _tunedSlots.Keys.Select(k => k.FreqKhz).ToHashSet();
+
+                foreach (var (key, entry) in _lastKnownPeerDcsPosition)
+                {
+                    if (!tunedFrequencies.Contains(key.FrequencyKhz)) continue;
+                    _dcsExportService.RequestLineOfSight($"{key.PeerId}:{key.FrequencyKhz}", entry.Position);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when stopping
+        }
+    }
+
 
     // Periodical Cache cleanup
     private async Task CleanupAudioParamsCacheAsync(CancellationToken cancellationToken)
@@ -1996,6 +2064,18 @@ public class OpenFreqService : IOpenFreqService
                 foreach (var key in keysToRemove)
                 {
                     _audioParamsCache.TryRemove(key, out _);
+                }
+
+                // Same cutoff for PrewarmDcsLineOfSightAsync's position cache -- a peer we haven't
+                // heard from in 30s isn't worth keeping LOS warm for.
+                var positionKeysToRemove = _lastKnownPeerDcsPosition
+                    .Where(kvp => kvp.Value.UpdatedUtc < cutoff)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var key in positionKeysToRemove)
+                {
+                    _lastKnownPeerDcsPosition.TryRemove(key, out _);
                 }
             }
         }
@@ -2100,6 +2180,9 @@ public class OpenFreqService : IOpenFreqService
 
         _dcsPresenceCts?.Cancel();
         _dcsPresenceCts?.Dispose();
+
+        _losPrewarmCts?.Cancel();
+        _losPrewarmCts?.Dispose();
 
         // Stop all transmissions and free the recording handle
         StopMicCapture();

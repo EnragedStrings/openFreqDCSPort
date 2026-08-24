@@ -39,6 +39,17 @@ public class OpenFreqService : IOpenFreqService
     private int _recordHandle;
     private readonly ConcurrentDictionary<int, List<int>> _activeTransmissionsAndMutedFrequencies = new();
 
+    // Frequencies currently routed through the SATCOM vocoder path (see SetSatcomState) --
+    // CalculateAudioParamsSync's terrestrial free-space/LOS model has no idea these exist and
+    // computes it anyway (distance/terrain between the two AIRCRAFT), which is simply the wrong
+    // question for a bent-pipe satellite relay: a receiver only needs its own leg to the
+    // satellite, never direct LOS to the transmitter (see docs/SATCOM_SIMULATION.md's "Independent
+    // per-leg evaluation" -- both server-authoritative and already correctly implemented there).
+    // Without this, two aircraft could both show a fully "Good" server-computed SATCOM link and
+    // still hear nothing from each other, purely because they happened to be terrestrially
+    // LOS-blocked from one another -- see OnClientAudioDataReceived's SignalBlocked check below.
+    private readonly ConcurrentDictionary<int, byte> _satcomActiveFrequencies = new();
+
     // Frequencies currently transmitting a synthesized tone (see StartToneTransmissionAsync)
     // rather than real mic audio. Subset of _activeTransmissionsAndMutedFrequencies' keys.
     private readonly ConcurrentDictionary<int, byte> _toneTransmissionFrequencies = new();
@@ -947,8 +958,13 @@ public class OpenFreqService : IOpenFreqService
 
     public void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate,
         double burstSeverity, double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0)
-        => _playbackService?.SetSatcomState(frequencyKhz, slotId, isActive, frameErrorRate, burstSeverity,
+    {
+        if (isActive) _satcomActiveFrequencies[frequencyKhz] = 0;
+        else _satcomActiveFrequencies.TryRemove(frequencyKhz, out _);
+
+        _playbackService?.SetSatcomState(frequencyKhz, slotId, isActive, frameErrorRate, burstSeverity,
             frameDurationSeconds, propagationLatencySeconds);
+    }
 
     public void SetEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
     {
@@ -1636,7 +1652,13 @@ public class OpenFreqService : IOpenFreqService
             var audioParams = CalculateAudioParamsSync(frequencyTransmission, e.PeerId);
             _signalStrengthTracker.UpdateSignalStrength(audioParams.RadioFrequencyKHz, audioParams);
 
-            if (audioParams.SignalBlocked)
+            // SATCOM audio is never gated by terrestrial distance/LOS between the two aircraft --
+            // see _satcomActiveFrequencies' own doc comment. audioParams itself is still computed
+            // above (for the signal-strength UI and other callers that read it), just not trusted
+            // to block delivery here.
+            var terrestrialBlockApplies = !_satcomActiveFrequencies.ContainsKey(frequencyTransmission.Khz);
+
+            if (audioParams.SignalBlocked && terrestrialBlockApplies)
             {
                 if (_playbackService?.IsStreamActive(streamId) ?? false)
                 {

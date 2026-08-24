@@ -1,4 +1,5 @@
 using OpenFreq.Common;
+using OpenFreqAudio;
 using OpenFreqClient.Services.Interfaces;
 
 namespace OpenFreq.Client.Tests;
@@ -227,5 +228,48 @@ public class OpenFreqServiceTests
 
         h.Playback.Received(1).StopRecording();
         Assert.False(recordingState);
+    }
+
+    /// <summary>Regression test for a bug where SATCOM audio was blocked by terrestrial
+    /// distance/LOS between the two AIRCRAFT -- the wrong question for a bent-pipe satellite
+    /// relay, where a receiver only ever needs its own leg to the satellite (see
+    /// docs/SATCOM_SIMULATION.md's "Independent per-leg evaluation"). Two aircraft could both
+    /// show a fully "Good" server-computed SATCOM link and still hear nothing from each other,
+    /// purely because CalculateAudioParamsSync's terrestrial free-space/LOS model has no idea
+    /// SATCOM exists and computed (and enforced) SignalBlocked anyway.</summary>
+    [Fact]
+    public async Task SatcomActiveFrequency_BypassesTerrestrialSignalBlocked()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        var slot = Guid.NewGuid();
+        await h.Service.JoinFrequencyAsync(Freq, slot, ServiceHarness.NewRadioStation());
+
+        // Simulate the terrestrial model deciding this transmitter is unreachable (e.g. the
+        // receiver is in a valley relative to them) -- SignalBlocked=true regardless of inputs.
+        h.SignalCalculator.CalculateAudioParams(default, default, default, default, default, default,
+                default, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new AudioParams { RadioFrequencyKHz = Freq, SignalBlocked = true });
+
+        var metadata = new AudioPacketMetadata
+        {
+            ClientId = "peer1",
+            Frequencies = [new FrequencyTransmission(Freq, 10.0, 0.0, new Vector3(50_000, 0, 50_000), null, false)]
+        };
+        var audioData = new AudioDataEventArgs("peer1", new short[] { 1, 2, 3 }, metadata);
+
+        // Baseline: an ordinary (non-SATCOM) frequency respects the terrestrial block.
+        h.Client.AudioDataReceived += Raise.EventWith(audioData);
+        h.Playback.DidNotReceive().PushAudioData(Arg.Any<string>(), Arg.Any<Memory<short>>(),
+            Arg.Any<AmbientNoiseType>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>());
+
+        // Mark this frequency SATCOM-active (as ChannelCardListViewModel does from the server's
+        // live SatcomLinkStateMessage.Available) -- the SAME blocked geometry must no longer gate
+        // delivery.
+        h.Service.SetSatcomState(Freq, slot, isActive: true, frameErrorRate: 0.0, burstSeverity: 0.0);
+
+        h.Client.AudioDataReceived += Raise.EventWith(audioData);
+        h.Playback.Received(1).PushAudioData(Arg.Any<string>(), Arg.Any<Memory<short>>(),
+            Arg.Any<AmbientNoiseType>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>());
     }
 }

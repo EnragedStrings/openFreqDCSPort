@@ -344,11 +344,33 @@ see `OpenFreq.Server.Tests/Satcom/SatcomDataServiceTests.cs`.
 **Chosen approach: custom MELP/LPC-inspired perceptual vocoder** -- explicitly a
 **CALIBRATED_APPROXIMATION** of low-rate tactical digital speech, not a bit-exact MELP/MELPe/CELP
 implementation (MELPe is patent-encumbered with export/distribution-restricted reference source).
-Pipeline (`libs/OpenFreqAudio/OpenFreqAudio/Satcom/`) is unchanged from the prior pass -- LPC
-analysis/synthesis via reflection coefficients (guaranteed-stable synthesis filter), pitch/voicing
-estimation, mixed excitation, coarse parameter quantization, and per-parameter corruption/
-concealment. Fully described (with its own test list) in the class-level doc comments of that
-directory; see also `libs/OpenFreqAudio/OpenFreqAudio.Tests/SatcomVocoderTests.cs` (13 tests).
+Pipeline (`libs/OpenFreqAudio/OpenFreqAudio/Satcom/`): LPC analysis/synthesis via reflection
+coefficients (guaranteed-stable synthesis filter), pitch/voicing estimation, mixed excitation,
+coarse parameter quantization, and per-parameter corruption/concealment. Fully described (with its
+own test list) in the class-level doc comments of that directory; see also
+`libs/OpenFreqAudio/OpenFreqAudio.Tests/SatcomVocoderTests.cs`.
+
+**Excitation gain fix (user-reported "basically unusable" audio)**: `SatcomVocoderDecoder` used to
+scale the excitation by a fixed `energy * sqrt(order)` constant, ignoring how much the CURRENT
+frame's specific reflection coefficients would resonate. A strongly resonant frame's all-pole
+filter amplifies a flat excitation far more than a flat/unresonant frame's does, so this produced
+synthesis output measured at 5-19x the intended level for realistic voiced speech, PHYSICAL_
+CALCULATION-verified via the offline tool (`tools/SatcomAudioTool`): 57.8% of samples pinned at
+full-scale on a zero-channel-error render -- severe clipping distortion on every voiced/resonant
+frame even under a perfect link, unrelated to the channel-error model entirely (SATCOM_80 through
+SATCOM_20 showed nearly identical clipping to VOCODER_GOOD). Fixed by `SatcomLpc.ExcitationGain`
+(SOURCE_DERIVED): replays Levinson-Durbin's own prediction-error recursion
+(`error_i = error_{i-1} * (1 - k_i^2)`) using the frame's actual (possibly quantized/corrupted)
+reflection coefficients, starting from the target signal's power -- a resonant filter's k_i values
+near +/-1 correspondingly shrink this, canceling its own amplification, with zero extra bits
+needed since the reflection coefficients are already transmitted. Also tightened
+`LpcSynthesisFilter.Process`'s internal safety clamp from a leftover PCM16-scale +/-32000 (a
+no-op at the pipeline's actual normalized +/-1.0 scale, left over from before the boundary
+normalization was added) to +/-8.0. Post-fix, the same offline-tool render shows 0% clipping and
+output RMS within ~10% of the input across all quality tiers. Regression coverage:
+`SatcomVocoderTests.PerfectLinkOutputRmsStaysWithinAFewTimesTheInputRms`,
+`OutputNeverClips` (strengthened -- it previously only checked the trivial int16-representable
+range, which the bug never violated), and `SatcomLpcExcitationGainTests`.
 
 **What changed**: which frames are Clean vs. corrupted, and how, is now decided **server-side**.
 `OpenFreq.Common/Satcom/SatcomFrameDispositionModel.cs` extends the original 3-state

@@ -66,6 +66,29 @@ public static class SatcomLpc
         return (a, reflection, error);
     }
 
+    /// <summary>Excitation RMS needed to make an all-pole synthesis filter built from
+    /// <paramref name="reflection"/> reproduce <paramref name="targetOutputRms"/> at its output --
+    /// replays LevinsonDurbin's own prediction-error recursion (error_i = error_{i-1} * (1-k_i^2))
+    /// starting from the target signal's power, using the (possibly quantized/corrupted)
+    /// reflection coefficients the decoder actually has. A resonant filter's poles push most k_i
+    /// toward +/-1, shrinking this a lot -- correctly counteracting how much THAT filter amplifies
+    /// a flat excitation, which a fixed order-only gain constant can't do (that was the previous
+    /// approach here, and it produced synthesis output routinely 5-19x over the intended level for
+    /// strongly resonant voiced frames -- audible as harsh clipping distortion even under a
+    /// perfect link, see docs/SATCOM_SIMULATION.md). A flat/unresonant filter (all k_i near 0)
+    /// leaves this at targetOutputRms unchanged, as it should -- an all-pass filter neither
+    /// amplifies nor attenuates.</summary>
+    public static double ExcitationGain(double targetOutputRms, double[] reflection, int order)
+    {
+        var errorPower = targetOutputRms * targetOutputRms;
+        for (var i = 1; i <= order && i < reflection.Length; i++)
+        {
+            var k = Math.Clamp(reflection[i], -0.999, 0.999);
+            errorPower *= 1.0 - k * k;
+        }
+        return Math.Sqrt(Math.Max(errorPower, 1e-12));
+    }
+
     /// <summary>Rebuilds stable LPC coefficients from (possibly quantized/corrupted, but always
     /// |k|&lt;1) reflection coefficients -- used by the decoder. <paramref name="reflection"/> must
     /// be 1-indexed length order+1, matching LevinsonDurbin's output shape.</summary>
@@ -116,7 +139,16 @@ public sealed class LpcSynthesisFilter
 
         var output = excitation + prediction;
         if (double.IsNaN(output) || double.IsInfinity(output)) output = 0.0;
-        output = Math.Clamp(output, -32000.0, 32000.0);
+        // +/-8.0: a safety net against runaway recursive growth from a near-unstable/corrupted
+        // filter, not the primary level control (see SatcomLpc.ExcitationGain for that) -- 8x
+        // headroom over the normalized +/-1.0 target should never be reached in normal operation.
+        // This used to be +/-32000.0, a leftover from when the whole pipeline was PCM16-scaled
+        // internally; left unchanged when the boundary normalization to [-1,1] was added, it let
+        // the filter's own history/feedback build up to 32000x over the intended unity scale
+        // before anything clamped it, which combined with ExcitationGain's predecessor (a fixed,
+        // frame-shape-blind gain constant) to produce severe clipping distortion on every
+        // resonant/voiced frame, even under a perfect link -- see SatcomLpc.ExcitationGain.
+        output = Math.Clamp(output, -8.0, 8.0);
 
         for (var i = _order - 1; i > 0; i--)
             _history[i] = _history[i - 1];

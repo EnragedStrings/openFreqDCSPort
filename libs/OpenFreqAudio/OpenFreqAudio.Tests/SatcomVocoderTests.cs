@@ -22,7 +22,10 @@ namespace OpenFreqAudio.Tests
                 var output = filter.Process(excitation, lpc);
                 Assert.False(double.IsNaN(output));
                 Assert.False(double.IsInfinity(output));
-                Assert.InRange(output, -32000.0, 32000.0);
+                // +/-8.0, matching LpcSynthesisFilter.Process's own safety-net clamp bound (a
+                // normalized-domain value, not the PCM16-scale +/-32000 this used to assert --
+                // see that clamp's own doc comment for why it changed).
+                Assert.InRange(output, -8.0, 8.0);
             }
         }
 
@@ -354,6 +357,85 @@ namespace OpenFreqAudio.Tests
             // ClampToInt16 actually guarantees) -- not an arbitrary internal headroom margin.
             foreach (var s in output)
                 Assert.InRange(s, short.MinValue, short.MaxValue);
+
+            // The above is true trivially (ClampToInt16 guarantees it by construction) and does
+            // NOT by itself detect actual saturation/distortion -- it passed unchanged throughout
+            // the whole lifetime of the gain bug below. Assert on the fraction of samples actually
+            // pinned at/near full-scale instead, which is what real clipping distortion looks like.
+            var pinnedCount = output.Count(s => Math.Abs((int)s) >= 32000);
+            Assert.True(pinnedCount / (double)output.Length < 0.02,
+                $"Expected only rare full-scale samples, got {pinnedCount}/{output.Length} pinned at/near +/-32767");
+        }
+
+        [Fact]
+        public void PerfectLinkOutputRmsStaysWithinAFewTimesTheInputRms()
+        {
+            // Regression test for the excitation-gain bug (see SatcomLpc.ExcitationGain's own doc
+            // comment): a fixed order-only gain constant ignored how much a given frame's specific
+            // reflection coefficients would resonate, and produced synthesis output measured at
+            // 5-19x the intended level for realistic voiced speech -- 57.8% of samples pinned at
+            // full-scale on a zero-channel-error ("perfect link") test render, i.e. severe clipping
+            // distortion even with nothing wrong with the link. A healthy vocoder colors/compresses
+            // the signal (MELP-class output is not a transparent pass-through) but shouldn't
+            // multiply its RMS level by many times over.
+            const int sr = 48000;
+            var vocoder = new SatcomVocoder(networkSampleRate: sr, frameDurationSeconds: 0.0225, seed: 11);
+            var input = MakeToneWav(sr, 1.5, 150);
+
+            var output = vocoder.ProcessBuffer(input, frameErrorRate: 0.0, burstSeverity: 0.0);
+
+            double InputRms(short[] s) => Math.Sqrt(s.Select(v => (double)v * v).Average());
+            var inputRms = InputRms(input);
+            var outputRms = InputRms(output);
+
+            Assert.True(outputRms < inputRms * 3.0,
+                $"Expected output RMS within a few times the input RMS, got input={inputRms:F0} output={outputRms:F0} " +
+                $"({outputRms / inputRms:F1}x)");
+        }
+    }
+
+    public class SatcomLpcExcitationGainTests
+    {
+        [Fact]
+        public void FlatFilterLeavesGainUnchanged()
+        {
+            // All reflection coefficients 0 -> an all-pass filter that neither amplifies nor
+            // attenuates -- ExcitationGain should return the target RMS exactly.
+            var flat = new double[11];
+            var gain = SatcomLpc.ExcitationGain(targetOutputRms: 0.2, flat, order: 10);
+            Assert.Equal(0.2, gain, precision: 9);
+        }
+
+        [Fact]
+        public void ResonantFilterProducesSmallerGainThanFlatFilter()
+        {
+            // A strongly resonant filter (reflection coefficients near the |k|<1 boundary) will
+            // amplify a fixed-amplitude excitation far more than a flat one -- ExcitationGain must
+            // correspondingly reduce the excitation for that filter, or the resulting synthesis
+            // output blows past the intended level (exactly the bug this function fixes).
+            var flat = new double[11];
+            var resonant = new double[11];
+            for (var i = 1; i <= 10; i++) resonant[i] = 0.9;
+
+            var flatGain = SatcomLpc.ExcitationGain(0.2, flat, 10);
+            var resonantGain = SatcomLpc.ExcitationGain(0.2, resonant, 10);
+
+            Assert.True(resonantGain < flatGain,
+                $"Expected a resonant filter to reduce excitation gain below the flat-filter case, got flat={flatGain:F4} resonant={resonantGain:F4}");
+        }
+
+        [Fact]
+        public void NeverReturnsNegativeOrNaN()
+        {
+            var rng = new Random(3);
+            for (var trial = 0; trial < 200; trial++)
+            {
+                var reflection = new double[11];
+                for (var i = 1; i <= 10; i++) reflection[i] = rng.NextDouble() * 1.998 - 0.999;
+                var gain = SatcomLpc.ExcitationGain(rng.NextDouble(), reflection, 10);
+                Assert.False(double.IsNaN(gain) || double.IsInfinity(gain));
+                Assert.True(gain >= 0.0);
+            }
         }
     }
 }

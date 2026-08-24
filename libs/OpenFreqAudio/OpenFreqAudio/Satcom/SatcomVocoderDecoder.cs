@@ -76,10 +76,11 @@ public sealed class SatcomVocoderDecoder
         }
 
         var lpc = SatcomLpc.ReflectionToLpc(reflection, _order);
-        // Rough excitation-to-output gain normalization -- scales with LPC order since a
-        // higher-order all-pole filter's passband gain grows with more poles reinforcing the
-        // spectral peaks; tuned by ear rather than derived exactly.
-        var gain = energy * Math.Sqrt(_order);
+        // Per-frame excitation-to-output gain, derived from THIS frame's actual reflection
+        // coefficients (see SatcomLpc.ExcitationGain's own doc comment) rather than a fixed
+        // order-only constant -- a resonant filter gets correspondingly less excitation energy,
+        // canceling out its own amplification instead of compounding with it.
+        var gain = SatcomLpc.ExcitationGain(energy, reflection, _order);
 
         for (var n = 0; n < outFrame.Length; n++)
         {

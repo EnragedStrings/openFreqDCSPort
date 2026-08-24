@@ -245,6 +245,12 @@ public class OpenFreqServiceTests
         var slot = Guid.NewGuid();
         await h.Service.JoinFrequencyAsync(Freq, slot, ServiceHarness.NewRadioStation());
 
+        // CalculateAudioParamsSync only ever calls ISignalCalculator when _signalCalculator is
+        // non-null, which only happens after LoadHeightmap -- without this, every packet takes
+        // the "no terrain data" fallback path (a flat default AudioParams, SignalBlocked=false)
+        // regardless of what the mock below is configured to return.
+        h.Service.LoadHeightmap("fake.dem");
+
         // Simulate the terrestrial model deciding this transmitter is unreachable (e.g. the
         // receiver is in a valley relative to them) -- SignalBlocked=true regardless of inputs.
         h.SignalCalculator.CalculateAudioParams(default, default, default, default, default, default,

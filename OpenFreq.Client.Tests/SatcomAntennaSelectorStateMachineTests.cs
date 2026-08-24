@@ -62,8 +62,11 @@ public class SatcomAntennaSelectorStateMachineTests
     [Fact]
     public void WithinToleranceOfOneStillLatches()
     {
+        // Half the tolerance, not the full amount -- testing exactly at the boundary
+        // (1.0 - Tolerance) is floating-point-fragile, since the test's subtraction and the state
+        // machine's own internal subtraction don't necessarily round identically.
         var sm = new SatcomAntennaSelectorStateMachine();
-        Assert.Equal(SatcomAntennaSelection.Upper, sm.Update(1.0 - SatcomAntennaSelectorStateMachine.Tolerance));
+        Assert.Equal(SatcomAntennaSelection.Upper, sm.Update(1.0 - SatcomAntennaSelectorStateMachine.Tolerance / 2));
     }
 
     [Fact]

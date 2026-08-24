@@ -1015,12 +1015,25 @@
                                 </controls:Card>
                             </StackPanel>
 
-                            <!-- Debug Button (visible in both modes) -->
-                            <Button IsVisible="{Binding DebugMode}"
-                                    Command="{Binding DebugCommand}"
-                                    Content="DEBUG"
-                                    HorizontalAlignment="Stretch"
-                                    Margin="0,8,0,0" />
+                            <!-- Debug Mode Card -->
+                            <controls:Card>
+                                <StackPanel Margin="16">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <avalonia:MaterialIcon Kind="Bug"
+                                                               Width="16" Height="16"
+                                                               Margin="0,0,8,0"
+                                                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                        <TextBlock Text="Debug" Classes="SectionHeader" Margin="0" />
+                                    </StackPanel>
+
+                                    <CheckBox Content="SATCOM debug telemetry"
+                                              IsChecked="{Binding Settings.DebugMode}"
+                                              Margin="0,0,0,4" />
+                                    <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
+                                               Text="Shows satellite position/geometry, antenna aspect, and RF link telemetry on SATCOM channel cards. The server must also allow debug telemetry for this session (SatcomServerConfig.DebugTelemetryEnabled, on by default)."
+                                               FontStyle="Italic" />
+                                </StackPanel>
+                            </controls:Card>
 
                         </StackPanel>
                     </ScrollViewer>

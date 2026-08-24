@@ -48,14 +48,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     private readonly IIvcMonitorService _ivcMonitorService;
     private readonly ILogger<MainWindowViewModel> _logger;
 
-    // TODO remove when done
-#if DEBUG
-    [ObservableProperty] public partial bool DebugMode { get; set; } = false;
-#else
-    [ObservableProperty] public partial bool DebugMode { get; set; } = false;
-#endif
-    /*********/
-
     [ObservableProperty] public partial ChannelCardListViewModel ChannelList { get; set; }
 
     [ObservableProperty] public partial SettingsViewModel Settings { get; set; }

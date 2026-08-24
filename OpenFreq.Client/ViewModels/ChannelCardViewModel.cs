@@ -471,7 +471,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
     /// <summary>DEBUG-ONLY telemetry bundle: satellite position/geometry/antenna-aspect readout
     /// for a user tuned to a SATCOM frequency with DebugMode on (only populated when the server has
-    /// granted this session debug access -- see MainWindowViewModel.DebugMode and
+    /// granted this session debug access -- see SettingsViewModel.DebugMode and
     /// ChannelCardListViewModel.BuildSatcomDebugText). Never shown as a normal-user control -- bound
     /// separately from SatcomSubtitleText in ChannelCardView.axaml, gated on HasSatcomDebugText.
     /// Candidate for removal or a stricter gate once the antenna model is trusted -- see

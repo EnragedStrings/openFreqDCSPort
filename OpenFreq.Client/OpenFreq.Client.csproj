@@ -7,7 +7,7 @@
         <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-        <RootNamespace>openfreq-client</RootNamespace>
+        <RootNamespace>OpenFreqClient</RootNamespace>
         <LangVersion>preview</LangVersion>
         <!-- Lets us wrap native audio-callback buffers in a ReadOnlySpan without copying. -->
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

@@ -81,6 +81,14 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     // docs/SATCOM_SIMULATION.md).
     private readonly SatcomAcquisitionStateMachine _arc210SatcomStateMachine = new();
 
+    /// <summary>Latches the A-10C II ARC-210's upper/lower antenna selector switch (cockpit
+    /// argument 707) -- same one-shared-instance rationale as _arc210SatcomStateMachine above.
+    /// Defaults to Lower (see SatcomAntennaSelectorStateMachine); only ever fed/read for the ARC-210
+    /// specifically (see SyncDcsRadioOnUiThread), so aircraft without this switch modeled never send
+    /// a SATCOM geometry update at all and this stays irrelevant for them -- the server falls back
+    /// to Upper only when a geometry update omits the field, which doesn't happen here.</summary>
+    private readonly SatcomAntennaSelectorStateMachine _arc210SatcomAntennaSelector = new();
+
     /// <summary>DAMA (channels 31-40, PRST login required) SATCOM net id -- matches
     /// SatcomServerConfig.Default's "a10-arc210-satcom" entry.</summary>
     private const string DamaSatcomNetId = "a10-arc210-satcom";
@@ -682,7 +690,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     {
         if (DcsLocation == null)
         {
-            DcsLocation = CreateLocation(GetDcsLocationName(_dcsExportService.Unit), RadioStationPresets.FighterGeneric,
+            DcsLocation = CreateLocation(GetDcsLocationName(_dcsExportService.Unit),
+                RadioStationPresets.GetPresetByDcsUnit(_dcsExportService.Unit),
                 RadioStationData.RadioStationType.DCS);
             DcsLocation.EditMode = false;
             SelectedLocation = DcsLocation;
@@ -699,6 +708,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         Dispatcher.UIThread.Post(() =>
         {
             DcsLocation.Name = GetDcsLocationName(e.NewUnit);
+            DcsLocation.RadioStationData.Preset = RadioStationPresets.GetPresetByDcsUnit(e.NewUnit);
             RemoveDcsChannelsNotInCurrentAircraft();
         });
     }
@@ -814,9 +824,18 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         string? satcomNetId = null;
         double? satcomTunedFrequencyHz = null;
         var satcomLoginReady = false;
+        var antennaSelection = SatcomAntennaSelection.Lower; // only meaningful when satcomNetId gets set below
 
         if (radio.Name == "ARC-210")
         {
+            var previousAntennaSelection = _arc210SatcomAntennaSelector.Selection;
+            antennaSelection = _arc210SatcomAntennaSelector.Update(radio.SatcomAntennaSelectorRaw);
+            if (antennaSelection != previousAntennaSelection)
+            {
+                _logger.LogInformation("SATCOM antenna selector {Old} -> {New} (raw={Raw})",
+                    previousAntennaSelection, antennaSelection, radio.SatcomAntennaSelectorRaw);
+            }
+
             // Power is folded in here (not in the Lua export) so both signals fail safe the
             // instant the radio loses power, regardless of whatever the channel/selector
             // arguments happen to read at that moment.
@@ -874,7 +893,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         if (channel != null && satcomNetId != null)
         {
-            UpdateSatcomLinkQuality(channel, satcomNetId, satcomLoginReady, radio.IsOn, satcomTunedFrequencyHz);
+            UpdateSatcomLinkQuality(channel, satcomNetId, satcomLoginReady, radio.IsOn, satcomTunedFrequencyHz,
+                antennaSelection);
         }
 
         SyncGuardMonitorOnUiThread(radio, key);
@@ -896,7 +916,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
     /// (switching nets mid-flight is rare and self-corrects once fresh updates for the new net
     /// dominate), but worth fixing with explicit per-net teardown in a follow-up pass.</summary>
     private void UpdateSatcomLinkQuality(ChannelCardViewModel channel, string netId, bool loginReady,
-        bool radioPowered, double? tunedFrequencyHz)
+        bool radioPowered, double? tunedFrequencyHz, SatcomAntennaSelection antennaSelection)
     {
         var pttPressed = channel.TransmissionStatus == Channel.ChannelTransmissionStatus.Transmitting;
 
@@ -918,7 +938,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             TerrainLosClear = terrainLosClear,
             DebugRequested = _settings.DebugMode,
             TunedFrequencyHz = tunedFrequencyHz,
-            Priority = 0
+            Priority = 0,
+            AntennaSelection = antennaSelection.ToString()
         };
 
         _logger.LogDebug(
@@ -993,12 +1014,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 ? fr : SatcomAcquisitionFailureReason.None;
             channel.DamaState = Enum.TryParse<DamaState>(msg.DamaState, out var ds) ? ds : DamaState.Offline;
 
-            channel.SatcomDebugText = msg.DebugAuthorized
-                ? $"C/N0 {msg.CombinedCn0DbHz:F1} dBHz | Eb/N0 {msg.EbN0Db:F1} dB | rawBER {msg.RawBer:E1} | " +
-                  $"postFEC BER {msg.PostFecBer:E1} | up {msg.UplinkElevationDeg:F1}deg/{msg.UplinkRangeMeters / 1000.0:F0}km | " +
-                  $"down {msg.DownlinkElevationDeg:F1}deg/{msg.DownlinkRangeMeters / 1000.0:F0}km | " +
-                  $"frame {msg.DamaFrameIndex} slot {msg.DamaSlot}"
-                : "";
+            // DEBUG-ONLY: satellite position/geometry/antenna readout for a user tuned to a SATCOM
+            // frequency with DebugMode on -- lets them see connection quality AND aspect to the
+            // satellite (own attitude, off-boresight angle, which antenna, footprint/terminal gain
+            // split) in one place instead of just the pass/fail quality badge. This grew out of
+            // troubleshooting the bank-angle antenna-gain bug and is intentionally verbose;
+            // candidate for trimming or gating behind a stricter flag in a later pass once the
+            // antenna model is trusted -- see docs/SATCOM_SIMULATION.md. Remove this whole block
+            // (and the corresponding server-side DebugAuthorized fields) if that never happens.
+            channel.SatcomDebugText = msg.DebugAuthorized ? BuildSatcomDebugText(msg) : "";
 
             // Burst severity isn't sent explicitly -- derive a reasonable proxy from quality state
             // for the existing (already-correct, frame-level) vocoder channel model; the server's
@@ -1017,6 +1041,32 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             _openFreqService.SetSatcomState(channel.FrequencyKhz, channel.Id, isActive: msg.Available,
                 msg.FrameErrorRate, burstSeverity, propagationLatencySeconds: msg.PropagationLatencySeconds);
         });
+    }
+
+    /// <summary>DEBUG-ONLY (see the call site's own comment). Own attitude comes straight from
+    /// _dcsExportService rather than round-tripping through the server, since it's exactly what
+    /// this client just sent up this same tick.</summary>
+    private string BuildSatcomDebugText(SatcomLinkStateMessage msg)
+    {
+        var satPos = !string.IsNullOrEmpty(msg.SatelliteId) && _satcomSatellites.TryGetValue(msg.SatelliteId, out var sat)
+            ? sat
+            : null;
+
+        var headingDeg = _dcsExportService.HeadingRadians is { } h ? h * (180.0 / Math.PI) : (double?)null;
+        var pitchDeg = _dcsExportService.PitchRadians is { } p ? p * (180.0 / Math.PI) : (double?)null;
+        var bankDeg = _dcsExportService.BankRadians is { } b ? b * (180.0 / Math.PI) : (double?)null;
+
+        return $"C/N0 {msg.CombinedCn0DbHz:F1} dBHz | Eb/N0 {msg.EbN0Db:F1} dB | rawBER {msg.RawBer:E1} | " +
+               $"postFEC BER {msg.PostFecBer:E1} | frame {msg.DamaFrameIndex} slot {msg.DamaSlot}\n" +
+               $"own hdg={headingDeg:F0} pitch={pitchDeg:F0} bank={bankDeg:F0} | antenna={_arc210SatcomAntennaSelector.Selection}\n" +
+               $"sat {msg.SatelliteName} @ lat={satPos?.LatitudeDeg:F2} lon={satPos?.LongitudeDeg:F2} " +
+               $"alt={satPos?.AltitudeMeters / 1000.0:F0}km{(satPos?.IsStale == true ? " (STALE)" : "")}\n" +
+               $"up   el={msg.UplinkElevationDeg:F1}deg az={msg.UplinkAzimuthDeg:F0}deg range={msg.UplinkRangeMeters / 1000.0:F0}km " +
+               $"tilt={msg.UplinkTiltDeg:F0}deg offBoresight={msg.UplinkOffBoresightDeg:F0}deg " +
+               $"footprintGain={msg.UplinkFootprintGainDb:F1}dB terminalGain={msg.UplinkTerminalGainDb:F1}dB\n" +
+               $"down el={msg.DownlinkElevationDeg:F1}deg az={msg.DownlinkAzimuthDeg:F0}deg range={msg.DownlinkRangeMeters / 1000.0:F0}km " +
+               $"tilt={msg.DownlinkTiltDeg:F0}deg offBoresight={msg.DownlinkOffBoresightDeg:F0}deg " +
+               $"footprintGain={msg.DownlinkFootprintGainDb:F1}dB terminalGain={msg.DownlinkTerminalGainDb:F1}dB";
     }
 
     private void OnSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs e)

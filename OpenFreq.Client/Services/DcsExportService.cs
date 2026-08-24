@@ -637,7 +637,8 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         oldRadio.ToneOn != newRadio.ToneOn ||
         oldRadio.SatcomSelected != newRadio.SatcomSelected ||
         oldRadio.SatcomBandActive != newRadio.SatcomBandActive ||
-        oldRadio.SatcomDedicatedActive != newRadio.SatcomDedicatedActive;
+        oldRadio.SatcomDedicatedActive != newRadio.SatcomDedicatedActive ||
+        oldRadio.SatcomAntennaSelectorRaw != newRadio.SatcomAntennaSelectorRaw;
 
     private void ChangeState(ServiceState newState)
     {

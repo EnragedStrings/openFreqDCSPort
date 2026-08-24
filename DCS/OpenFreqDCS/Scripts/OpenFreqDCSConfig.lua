@@ -67,6 +67,17 @@ OpenFreqDCSConfig.a10c2.satcom.channelBandMaxValue = OpenFreqDCSConfig.a10c2.sat
 -- misidentification -- it's actually the ARC-210's CT/CT-TD (FULL) COMSEC mode selection, already
 -- covered by comsec_submode in the display data (see getArc210ComsecState in OpenFreqDCS.lua) --
 -- and is not read separately here anymore.
+--
+-- The A-10C II ARC-210 SATCOM antenna selector switch (PROJECT_OBSERVED, user-reported): a real
+-- upper/lower antenna diversity switch, cockpit argument 707 -- 1.0 = upper antenna, 0.0 = lower
+-- antenna, 0.5 = mid travel (not a third selectable antenna). Exported raw here (no tolerance
+-- collapsing in Lua, unlike the satcom block above) -- the sticky "0.5 leaves the last selection
+-- intact" interpretation needs state across frames, which lives client-side in
+-- SatcomAntennaSelectorStateMachine (OpenFreq.Client), not here. NOTE: argument 707 is also used by
+-- the F-16 module below (its KY-58 crypto power switch) -- unrelated; DCS cockpit argument IDs are
+-- scoped per aircraft module, this is not a conflict.
+OpenFreqDCSConfig.a10c2.satcomAntenna = OpenFreqDCSConfig.a10c2.satcomAntenna or {}
+OpenFreqDCSConfig.a10c2.satcomAntenna.selectorArgument = OpenFreqDCSConfig.a10c2.satcomAntenna.selectorArgument or 707
 
 OpenFreqDCSConfig.f16c = OpenFreqDCSConfig.f16c or {}
 OpenFreqDCSConfig.f16c.enabled = OpenFreqDCSConfig.f16c.enabled ~= false

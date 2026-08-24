@@ -245,9 +245,46 @@ a higher Eb/N0 bar is required to reach `Good` from `Lost` than to remain locked
 the call. States: `Good` / `Marginal` / `Degraded` / `Holdover` / `Lost`.
 
 **Two remaining CALIBRATED_APPROXIMATION inputs** (the biggest approximations in the whole model,
-same as the previous pass, now applied per-leg instead of per-aircraft-only): satellite EIRP/
-antenna-gain advantage (`SatcomNetDefinition.SatelliteEirpAdjustDb`) and airframe antenna pattern
-(`SatcomAntennaModel`, unchanged from the prior pass -- see its own doc comments).
+now applied per-leg instead of per-aircraft-only): satellite EIRP/antenna-gain advantage
+(`SatcomNetDefinition.SatelliteEirpAdjustDb`) and airframe antenna pattern (`SatcomAntennaModel`
+-- see its own doc comments).
+
+### 6a. Upper/lower SATCOM antenna diversity (A-10C II)
+
+**CALIBRATED_APPROXIMATION**, same caveat as the rest of `SatcomAntennaModel` -- no public
+ARC-210/airframe antenna pattern exists at this fidelity for either physical antenna. Real
+diversity-capable airframes (currently just the A-10C II) have two antennas -- a spine-mounted
+upper antenna (best gain near zenith) and a belly-mounted lower antenna (best gain near the local
+horizon) -- and a pilot-operated selector switch choosing which one is actually connected to the
+radio. Which antenna's curve `SatcomAntennaModel.TerminalAntennaGainDb` evaluates against is
+`SatcomTerminalState.AntennaSelection` (`SatcomAntennaSelection.Upper`/`.Lower`); non-diversity
+airframes never set this and are pinned to `Upper` (single-antenna behavior, unchanged).
+
+**Switch detection** (PROJECT_OBSERVED, user-reported): cockpit argument 707 -- 1.0 = upper, 0.0 =
+lower, 0.5 = mid-travel/not a third state. Exported raw by `buildA10C2Radios`
+(`DCS/OpenFreqDCS/Scripts/OpenFreqDCS.lua`, config in `OpenFreqDCSConfig.a10c2.satcomAntenna`) as
+`DcsRadioState.SatcomAntennaSelectorRaw`; interpreted client-side by
+`SatcomAntennaSelectorStateMachine` (`OpenFreq.Client/Services/Satcom/`), a plain latch (not a
+debounce/timer machine like `SatcomAcquisitionStateMachine`) that locks onto a clean 1.0/0.0 read
+and leaves the prior selection intact on 0.5 or a null/unavailable read. Defaults to **Lower**
+before the first clean read -- an explicit product decision, not a physical fact.
+
+**Crossover calibration**: PROJECT_OBSERVED (user-reported), the real switch's SOP is satellite
+look angle at/below 30 degrees -> lower antenna, above 30 degrees -> upper antenna. The two curves
+in `SatcomAntennaModel.TerminalAntennaGainDb` are calibrated so their own full-gain zones meet
+exactly at that boundary (upper: elevation >= 30 degrees full gain; lower: |elevation| <= 30
+degrees full gain), each rolling off/airframe-shadowing beyond it -- flying with the switch in the
+wrong position for the actual satellite elevation now genuinely costs gain, which the
+single-antenna model could never represent at all.
+
+Tilt (bank/pitch) is applied as an **additive penalty on off-boresight angle** for whichever
+antenna is selected, not a pre-shift of elevation before computing off-boresight -- those are NOT
+equivalent once an antenna's boresight isn't at zenith (elevation 90), and the pre-shift form was
+caught producing a directionally-wrong result (more tilt could *improve* the lower antenna's gain,
+by mathematical accident of the pre-shift crossing back through its own boresight) by
+`SatcomAntennaModelTests.MoreTiltNeverImprovesGainForAFixedSatellite`. The additive form guarantees
+more tilt, in either direction, can never improve gain for a fixed satellite, for either antenna --
+see `SatcomAntennaModel`'s own doc comments for the exact reasoning.
 
 ## 7. DAMA network access (server-authoritative)
 
@@ -382,8 +419,18 @@ WAVs through the exact same `SatcomVocoder` class the live path uses. See its ow
    arrives.
 4. Enable `SettingsViewModel.DebugMode` (and confirm the server's `SatcomServerConfig.
    DebugTelemetryEnabled` is on) to see `ChannelCardViewModel.SatcomDebugText`'s detailed
-   C/N0/Eb/N0/BER/DAMA-frame/slot bundle -- never shown to normal users by default.
-5. With two players/clients on the same net: confirm remote audio starts audibly after a short
+   readout -- C/N0/Eb/N0/BER/DAMA-frame/slot, own heading/pitch/bank, which antenna is selected,
+   the assigned satellite's own lat/lon/alt, and per-leg elevation/azimuth/range/tilt/off-boresight/
+   footprint-gain/terminal-gain -- rendered on the channel card itself (`ChannelCardView.axaml`,
+   below the frequency), never shown to normal users by default. DEBUG-ONLY, added specifically to
+   troubleshoot the antenna-gain model live rather than by re-deriving the math by hand; candidate
+   for trimming or a stricter gate once that model is trusted.
+5. To test the antenna selector switch specifically: step the ARC-210 SATCOM antenna selector
+   through upper (1.0) / mid-travel (0.5) / lower (0.0) and confirm via `SatcomDebugText`'s
+   `antenna=` field that it latches Upper/Lower on a clean read and holds its prior value through
+   0.5, and that the debug readout's terminal gain for the wrong antenna at a given satellite
+   elevation is visibly worse than for the correct one.
+6. With two players/clients on the same net: confirm remote audio starts audibly after a short
    (real geometry-driven) delay rather than instantly, and keeps playing briefly after the far end
    releases PTT. Fly one aircraft behind terrain relative to the satellite and confirm its uplink
    degrades/fails for the other party even if the two aircraft are otherwise close together (this

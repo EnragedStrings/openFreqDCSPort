@@ -9,16 +9,26 @@ namespace OpenFreq.Common.Satcom;
 /// real dedicated/point-to-point UHF SATCOM channels are simply tuned to an assigned transponder
 /// frequency, unlike DAMA's shared, admin-fixed channel pair. Null (falls back to the net's fixed
 /// frequencies) for DAMA nets or when the terminal hasn't reported one yet.</param>
+/// <param name="AntennaSelection">Which physical SATCOM antenna is connected, for diversity-capable
+/// airframes (see SatcomAntennaSelection). Defaults to Upper -- the single-antenna behavior every
+/// airframe had before diversity support existed -- so callers that don't populate this (older
+/// tests, non-diversity aircraft) see unchanged behavior.</param>
 public readonly record struct SatcomTerminalState(
     double LatitudeDeg, double LongitudeDeg, double AltitudeMeters,
     double? HeadingRad, double? PitchRad, double? BankRad,
-    bool AttitudeIsApproximate, double? TunedFrequencyHz = null);
+    bool AttitudeIsApproximate, double? TunedFrequencyHz = null,
+    SatcomAntennaSelection AntennaSelection = SatcomAntennaSelection.Upper);
 
-/// <summary>One evaluated leg (terminal-to-satellite uplink, or satellite-to-terminal downlink).</summary>
+/// <summary>One evaluated leg (terminal-to-satellite uplink, or satellite-to-terminal downlink).
+/// The Tilt/OffBoresight/FootprintGain/TerminalGain fields are the SatcomAntennaModel breakdown for
+/// this leg -- DEBUG-ONLY surface, only meant to reach the wire under SatcomLinkStateMessage's
+/// DebugAuthorized gate; candidate for trimming once the antenna model is trusted, see
+/// docs/SATCOM_SIMULATION.md.</summary>
 public readonly record struct SatcomLegResult(
     double ElevationDeg, double AzimuthDeg, double SlantRangeMeters, double AntennaGainDb,
     double PathLossDb, double Cn0DbHz, double PropagationSeconds,
-    bool AboveElevationMask, bool EarthOccluded, string UnavailableReason)
+    bool AboveElevationMask, bool EarthOccluded, string UnavailableReason,
+    double TiltDeg = 0.0, double OffBoresightDeg = 0.0, double FootprintGainDb = 0.0, double TerminalGainDb = 0.0)
 {
     public bool Usable => AboveElevationMask && !EarthOccluded && AntennaGainDb > -100.0;
 }

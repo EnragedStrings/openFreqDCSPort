@@ -54,6 +54,13 @@ public class DcsRadioState
     /// ARC-210.</summary>
     public bool SatcomDedicatedActive { get; set; }
 
+    /// <summary>PROJECT_OBSERVED (user-reported): raw reading of the A-10C II ARC-210's upper/lower
+    /// SATCOM antenna selector switch, cockpit argument 707 -- 1.0 = upper, 0.0 = lower, 0.5 = mid
+    /// travel (not a third state). Interpreted client-side by SatcomAntennaSelectorStateMachine,
+    /// which latches on a clean 1.0/0.0 read and leaves the prior selection intact otherwise. Null
+    /// for radios other than the ARC-210, or aircraft without this switch modeled.</summary>
+    public double? SatcomAntennaSelectorRaw { get; set; }
+
     public int FrequencyKhz => (int)Math.Round(FrequencyHz / 1000d);
     public int SecondaryFrequencyKhz => (int)Math.Round(SecondaryFrequencyHz / 1000d);
 
@@ -76,7 +83,8 @@ public class DcsRadioState
             ToneOn = ToneOn,
             SatcomSelected = SatcomSelected,
             SatcomBandActive = SatcomBandActive,
-            SatcomDedicatedActive = SatcomDedicatedActive
+            SatcomDedicatedActive = SatcomDedicatedActive,
+            SatcomAntennaSelectorRaw = SatcomAntennaSelectorRaw
         };
     }
 }

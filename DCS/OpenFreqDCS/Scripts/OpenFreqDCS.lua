@@ -729,6 +729,18 @@ local function buildA10C2Radios()
         OpenFreqDCS.lastArc210DedicatedSatcomActive = arc210DedicatedSatcomActive
     end
 
+    -- SATCOM antenna selector switch (PROJECT_OBSERVED, user-reported): raw 0.0-1.0 exported as-is
+    -- -- interpretation (including the "0.5 leaves the last selection intact" sticky behavior) is
+    -- client-side, see SatcomAntennaSelectorStateMachine. See docs/SATCOM_SIMULATION.md.
+    local satcomAntennaConfig = config.a10c2 and config.a10c2.satcomAntenna
+    local arc210SatcomAntennaSelectorRaw = getArgument(mainPanel,
+        satcomAntennaConfig and satcomAntennaConfig.selectorArgument or 707, nil)
+    if arc210SatcomAntennaSelectorRaw ~= nil and (OpenFreqDCS.lastArc210SatcomAntennaSelectorRaw == nil or
+        math.abs(arc210SatcomAntennaSelectorRaw - OpenFreqDCS.lastArc210SatcomAntennaSelectorRaw) > 0.01) then
+        writeDebug(string.format("ARC210 SATCOM ANTENNA SELECTOR: %s", textOr(arc210SatcomAntennaSelectorRaw)))
+        OpenFreqDCS.lastArc210SatcomAntennaSelectorRaw = arc210SatcomAntennaSelectorRaw
+    end
+
     -- ARC-210 power knob (551): 0 = OFF, 0.1 = TR+G, 0.2 = TR, 0.3 = ADF, 0.4 = CHG PRST,
     -- 0.5 = TEST, 0.6 = ZERO (PULL). The default power heuristic below (frequency > 1000 Hz)
     -- can't see this since the dial keeps its tuned frequency even when powered off, so gate on
@@ -776,7 +788,8 @@ local function buildA10C2Radios()
             toneOn = false,
             satcomSelected = arc210SatcomSelected,
             satcomBandActive = arc210SatcomBandActive,
-            satcomDedicatedActive = arc210DedicatedSatcomActive
+            satcomDedicatedActive = arc210DedicatedSatcomActive,
+            satcomAntennaSelectorRaw = arc210SatcomAntennaSelectorRaw
         },
         {
             slot = 2,

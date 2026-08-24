@@ -469,10 +469,18 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
     public partial SatcomAcquisitionFailureReason SatcomFailureReason { get; set; } = SatcomAcquisitionFailureReason.None;
 
-    /// <summary>Debug-only telemetry bundle (only populated when the server has granted this
-    /// session debug access -- see MainWindowViewModel.DebugMode); never shown as a normal-user
-    /// control.</summary>
-    [ObservableProperty] public partial string SatcomDebugText { get; set; } = "";
+    /// <summary>DEBUG-ONLY telemetry bundle: satellite position/geometry/antenna-aspect readout
+    /// for a user tuned to a SATCOM frequency with DebugMode on (only populated when the server has
+    /// granted this session debug access -- see MainWindowViewModel.DebugMode and
+    /// ChannelCardListViewModel.BuildSatcomDebugText). Never shown as a normal-user control -- bound
+    /// separately from SatcomSubtitleText in ChannelCardView.axaml, gated on HasSatcomDebugText.
+    /// Candidate for removal or a stricter gate once the antenna model is trusted -- see
+    /// docs/SATCOM_SIMULATION.md.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSatcomDebugText))]
+    public partial string SatcomDebugText { get; set; } = "";
+
+    public bool HasSatcomDebugText => !string.IsNullOrEmpty(SatcomDebugText);
 
     public string? SatcomLinkStatusText
     {

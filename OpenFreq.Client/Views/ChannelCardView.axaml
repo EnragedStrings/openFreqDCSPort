@@ -96,6 +96,20 @@
                         Margin="0,2,0,0"
                         IsVisible="{Binding HasSatcomSubtitleText}" />
 
+                    <!-- DEBUG-ONLY: raw satellite position/geometry/antenna readout, only
+                         populated server-side with SettingsViewModel.DebugMode on; see
+                         ChannelCardViewModel.SatcomDebugText's own doc comment. Candidate for
+                         removal once the antenna model is trusted. -->
+                    <TextBlock
+                        Text="{Binding SatcomDebugText}"
+                        Classes="Caption"
+                        Opacity="0.6"
+                        FontFamily="monospace"
+                        FontSize="10"
+                        TextWrapping="Wrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasSatcomDebugText}" />
+
                 </StackPanel>
 
                 <!-- Type, Hotkey & Status -->

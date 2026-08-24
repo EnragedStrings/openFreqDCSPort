@@ -44,16 +44,18 @@ public static class SatcomLinkEngineCore
 
         var footprintAngle = SatcomGeodesy.GeocentricAngleFromSubsatellite(
             satPos.LatitudeDeg, satPos.LongitudeDeg, terminal.LatitudeDeg, terminal.LongitudeDeg);
-        var antennaGainDb = SatcomAntennaModel.CombinedGainDb(look, footprintAngle,
+        var antennaGain = SatcomAntennaModel.Evaluate(look, footprintAngle,
             satellite.FootprintHalfPowerDeg, satellite.FootprintCutoffDeg,
-            terminal.HeadingRad, terminal.PitchRad, terminal.BankRad);
+            terminal.HeadingRad, terminal.PitchRad, terminal.BankRad, terminal.AntennaSelection);
+        var antennaGainDb = antennaGain.CombinedGainDb;
 
         if (antennaGainDb <= -100.0)
         {
             return new SatcomLegResult(look.ElevationDeg, look.AzimuthDeg, look.SlantRangeMeters, antennaGainDb,
                 0, -999, SatcomLinkBudget.PropagationDelaySeconds(look.SlantRangeMeters),
                 AboveElevationMask: true, EarthOccluded: false,
-                "antenna blocked (outside footprint or airframe-masked)");
+                "antenna blocked (outside footprint or airframe-masked)",
+                antennaGain.TiltDeg, antennaGain.OffBoresightDeg, antennaGain.FootprintGainDb, antennaGain.TerminalGainDb);
         }
 
         var pathLossDb = SatcomLinkBudget.FreeSpacePathLossDb(look.SlantRangeMeters, frequencyHz);
@@ -82,7 +84,8 @@ public static class SatcomLinkEngineCore
         var propagationSeconds = SatcomLinkBudget.PropagationDelaySeconds(look.SlantRangeMeters);
 
         return new SatcomLegResult(look.ElevationDeg, look.AzimuthDeg, look.SlantRangeMeters, antennaGainDb,
-            pathLossDb, cn0DbHz, propagationSeconds, AboveElevationMask: true, EarthOccluded: false, "");
+            pathLossDb, cn0DbHz, propagationSeconds, AboveElevationMask: true, EarthOccluded: false, "",
+            antennaGain.TiltDeg, antennaGain.OffBoresightDeg, antennaGain.FootprintGainDb, antennaGain.TerminalGainDb);
     }
 
     /// <summary>Combines an already-evaluated uplink and downlink leg into the final link result:

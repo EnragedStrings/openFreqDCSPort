@@ -430,4 +430,27 @@ public static class RadioStationPresets
             _ => RadioStationPresets.FighterGeneric
         };
     }
+
+    /// <summary>Maps a DCS unit type string (DcsExportPacket.Unit / OpenFreqDCS.lua's
+    /// selfData.Name, e.g. "F-16C_50", "A-10C_2") to a radio preset. Prefix-matched, not an exact
+    /// table, since DCS ships many near-identical variant unit strings per airframe (see
+    /// OpenFreqDCS.lua's aircraftBuilders table for the full F-16 variant list this mirrors) and a
+    /// new DCS patch adding another variant string shouldn't silently fall through to generic.
+    ///
+    /// F-16 reuses <see cref="RadioStationPresets.FighterF16"/> (real AN/ARC-210 TX power/RX
+    /// sensitivity figures, same preset the BMS path already uses via
+    /// <see cref="GetPresetByBmsAircraftNctr"/> -- one real number, not two guesses).
+    ///
+    /// Every other DCS airframe -- including the A-10C II -- falls back to
+    /// <see cref="RadioStationPresets.FighterGeneric"/> for now. This is a deliberate placeholder,
+    /// not a claim that FighterGeneric is correct for those airframes: add a dedicated preset (and
+    /// a case here) once real per-aircraft TX power/RX sensitivity figures are available, same
+    /// pattern as F-16 above.</summary>
+    public static RadioStationPreset GetPresetByDcsUnit(string? dcsUnit)
+    {
+        if (!string.IsNullOrEmpty(dcsUnit) && dcsUnit.StartsWith("F-16", StringComparison.OrdinalIgnoreCase))
+            return RadioStationPresets.FighterF16;
+
+        return RadioStationPresets.FighterGeneric;
+    }
 }

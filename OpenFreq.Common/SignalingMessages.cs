@@ -259,6 +259,12 @@ public class SatcomGeometryUpdateMessage
     /// net is at capacity). NOT a model of real (classified) precedence values -- a GAMEPLAY_CONFIG
     /// abstraction only. Defaults to 0 (normal).</summary>
     [JsonPropertyName("priority")] public int Priority { get; set; }
+
+    /// <summary>Which physical SATCOM antenna is connected (see SatcomAntennaSelection), resolved
+    /// client-side by SatcomAntennaSelectorStateMachine for diversity-capable airframes -- "Upper"
+    /// or "Lower". Null/unparseable falls back to Upper (single-antenna behavior) server-side, so
+    /// non-diversity aircraft that never set this are unaffected.</summary>
+    [JsonPropertyName("antennaSelection")] public string? AntennaSelection { get; set; }
 }
 
 /// <summary>One catalog satellite's current resolved position, for the low-rate broadcast below.</summary>
@@ -329,6 +335,20 @@ public class SatcomLinkStateMessage
     [JsonPropertyName("downElevationDeg")] public double? DownlinkElevationDeg { get; set; }
     [JsonPropertyName("downAzimuthDeg")] public double? DownlinkAzimuthDeg { get; set; }
     [JsonPropertyName("downRangeM")] public double? DownlinkRangeMeters { get; set; }
+
+    // DEBUG-ONLY (candidate for removal/gating once the antenna model is trusted -- see
+    // docs/SATCOM_SIMULATION.md): raw SatcomAntennaModel breakdown per leg, so a user tuned to a
+    // SATCOM frequency can see exactly why their antenna gain is what it is -- effective tilt,
+    // off-boresight angle, and the footprint/terminal gain components separately, not just the
+    // combined C/N0 further up. Only populated when DebugAuthorized.
+    [JsonPropertyName("upTiltDeg")] public double? UplinkTiltDeg { get; set; }
+    [JsonPropertyName("upOffBoresightDeg")] public double? UplinkOffBoresightDeg { get; set; }
+    [JsonPropertyName("upFootprintGainDb")] public double? UplinkFootprintGainDb { get; set; }
+    [JsonPropertyName("upTerminalGainDb")] public double? UplinkTerminalGainDb { get; set; }
+    [JsonPropertyName("downTiltDeg")] public double? DownlinkTiltDeg { get; set; }
+    [JsonPropertyName("downOffBoresightDeg")] public double? DownlinkOffBoresightDeg { get; set; }
+    [JsonPropertyName("downFootprintGainDb")] public double? DownlinkFootprintGainDb { get; set; }
+    [JsonPropertyName("downTerminalGainDb")] public double? DownlinkTerminalGainDb { get; set; }
 
     [JsonPropertyName("frames")] public List<SatcomFrameDispositionDto> FrameDispositions { get; set; } = [];
 }

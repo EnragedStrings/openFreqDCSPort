@@ -49,9 +49,13 @@ public sealed class SatcomServerCoordinator : IDisposable
 
     public void HandleGeometryUpdate(string clientId, SatcomGeometryUpdateMessage msg, SatcomNetDefinition net, long nowMs)
     {
+        var antennaSelection = Enum.TryParse<SatcomAntennaSelection>(msg.AntennaSelection, out var parsed)
+            ? parsed
+            : SatcomAntennaSelection.Upper; // unset/unparseable -- single-antenna behavior, unchanged for non-diversity aircraft
+
         var terminal = new SatcomTerminalState(msg.LatitudeDeg, msg.LongitudeDeg, msg.AltitudeMeters,
             msg.HeadingRad, msg.PitchRad, msg.BankRad, AttitudeIsApproximate: false,
-            TunedFrequencyHz: msg.TunedFrequencyHz);
+            TunedFrequencyHz: msg.TunedFrequencyHz, AntennaSelection: antennaSelection);
 
         _linkEngine.UpdateGeometry(clientId, net.NetId, terminal, msg.RadioPowered, msg.PttPressed,
             msg.TerrainLosClear, nowMs);
@@ -123,6 +127,16 @@ public sealed class SatcomServerCoordinator : IDisposable
             message.DownlinkElevationDeg = link.Downlink.ElevationDeg;
             message.DownlinkAzimuthDeg = link.Downlink.AzimuthDeg;
             message.DownlinkRangeMeters = link.Downlink.SlantRangeMeters;
+
+            // DEBUG-ONLY antenna-model breakdown -- see SatcomLinkStateMessage's own doc comment.
+            message.UplinkTiltDeg = link.Uplink.TiltDeg;
+            message.UplinkOffBoresightDeg = link.Uplink.OffBoresightDeg;
+            message.UplinkFootprintGainDb = link.Uplink.FootprintGainDb;
+            message.UplinkTerminalGainDb = link.Uplink.TerminalGainDb;
+            message.DownlinkTiltDeg = link.Downlink.TiltDeg;
+            message.DownlinkOffBoresightDeg = link.Downlink.OffBoresightDeg;
+            message.DownlinkFootprintGainDb = link.Downlink.FootprintGainDb;
+            message.DownlinkTerminalGainDb = link.Downlink.TerminalGainDb;
         }
 
         if (link.LinkAvailable)

@@ -206,6 +206,7 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         // Subscribe to frequency status changes
         _openFreqService.FrequencyConnectionStatusChanged += OnFrequencyConnectionStatusChanged;
         _openFreqService.FrequencyTransmissionStatusChanged += OnFrequencyTransmissionStatusChanged;
+        _openFreqService.SignalBlockedStatusChanged += OnSignalBlockedStatusChanged;
 
         _acmiClientService.ConnectionStatusChanged += OnAcmiConnectionStatusChanged;
 
@@ -375,6 +376,23 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         });
     }
 
+    private static string? SignalBlockedDisplayText(SignalBlockReason reason) => reason switch
+    {
+        SignalBlockReason.TerrainLos => "LOS BLOCKED",
+        SignalBlockReason.WeakSignal => "SIGNAL TOO WEAK",
+        _ => null
+    };
+
+    private void OnSignalBlockedStatusChanged(object? sender, SignalBlockedStatusEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var text = SignalBlockedDisplayText(e.Reason);
+            foreach (var channel in Channels.Where(c => c.FrequencyKhz == e.FrequencyKhz).ToList())
+                channel.SignalBlockedText = text;
+        });
+    }
+
 
     private void OnSquelchEnabledDisabled(object recipient, SquelchEnabledDisabledMessage message)
     {
@@ -519,6 +537,7 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         _hotkeyService.HotkeyReleased -= OnHotkeyReleased;
         _openFreqService.FrequencyConnectionStatusChanged -= OnFrequencyConnectionStatusChanged;
         _openFreqService.FrequencyTransmissionStatusChanged -= OnFrequencyTransmissionStatusChanged;
+        _openFreqService.SignalBlockedStatusChanged -= OnSignalBlockedStatusChanged;
         _openFreqService.ConnectionStateChanged -= OnConnectionStateChanged;
         _acmiClientService.ConnectionStatusChanged -= OnAcmiConnectionStatusChanged;
 

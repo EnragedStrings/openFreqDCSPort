@@ -18,6 +18,22 @@ namespace OpenFreqAudio
         FM
     }
 
+    /// <summary>Why AudioParams.SignalBlocked is set -- see that field's own doc comment. Mirrors
+    /// the two branches OpenFreqService.ApplyDcsLineOfSightLoss actually distinguishes today; add
+    /// cases here only alongside a real distinguishable cause in that method, not speculatively.</summary>
+    public enum SignalBlockReason
+    {
+        None,
+
+        /// <summary>DCS terrain (a mountain, a valley wall) sits between the two aircraft --
+        /// essentially fully opaque, not just attenuated.</summary>
+        TerrainLos,
+
+        /// <summary>Not fully terrain-opaque, but the resulting signal (terrain attenuation
+        /// stacked with distance/horizon loss) is too weak to be worth attempting.</summary>
+        WeakSignal
+    }
+
     /// <summary>
     /// Configuration for a radio band's physical characteristics
     /// </summary>
@@ -71,6 +87,12 @@ namespace OpenFreqAudio
         // from merely attenuated. Not set by FastPathAudioSim itself; callers with the extra
         // context (DCS line-of-sight, horizon geometry) set this on the params they compute.
         public bool SignalBlocked;
+
+        // Why SignalBlocked is set, for UI display (e.g. "LOS BLOCKED" next to a channel's RX
+        // indicator) -- distinct reasons matter to a user even though both currently result in the
+        // same hard cutoff. Meaningless when SignalBlocked is false. Same "not set by
+        // FastPathAudioSim itself" caveat as SignalBlocked above.
+        public SignalBlockReason BlockedReason;
 
         public override string ToString()
         {

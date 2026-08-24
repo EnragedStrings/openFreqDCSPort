@@ -70,6 +70,16 @@ public interface IOpenFreqService : IDisposable
     event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
     event EventHandler<FrequencyTransmissionStatusEventArgs>? FrequencyTransmissionStatusChanged;
 
+    /// <summary>Fired whenever an incoming transmission on a frequency is found to be blocked by
+    /// this client's own terrestrial signal model (DCS terrain LOS, or resulting signal too weak
+    /// -- see AudioParams.BlockedReason), and again with Reason=None once audio successfully gets
+    /// through again -- lets the UI show WHY a channel showing "someone is transmitting" isn't
+    /// actually audible, e.g. "LOS BLOCKED", instead of silently dropping the audio with no
+    /// explanation. Frequency-level, same granularity as FrequencyTransmissionStatusChanged (not
+    /// per-peer) -- if multiple peers share a frequency, this reflects whichever one's packet was
+    /// last evaluated.</summary>
+    event EventHandler<SignalBlockedStatusEventArgs>? SignalBlockedStatusChanged;
+
     public event EventHandler<FrequencyJoinedEventArgs>? FrequencyJoined;
     public event EventHandler<PeerEventArgs>? PeerJoined;
     public event EventHandler<PeerEventArgs>? PeerLeft;

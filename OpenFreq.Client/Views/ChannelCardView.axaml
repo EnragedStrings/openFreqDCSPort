@@ -96,6 +96,18 @@
                         Margin="0,2,0,0"
                         IsVisible="{Binding HasSatcomSubtitleText}" />
 
+                    <!-- Why an incoming transmission isn't actually audible right now (e.g. "LOS
+                         BLOCKED"); shown alongside the transmitting indicator, not instead of
+                         it. See ChannelCardViewModel.SignalBlockedText's own doc comment. -->
+                    <TextBlock
+                        Text="{Binding SignalBlockedText}"
+                        Classes="Caption"
+                        FontWeight="SemiBold"
+                        Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                        TextWrapping="NoWrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasSignalBlockedText}" />
+
                     <!-- DEBUG-ONLY: raw satellite position/geometry/antenna readout, only
                          populated server-side with SettingsViewModel.DebugMode on; see
                          ChannelCardViewModel.SatcomDebugText's own doc comment. Candidate for

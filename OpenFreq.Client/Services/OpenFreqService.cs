@@ -50,6 +50,10 @@ public class OpenFreqService : IOpenFreqService
     // LOS-blocked from one another -- see OnClientAudioDataReceived's SignalBlocked check below.
     private readonly ConcurrentDictionary<int, byte> _satcomActiveFrequencies = new();
 
+    // Change-tracked so SignalBlockedStatusChanged fires on real transitions only, not on every
+    // ~20ms packet while a block (or a clear signal) is ongoing.
+    private readonly ConcurrentDictionary<int, SignalBlockReason> _lastSignalBlockedReason = new();
+
     // Frequencies currently transmitting a synthesized tone (see StartToneTransmissionAsync)
     // rather than real mic audio. Subset of _activeTransmissionsAndMutedFrequencies' keys.
     private readonly ConcurrentDictionary<int, byte> _toneTransmissionFrequencies = new();
@@ -315,6 +319,7 @@ public class OpenFreqService : IOpenFreqService
     public event EventHandler<MicLevelChangedEventArgs>? MicLevelChanged;
     public event EventHandler<FrequencyConnectionStatusEventArgs>? FrequencyConnectionStatusChanged;
     public event EventHandler<FrequencyTransmissionStatusEventArgs>? FrequencyTransmissionStatusChanged;
+    public event EventHandler<SignalBlockedStatusEventArgs>? SignalBlockedStatusChanged;
     public event EventHandler<FrequencyJoinedEventArgs>? FrequencyJoined;
     public event EventHandler<PeerEventArgs>? PeerJoined;
     public event EventHandler<PeerEventArgs>? PeerLeft;
@@ -1660,6 +1665,8 @@ public class OpenFreqService : IOpenFreqService
 
             if (audioParams.SignalBlocked && terrestrialBlockApplies)
             {
+                RaiseSignalBlockedStatusChanged(frequencyTransmission.Khz, audioParams.BlockedReason);
+
                 if (_playbackService?.IsStreamActive(streamId) ?? false)
                 {
                     _playbackService.UpdateStreamParams(streamId, audioParams);
@@ -1668,6 +1675,8 @@ public class OpenFreqService : IOpenFreqService
 
                 continue;
             }
+
+            RaiseSignalBlockedStatusChanged(frequencyTransmission.Khz, SignalBlockReason.None);
 
             lock (_streamCreationLock)
             {
@@ -1903,8 +1912,16 @@ public class OpenFreqService : IOpenFreqService
 
         audioParams.DropoutRate = Math.Max(audioParams.DropoutRate, (float)(loss * 8.0d));
         audioParams.DeepFadeRate = Math.Max(audioParams.DeepFadeRate, (float)(loss * 1.5d));
-        if (loss >= 0.99d || audioParams.ReceivedSnrDb <= -18.0f)
+        if (loss >= 0.99d)
+        {
             audioParams.SignalBlocked = true;
+            audioParams.BlockedReason = SignalBlockReason.TerrainLos;
+        }
+        else if (audioParams.ReceivedSnrDb <= -18.0f)
+        {
+            audioParams.SignalBlocked = true;
+            audioParams.BlockedReason = SignalBlockReason.WeakSignal;
+        }
         return audioParams;
     }
 
@@ -1919,7 +1936,8 @@ public class OpenFreqService : IOpenFreqService
             RadioFrequencyKHz = source.RadioFrequencyKHz,
             TuneOffsetPPM = source.TuneOffsetPPM,
             TerrainProfile = source.TerrainProfile,
-            SignalBlocked = source.SignalBlocked
+            SignalBlocked = source.SignalBlocked,
+            BlockedReason = source.BlockedReason
         };
     }
 
@@ -2011,6 +2029,15 @@ public class OpenFreqService : IOpenFreqService
         _logger.LogDebug("Frequency {FrequencyKhz}: {Status}", frequencyKhz, transmissionStatus);
         FrequencyTransmissionStatusChanged?.Invoke(this,
             new FrequencyTransmissionStatusEventArgs(frequencyKhz, transmissionStatus, is3d));
+    }
+
+    private void RaiseSignalBlockedStatusChanged(int frequencyKhz, SignalBlockReason reason)
+    {
+        if (_lastSignalBlockedReason.TryGetValue(frequencyKhz, out var last) && last == reason)
+            return; // no real transition -- don't spam subscribers every packet
+
+        _lastSignalBlockedReason[frequencyKhz] = reason;
+        SignalBlockedStatusChanged?.Invoke(this, new SignalBlockedStatusEventArgs(frequencyKhz, reason));
     }
 
     private void OnPeerActivity(object? sender, PeerActivityEventArgs args) =>
@@ -2130,6 +2157,12 @@ public class FrequencyTransmissionStatusEventArgs(
     public int FrequencyKhz { get; } = frequencyKhz;
     public Channel.ChannelTransmissionStatus TransmissionStatus { get; } = transmissionStatus;
     public bool Is3d { get; } = is3d;
+}
+
+public class SignalBlockedStatusEventArgs(int frequencyKhz, SignalBlockReason reason) : EventArgs
+{
+    public int FrequencyKhz { get; } = frequencyKhz;
+    public SignalBlockReason Reason { get; } = reason;
 }
 
 public class PeerActivityEventArgs(int frequencyKhz, PeerData peerData, bool is3d) : EventArgs

@@ -149,6 +149,18 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public partial Channel.ChannelTransmissionStatus TransmissionStatus { get; set; } =
         Channel.ChannelTransmissionStatus.Idle;
 
+    /// <summary>Why an incoming transmission on this channel isn't actually audible right now
+    /// (see OpenFreqService.SignalBlockedStatusChanged) -- e.g. "LOS BLOCKED" -- shown alongside
+    /// TransmissionStatus rather than replacing it, since the peer-transmitting indicator is
+    /// deliberately left alone (it reflects the PTT signal, not audibility) per explicit product
+    /// decision. None/null when the last evaluated transmission on this frequency came through
+    /// fine.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSignalBlockedText))]
+    public partial string? SignalBlockedText { get; set; }
+
+    public bool HasSignalBlockedText => !string.IsNullOrEmpty(SignalBlockedText);
+
     [ObservableProperty] public partial bool IsEditing { get; set; }
 
     /// <summary>Whether this is the currently-selected radio -- the target of the global PTT

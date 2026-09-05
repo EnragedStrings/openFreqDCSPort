@@ -543,7 +543,7 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     // small wobble keeps it from sitting at a razor-locked frequency, same idea as the F-16
     // inverter's FM wobble.
     private const float InvFreq    = 398.4f;
-    private const float InvLevel   = 0.020f; // fundamental -- an accent layer now, not the dominant element
+    private const float InvLevel   = 0.010f; // fundamental -- an accent layer now, not the dominant element
     private const float InvH2Ratio = 0.35f;
     private const float InvH3Ratio = 0.20f;
     private const float InvH4Ratio = 0.10f;
@@ -621,11 +621,11 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
             _invWobblePhase += invWobbleInc; if (_invWobblePhase > Math.PI * 2) _invWobblePhase -= Math.PI * 2;
             double invInc = 2.0 * Math.PI * (InvFreq + invWobble) / _sampleRate;
 
-            float invRaw = (float)Math.Sin(_invPhase)
-                         + (float)Math.Sin(_invPhase * 2.0) * InvH2Ratio
-                         + (float)Math.Sin(_invPhase * 3.0) * InvH3Ratio
-                         + (float)Math.Sin(_invPhase * 4.0) * InvH4Ratio
-                         + (float)Math.Sin(_invPhase * 5.0) * InvH5Ratio;
+            float invRaw = (float)Math.Sin(_invPhase) * 0.5f
+                         + (float)Math.Sin(_invPhase * 2.0) * 0.5f * InvH2Ratio
+                         + (float)Math.Sin(_invPhase * 3.0) * 0.5f * InvH3Ratio
+                         + (float)Math.Sin(_invPhase * 4.0) * 0.5f * InvH4Ratio
+                         + (float)Math.Sin(_invPhase * 5.0) * 0.5f * InvH5Ratio;
             float invSample = MathF.Tanh(invRaw * InvSatDrive) * InvSatNorm * InvLevel * _strength;
             _invPhase += invInc; if (_invPhase > Math.PI * 2) _invPhase -= Math.PI * 2;
 

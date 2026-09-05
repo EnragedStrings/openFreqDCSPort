@@ -143,6 +143,34 @@ public static class RadioStationPresets
         description: "F-15C/D/E with AN/ARC-164 UHF and AN/ARC-186 VHF radios"
     );
 
+    public static readonly RadioStationPreset AttackA10 = new(
+        name: "A-10C Thunderbolt II",
+        category: "Airborne",
+        antennaElevation: 2.0,
+        txPowerVhf: 10.0, // AN/ARC-186: 10W VHF AM/FM (same radio family as F-15)
+        rxSensitivityVhf: -110.0,
+        txPowerUhf: 10.0, // AN/ARC-164: 10W UHF AM
+        rxSensitivityUhf: -107.0,
+        minPpm: 0.5, // Crystal oscillator in ARC-164, same era as the F-15's radios
+        maxPpm: 2.0,
+        ambientNoiseType: AmbientNoiseType.AirA10,
+        description: "A-10C with AN/ARC-164 UHF and AN/ARC-186 VHF radios (A-10C II adds AN/ARC-210)"
+    );
+
+    public static readonly RadioStationPreset HelicopterUH60 = new(
+        name: "UH-60L Black Hawk",
+        category: "Airborne",
+        antennaElevation: 1.5,
+        txPowerVhf: 10.0, // AN/ARC-186 VHF AM/FM, AN/ARC-201 FM
+        rxSensitivityVhf: -107.0,
+        txPowerUhf: 10.0, // AN/ARC-164 UHF
+        rxSensitivityUhf: -105.0,
+        minPpm: 1.0, // More vibration, temperature variation
+        maxPpm: 3.0,
+        ambientNoiseType: AmbientNoiseType.AirUH60,
+        description: "UH-60L Black Hawk with AN/ARC-164 UHF, AN/ARC-186 VHF and AN/ARC-201 FM radios"
+    );
+
     public static readonly RadioStationPreset FighterGeneric = new(
         name: "Fighter Aircraft",
         category: "Airborne",
@@ -373,7 +401,7 @@ public static class RadioStationPresets
         return new[]
         {
             // Airborne
-            AWACS, FighterF16, FighterF15, FighterGeneric, Tanker, Transport, Helicopter,
+            AWACS, FighterF16, FighterF15, AttackA10, FighterGeneric, Tanker, Transport, Helicopter, HelicopterUH60,
             // Ground Military
             GCI_LowTower, GCI_HighTower,
             FACC_Standard, FACC_Extended,
@@ -387,7 +415,7 @@ public static class RadioStationPresets
     public static readonly IEnumerable<RadioStationPreset> AllPresets =
     [
         // Airborne
-        AWACS, FighterF16, FighterF15, FighterGeneric, Tanker, Transport, Helicopter,
+        AWACS, FighterF16, FighterF15, AttackA10, FighterGeneric, Tanker, Transport, Helicopter, HelicopterUH60,
         // Ground Military
         GCI_LowTower, GCI_HighTower,
         FACC_Standard, FACC_Extended,
@@ -432,24 +460,36 @@ public static class RadioStationPresets
     }
 
     /// <summary>Maps a DCS unit type string (DcsExportPacket.Unit / OpenFreqDCS.lua's
-    /// selfData.Name, e.g. "F-16C_50", "A-10C_2") to a radio preset. Prefix-matched, not an exact
-    /// table, since DCS ships many near-identical variant unit strings per airframe (see
-    /// OpenFreqDCS.lua's aircraftBuilders table for the full F-16 variant list this mirrors) and a
-    /// new DCS patch adding another variant string shouldn't silently fall through to generic.
+    /// selfData.Name, e.g. "F-16C_50", "A-10C_2", "UH-60L") to a radio preset. Prefix-matched, not
+    /// an exact table, since DCS ships many near-identical variant unit strings per airframe (see
+    /// OpenFreqDCS.lua's aircraftBuilders table for the full variant lists this mirrors) and a new
+    /// DCS patch adding another variant string shouldn't silently fall through to generic.
     ///
     /// F-16 reuses <see cref="RadioStationPresets.FighterF16"/> (real AN/ARC-210 TX power/RX
     /// sensitivity figures, same preset the BMS path already uses via
-    /// <see cref="GetPresetByBmsAircraftNctr"/> -- one real number, not two guesses).
+    /// <see cref="GetPresetByBmsAircraftNctr"/> -- one real number, not two guesses). A-10 and
+    /// UH-60 get their own dedicated presets (<see cref="RadioStationPresets.AttackA10"/>,
+    /// <see cref="RadioStationPresets.HelicopterUH60"/>) mainly for their aircraft-specific
+    /// <see cref="AmbientNoiseType"/>; their TX/RX figures are shared-radio-family estimates
+    /// (ARC-164/ARC-186, same numbers as F-15/Helicopter), not independently sourced.
     ///
-    /// Every other DCS airframe -- including the A-10C II -- falls back to
-    /// <see cref="RadioStationPresets.FighterGeneric"/> for now. This is a deliberate placeholder,
-    /// not a claim that FighterGeneric is correct for those airframes: add a dedicated preset (and
-    /// a case here) once real per-aircraft TX power/RX sensitivity figures are available, same
-    /// pattern as F-16 above.</summary>
+    /// Every other DCS airframe falls back to <see cref="RadioStationPresets.FighterGeneric"/> for
+    /// now. This is a deliberate placeholder, not a claim that FighterGeneric is correct for those
+    /// airframes: add a dedicated preset (and a case here) once real per-aircraft TX power/RX
+    /// sensitivity figures are available, same pattern as F-16 above.</summary>
     public static RadioStationPreset GetPresetByDcsUnit(string? dcsUnit)
     {
-        if (!string.IsNullOrEmpty(dcsUnit) && dcsUnit.StartsWith("F-16", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(dcsUnit))
+            return RadioStationPresets.FighterGeneric;
+
+        if (dcsUnit.StartsWith("F-16", StringComparison.OrdinalIgnoreCase))
             return RadioStationPresets.FighterF16;
+
+        if (dcsUnit.StartsWith("A-10", StringComparison.OrdinalIgnoreCase))
+            return RadioStationPresets.AttackA10;
+
+        if (dcsUnit.StartsWith("UH-60", StringComparison.OrdinalIgnoreCase))
+            return RadioStationPresets.HelicopterUH60;
 
         return RadioStationPresets.FighterGeneric;
     }

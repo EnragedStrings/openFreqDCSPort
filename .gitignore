@@ -422,3 +422,6 @@ fabric.properties
 
 # SatcomAudioTool listening-test output (local scratch WAVs, not source)
 /satcom-out/
+
+# Reference cockpit recordings used to tune ambient-noise synthesis (not loaded by the app)
+/Assets/AircraftAmbient/

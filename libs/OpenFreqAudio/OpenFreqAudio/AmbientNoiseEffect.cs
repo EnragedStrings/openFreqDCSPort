@@ -20,6 +20,12 @@ public enum AmbientNoiseType
     /// <summary>Generic jet cockpit: ECS compressor whine, engine roar, oxygen-mask muffle.</summary>
     AirGeneric,
 
+    /// <summary>A-10C cockpit: dominant twin 400Hz inverter whine, light engine roar, oxygen-mask muffle.</summary>
+    AirA10,
+
+    /// <summary>UH-60L cockpit: main/tail rotor blade-passage thump, engine/gearbox roar, headset muffle.</summary>
+    AirUH60,
+
     /// <summary>Ground vehicle (APC, HMMWV, tank).</summary>
     Ground,
 
@@ -60,6 +66,8 @@ internal static class AmbientNoiseEffectFactory
             AmbientNoiseType.AirF16     => new AirF16AmbientEffect(sampleRate, strength),
             AmbientNoiseType.AirF15     => new AirF15AmbientEffect(sampleRate, strength),
             AmbientNoiseType.AirGeneric => new AirGenericAmbientEffect(sampleRate, strength),
+            AmbientNoiseType.AirA10     => new AirA10AmbientEffect(sampleRate, strength),
+            AmbientNoiseType.AirUH60    => new AirUH60AmbientEffect(sampleRate, strength),
             AmbientNoiseType.Ground     => new GroundAmbientEffect(sampleRate, strength),
             AmbientNoiseType.Stationary => new StationaryAmbientEffect(sampleRate, strength),
             _                           => NullAmbientEffect.Instance,
@@ -460,6 +468,285 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
             _muffleLP2 = lp2;
 
             float wet = lp2 * 0.55f + x * 0.45f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  AirA10 — A-10C cockpit
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Signal chain:
+///   clean PCM
+///   → [PreFade]  twin 400Hz inverter whine: two independent oscillators (~399/~398Hz) beating,
+///                dominant element -- unlike the jet-fighter effects, here the whine outweighs
+///                the engine roar rather than the other way around
+///   → [PreFade]  HF avionics/gyro whine cluster (~4.7-4.8kHz), light
+///   → [PreFade]  engine roar: noise → one-pole LPF (additive, subordinate to the whine)
+///   → [PreFade]  oxygen-mask two-pole LPF 1900 Hz + nasal cavity blend
+///   → RF fading  (handled by RadioEffect)
+///
+/// Tuned against a pair of reference A-10C cockpit recordings: the ~398-400Hz tone is by far the
+/// loudest feature in the spectrum (everything else is 20dB+ down), it beats slowly at ~1.8Hz,
+/// and there's a much quieter high-pitched cluster around 4.7-4.8kHz. The twin-TF34 airframe runs
+/// two independent 400Hz AC inverters a couple Hz apart, which produces exactly that slow beat as
+/// a byproduct of summing two real oscillators rather than needing an explicit LFO.
+/// </summary>
+internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
+{
+    private readonly int _sampleRate;
+    private readonly float _strength;
+
+    // Oxygen-mask + comms band-limit -- same cutoff as the other fighter effects; A-10C pilots
+    // fly the same HGU-55/MBU-12 helmet-and-mask combo.
+    private const float MuffleCutoff = 1900f;
+    private readonly float _muffleA;
+    private float _muffleLP1;
+    private float _muffleLP2;
+
+    private const float AlcMakeup = 2.0f;
+    private const float AlcKnee   = 0.70f;
+
+    // Twin 400Hz inverter whine -- two real oscillators a couple Hz apart so the ~1.8Hz beat
+    // measured in the reference recordings falls out of the superposition for free, rather than
+    // being faked with an LFO. This is the dominant element of the whole effect.
+    private const float InvFreqA   = 399.3f;
+    private const float InvFreqB   = 397.5f;
+    private const float InvLevel   = 0.050f; // fundamental
+    private const float InvH2Level = 0.0043f; // ~-21dB vs fundamental (measured)
+    private const float InvH3Level = 0.0013f; // ~-32dB vs fundamental (measured)
+    private const float InvH5Level = 0.0016f; // ~-30dB vs fundamental (measured)
+    private double _invPhaseA;
+    private double _invPhaseB;
+
+    // High-pitched gyro/avionics-cooling whine cluster -- a tight pair of tones near 4.7-4.8kHz,
+    // ~20-25dB below the inverter, present in both reference recordings.
+    private const float HfFreqA = 4760f;
+    private const float HfFreqB = 4784f;
+    private const float HfLevel = 0.0040f;
+    private double _hfPhaseA;
+    private double _hfPhaseB;
+
+    // Engine roar -- noise → one-pole LPF. 450Hz cutoff (not the inverter's own 300-500Hz band)
+    // so energy survives the PostFade 300Hz high-pass, same reasoning as GroundAmbientEffect.
+    // Subordinate to the whine here (~22dB down) -- the opposite balance from the jet effects,
+    // where roar dominates and the whine is the accent.
+    private const float RoarLevel = 0.005f;
+    private readonly float _roarLpA;
+    private float _roarLpState;
+    private uint _noiseState = 0x9E3779B9u;
+
+    public AirA10AmbientEffect(int sampleRate, float strength)
+    {
+        _sampleRate = sampleRate;
+        _strength   = strength;
+
+        _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
+        _roarLpA = MathF.Exp(-2f * MathF.PI * 450f / sampleRate);
+    }
+
+    public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
+    {
+        double incA   = 2.0 * Math.PI * InvFreqA / _sampleRate;
+        double incB   = 2.0 * Math.PI * InvFreqB / _sampleRate;
+        double hfIncA = 2.0 * Math.PI * HfFreqA  / _sampleRate;
+        double hfIncB = 2.0 * Math.PI * HfFreqB  / _sampleRate;
+
+        for (int frame = 0; frame < frames; frame++)
+        {
+            // Twin inverters: fundamental + harmonics from each oscillator, summed and halved so
+            // the beat is an interference pattern rather than a doubled-level tone.
+            float invSample = ((float)Math.Sin(_invPhaseA)       + (float)Math.Sin(_invPhaseB))       * 0.5f * InvLevel
+                            + ((float)Math.Sin(_invPhaseA * 2.0) + (float)Math.Sin(_invPhaseB * 2.0)) * 0.5f * InvH2Level
+                            + ((float)Math.Sin(_invPhaseA * 3.0) + (float)Math.Sin(_invPhaseB * 3.0)) * 0.5f * InvH3Level
+                            + ((float)Math.Sin(_invPhaseA * 5.0) + (float)Math.Sin(_invPhaseB * 5.0)) * 0.5f * InvH5Level;
+            invSample *= _strength;
+            _invPhaseA += incA; if (_invPhaseA > Math.PI * 2) _invPhaseA -= Math.PI * 2;
+            _invPhaseB += incB; if (_invPhaseB > Math.PI * 2) _invPhaseB -= Math.PI * 2;
+
+            float hfSample = ((float)Math.Sin(_hfPhaseA) + (float)Math.Sin(_hfPhaseB)) * 0.5f * HfLevel * _strength;
+            _hfPhaseA += hfIncA; if (_hfPhaseA > Math.PI * 2) _hfPhaseA -= Math.PI * 2;
+            _hfPhaseB += hfIncB; if (_hfPhaseB > Math.PI * 2) _hfPhaseB -= Math.PI * 2;
+
+            // Engine roar: Knuth LCG → one-pole LPF
+            _noiseState  = _noiseState * 1664525u + 1013904223u;
+            float roar   = _roarLpA * _roarLpState + (1f - _roarLpA) * ((int)_noiseState * (1f / 2147483648f));
+            _roarLpState = roar;
+
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = dry;
+
+            x += invSample;                     // twin 400Hz inverter whine -- dominant element
+            x += hfSample;                      // avionics/gyro HF whine cluster
+            x += roar * RoarLevel * _strength;  // structure-borne engine roar (subordinate)
+
+            // Transmitter ALC: clean makeup gain + peak limiter → loud, no crunch
+            x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
+
+            // Oxygen-mask two-pole LPF + nasal cavity blend
+            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+            _muffleLP1 = lp1;
+            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+            _muffleLP2 = lp2;
+
+            float wet = lp2 * 0.55f + x * 0.45f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  AirUH60 — UH-60L Black Hawk cockpit
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Signal chain:
+///   clean PCM
+///   → [PreFade]  main-rotor AM: 17.2Hz blade-passage thump (4 blades @ ~258 RPM), shaped for a
+///                punchier "wop" than a plain sine, plus a lighter ~86.5Hz tail-rotor flutter
+///   → [PreFade]  blade-slap ring: a ~350Hz structural resonance re-triggered once per main-rotor
+///                blade pass and left to decay, rather than a fixed continuous tone
+///   → [PreFade]  main gearbox whine: ~990Hz gear-mesh tone
+///   → [PreFade]  engine/transmission roar: noise → one-pole LPF (T700 turboshaft + gearbox)
+///   → [PreFade]  headset/boom-mic band-limit LPF 2400 Hz + partial dry blend
+///   → RF fading  (handled by RadioEffect)
+///
+/// Tuned against a pair of reference UH-60L cockpit recordings. The main rotor's 17.2Hz blade-
+/// passage rate (4 blades, ~258 RPM) is the strongest low-frequency feature; a ~350Hz resonance is
+/// nearly as strong and rings on every blade pass rather than sounding continuously, which is why
+/// it's modeled as a re-triggered decaying oscillator instead of a steady tone. A secondary
+/// ~86.5Hz component matches the tail rotor (geared ~5.03:1 off the main rotor). Because the
+/// PostFade stage high-passes at 300Hz, the rotor rate itself can't survive as an additive tone --
+/// it only reaches the transmitted audio as amplitude modulation of in-band content, which is
+/// physically consistent with how rotor thump actually reaches a radio downlink.
+/// </summary>
+internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
+{
+    private readonly int _sampleRate;
+    private readonly float _strength;
+
+    // Headset/boom-mic band-limit -- higher cutoff and lighter blend than a jet oxygen mask;
+    // UH-60 crews fly HGU-56 helmets with a boom mic, not a full mask.
+    private const float MuffleCutoff = 2400f;
+    private readonly float _muffleA;
+    private float _muffleLP;
+
+    private const float AlcMakeup = 1.8f;
+    private const float AlcKnee   = 0.70f;
+
+    // Main rotor: 4 blades @ ~258 RPM → 17.2Hz blade-passage frequency (measured 17.2-17.6Hz).
+    // AM depth is NOT scaled by strength -- it's part of the platform character, same convention
+    // as the jet/ground rumble.
+    private const float MainRotorBpf     = 17.2f;
+    private const float MainRotorAmDepth = 0.30f;
+    private double _mainRotorPhase;
+
+    // Tail rotor: geared ~5.03:1 off the main rotor → ~86.5Hz, matching the secondary ~80-88Hz
+    // peaks in the reference recordings. Lighter, higher-pitched flutter on top of the main thump.
+    private const float TailRotorBpf     = MainRotorBpf * 5.03f;
+    private const float TailRotorAmDepth = 0.06f;
+    private double _tailRotorPhase;
+
+    // Blade-slap ring: each main-rotor blade pass excites a ~350Hz structural resonance (measured
+    // 351.6Hz, nearly as strong as the 17Hz fundamental) that rings and decays before the next
+    // blade pass. Re-triggered once per revolution rather than a fixed tone so it stays locked to
+    // blade rate regardless of strength.
+    private const float RingFreq  = 350f;
+    private const float RingLevel = 0.045f;
+    private readonly int _bladePassSamples;
+    private double _ringPhase;
+    private float _ringAmp;
+    private readonly float _ringDecayPerSample;
+    private int _samplesToNextBladePass;
+
+    // Engine/transmission roar -- T700 turboshaft + main gearbox, broadband noise → one-pole LPF.
+    // 480Hz cutoff so energy survives the PostFade 300Hz high-pass, same reasoning as
+    // GroundAmbientEffect's engine roar.
+    private const float RoarLevel = 0.028f;
+    private readonly float _roarLpA;
+    private float _roarLpState;
+    private uint _roarNoiseState = 0x9E3779B9u;
+
+    // Main gearbox whine -- gear-mesh tone, clearly present in both reference recordings near 1kHz.
+    private const float GearboxFreq  = 990f;
+    private const float GearboxLevel = 0.006f;
+    private double _gearboxPhase;
+
+    public AirUH60AmbientEffect(int sampleRate, float strength)
+    {
+        _sampleRate = sampleRate;
+        _strength   = strength;
+
+        _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
+        _roarLpA = MathF.Exp(-2f * MathF.PI * 480f / sampleRate);
+
+        _bladePassSamples = Math.Max(1, (int)(sampleRate / MainRotorBpf));
+        // Ring decays to ~1% amplitude over one blade-pass period so it doesn't build up.
+        _ringDecayPerSample = MathF.Exp(MathF.Log(0.01f) / _bladePassSamples);
+        _samplesToNextBladePass = _bladePassSamples;
+    }
+
+    public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
+    {
+        double mainInc     = 2.0 * Math.PI * MainRotorBpf / _sampleRate;
+        double tailInc     = 2.0 * Math.PI * TailRotorBpf / _sampleRate;
+        double ringInc     = 2.0 * Math.PI * RingFreq     / _sampleRate;
+        double gearboxInc  = 2.0 * Math.PI * GearboxFreq  / _sampleRate;
+
+        for (int frame = 0; frame < frames; frame++)
+        {
+            // Re-trigger the blade-slap resonance once per main-rotor blade pass.
+            if (--_samplesToNextBladePass <= 0)
+            {
+                _ringAmp = 1f;
+                _ringPhase = 0.0;
+                _samplesToNextBladePass = _bladePassSamples;
+            }
+
+            float ringSample = (float)Math.Sin(_ringPhase) * _ringAmp * RingLevel * _strength;
+            _ringPhase += ringInc;
+            if (_ringPhase > Math.PI * 2) _ringPhase -= Math.PI * 2;
+            _ringAmp *= _ringDecayPerSample;
+
+            // Rotor thump: main + tail rotor AM. The main term is sharpened (sin raised to a
+            // fractional power, sign-preserved) for a punchier "wop" than a plain sine would give.
+            float mainWave    = (float)Math.Sin(_mainRotorPhase);
+            float shapedMain  = MathF.Sign(mainWave) * MathF.Pow(MathF.Abs(mainWave), 0.6f);
+            float tailWave    = (float)Math.Sin(_tailRotorPhase);
+            float thrumGain   = 1f + shapedMain * MainRotorAmDepth + tailWave * TailRotorAmDepth;
+            _mainRotorPhase += mainInc;
+            _tailRotorPhase += tailInc;
+            if (_mainRotorPhase > Math.PI * 2) _mainRotorPhase -= Math.PI * 2;
+            if (_tailRotorPhase > Math.PI * 2) _tailRotorPhase -= Math.PI * 2;
+
+            // Engine/gearbox roar: Knuth LCG → one-pole LPF
+            _roarNoiseState = _roarNoiseState * 1664525u + 1013904223u;
+            float roar      = _roarLpA * _roarLpState + (1f - _roarLpA) * ((int)_roarNoiseState * (1f / 2147483648f));
+            _roarLpState    = roar;
+
+            float gearboxSample = (float)Math.Sin(_gearboxPhase) * GearboxLevel * _strength;
+            _gearboxPhase += gearboxInc;
+            if (_gearboxPhase > Math.PI * 2) _gearboxPhase -= Math.PI * 2;
+
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = dry;
+
+            x *= thrumGain;                            // rotor vibration AM-modulates mic pickup
+            x += ringSample;                            // blade-slap structural resonance
+            x += roar * RoarLevel * _strength;          // engine + transmission roar
+            x += gearboxSample;                         // main gearbox gear-mesh whine
+
+            x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
+
+            // Headset/boom-mic band-limit, lighter blend than the jet oxygen mask
+            float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
+            _muffleLP = lp;
+
+            float wet = lp * 0.45f + x * 0.55f;
             buffer[idx] = dry + volume * (wet - dry);
         }
     }

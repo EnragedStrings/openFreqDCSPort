@@ -20,7 +20,7 @@ public enum AmbientNoiseType
     /// <summary>Generic jet cockpit: ECS compressor whine, engine roar, oxygen-mask muffle.</summary>
     AirGeneric,
 
-    /// <summary>A-10C cockpit: dominant twin 400Hz AC generator whine (one per engine), engine roar, oxygen-mask muffle.</summary>
+    /// <summary>A-10C cockpit: dominant twin 400Hz inverter whine, light engine roar, oxygen-mask muffle.</summary>
     AirA10,
 
     /// <summary>UH-60L cockpit: main/tail rotor blade-passage thump, engine/gearbox roar, headset muffle.</summary>
@@ -478,33 +478,21 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
 // ---------------------------------------------------------------------------
 
 /// <summary>
-/// Signal chain -- the same generic-jet-cockpit base as <see cref="AirGenericAmbientEffect"/>
-/// (airframe AM, N1/N2 engine whine, engine roar, oxygen mask), plus a distinct A-10-specific
-/// high whine layer on top:
+/// Signal chain:
 ///   clean PCM
-///   → [PreFade]  airframe AM: two beating oscillators (57 Hz + 76 Hz)
-///   → [PreFade]  engine whine: N1 fan series (~480 Hz) + N2 core series (~750 Hz)
-///   → [PreFade]  engine roar: noise → one-pole LPF 350 Hz (additive)
-///   → [PreFade]  ~4.8kHz signature whine: two soft-saturated, slowly-wobbling oscillators
-///                beating quickly against each other
+///   → [PreFade]  twin 400Hz inverter whine: two independent oscillators (~399/~398Hz) beating,
+///                dominant element -- unlike the jet-fighter effects, here the whine outweighs
+///                the engine roar rather than the other way around
+///   → [PreFade]  HF avionics/gyro whine cluster (~4.7-4.8kHz), light
+///   → [PreFade]  engine roar: noise → one-pole LPF (additive, subordinate to the whine)
 ///   → [PreFade]  oxygen-mask two-pole LPF 1900 Hz + nasal cavity blend
 ///   → RF fading  (handled by RadioEffect)
 ///
-/// Earlier revisions of this effect put a twin-oscillator ~400Hz tone front and center, matching
-/// the loudest peak in an isolated A-10C cockpit recording. That didn't hold up: cross-checking
-/// against a second reference -- an "ex radio" recording of two A-10s talking, heard from one
-/// aircraft's own cockpit recorder -- shows the audibly distinctive element riding on every
-/// transmission isn't a low hum at all, it's a crisp, narrow doublet around 4778/4813Hz (only
-/// ~14dB below the loudest voice content, i.e. quite prominent), and the isolated recording has
-/// the exact same doublet, just deprioritized in that first pass as a minor accent. The math lines
-/// up too: 4778/4813 is almost exactly the 12th harmonic of ~398/401Hz -- the two engine-driven,
-/// frequency-wild AC generators (see the AirA10 class docs above this one for why it's generators,
-/// not inverters) -- so this reads as a resonance (headset, intercom amp, or airframe panel)
-/// selectively amplifying whichever harmonic of the twin-generator hum happens to land near
-/// 4.8kHz, rather than the fundamental itself being what's actually audible. So the whine layer
-/// here is built directly at that resonant harmonic instead of at the fundamental: two oscillators
-/// derived from the same generator frequencies (×12) beating against each other, soft-saturated
-/// for grit and independently wobbled so the beat doesn't sound like two razor-locked test tones.
+/// Tuned against a pair of reference A-10C cockpit recordings: the ~398-400Hz tone is by far the
+/// loudest feature in the spectrum (everything else is 20dB+ down), it beats slowly at ~1.8Hz,
+/// and there's a much quieter high-pitched cluster around 4.7-4.8kHz. The twin-TF34 airframe runs
+/// two independent 400Hz AC inverters a couple Hz apart, which produces exactly that slow beat as
+/// a byproduct of summing two real oscillators rather than needing an explicit LFO.
 /// </summary>
 internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 {
@@ -521,44 +509,34 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     private const float AlcMakeup = 2.0f;
     private const float AlcKnee   = 0.70f;
 
-    // Airframe AM -- two independent oscillators beating, same as AirGeneric
-    private const float RumbleFreq1  = 57f;
-    private const float RumbleFreq2  = 76f;
-    private const float RumbleDepth1 = 0.09f;
-    private const float RumbleDepth2 = 0.09f;
-    private double _rumblePhase1;
-    private double _rumblePhase2;
+    // Twin 400Hz inverter whine -- two real oscillators a couple Hz apart so the ~1.8Hz beat
+    // measured in the reference recordings falls out of the superposition for free, rather than
+    // being faked with an LFO. This is the dominant element of the whole effect.
+    private const float InvFreqA   = 399.3f;
+    private const float InvFreqB   = 397.5f;
+    private const float InvLevel   = 0.050f; // fundamental
+    private const float InvH2Level = 0.0043f; // ~-21dB vs fundamental (measured)
+    private const float InvH3Level = 0.0013f; // ~-32dB vs fundamental (measured)
+    private const float InvH5Level = 0.0016f; // ~-30dB vs fundamental (measured)
+    private double _invPhaseA;
+    private double _invPhaseB;
 
-    // Engine whine -- N1 fan + N2 core series, same as AirGeneric
-    private const float N1Freq = 480f, N1Level = 0.0022f, N1H2Level = 0.0014f, N1H3Level = 0.0007f, N1H4Level = 0.0003f;
-    private const float N1WobbleRate = 0.5f, N1WobbleDepth = 4.0f;
-    private double _n1Phase, _n1WobblePhase;
-    private const float N2Freq = 750f, N2Level = 0.0018f, N2H2Level = 0.001f, N2H3Level = 0.0004f;
-    private const float N2WobbleRate = 0.7f, N2WobbleDepth = 7.0f;
-    private double _n2Phase, _n2WobblePhase;
+    // High-pitched gyro/avionics-cooling whine cluster -- a tight pair of tones near 4.7-4.8kHz,
+    // ~20-25dB below the inverter, present in both reference recordings.
+    private const float HfFreqA = 4760f;
+    private const float HfFreqB = 4784f;
+    private const float HfLevel = 0.0040f;
+    private double _hfPhaseA;
+    private double _hfPhaseB;
 
-    // Engine roar -- noise → one-pole LPF 350Hz, same level as AirGeneric. This is the base
-    // engine bed the signature whine sits on top of, not the other way around.
-    private const float RoarLevel = 0.018f;
+    // Engine roar -- noise → one-pole LPF. 450Hz cutoff (not the inverter's own 300-500Hz band)
+    // so energy survives the PostFade 300Hz high-pass, same reasoning as GroundAmbientEffect.
+    // Subordinate to the whine here (~22dB down) -- the opposite balance from the jet effects,
+    // where roar dominates and the whine is the accent.
+    private const float RoarLevel = 0.005f;
     private readonly float _roarLpA;
     private float _roarLpState;
     private uint _noiseState = 0x9E3779B9u;
-
-    // ~4.8kHz signature whine -- the 12th harmonic of the twin ~398/401Hz AC generators (two
-    // engine-driven, frequency-wild generators, see class doc above). Measured at 4778.3/4813.5Hz
-    // across two independent reference recordings, ~14dB below the loudest voice content in an
-    // actual transmission -- prominent, not a background accent, hence the much higher level than
-    // the old fundamental-tone attempt. Soft-saturated for grit and independently wobbled per
-    // oscillator so the beat doesn't read as two clean, razor-locked test tones.
-    private const float WhineFreqA = 4778.3f;
-    private const float WhineFreqB = 4813.5f;
-    private const float WhineLevel = 0.014f;
-    private const float WhineWobbleRate  = 0.6f; // Hz
-    private const float WhineWobbleDepth = 6.0f; // ±Hz drift
-    private const float WhineSatDrive = 1.7f;
-    private static readonly float WhineSatNorm = 1.0f / MathF.Tanh(WhineSatDrive);
-    private double _whinePhaseA, _whinePhaseB;
-    private double _whineWobblePhaseA, _whineWobblePhaseB;
 
     public AirA10AmbientEffect(int sampleRate, float strength)
     {
@@ -566,72 +544,44 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
         _strength   = strength;
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
-        _roarLpA = MathF.Exp(-2f * MathF.PI * 350f / sampleRate);
+        _roarLpA = MathF.Exp(-2f * MathF.PI * 450f / sampleRate);
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
     {
-        double rumbleInc1 = 2.0 * Math.PI * RumbleFreq1 / _sampleRate;
-        double rumbleInc2 = 2.0 * Math.PI * RumbleFreq2 / _sampleRate;
-        double n1WobbleInc = 2.0 * Math.PI * N1WobbleRate / _sampleRate;
-        double n2WobbleInc = 2.0 * Math.PI * N2WobbleRate / _sampleRate;
-        double whineWobbleInc = 2.0 * Math.PI * WhineWobbleRate / _sampleRate;
+        double incA   = 2.0 * Math.PI * InvFreqA / _sampleRate;
+        double incB   = 2.0 * Math.PI * InvFreqB / _sampleRate;
+        double hfIncA = 2.0 * Math.PI * HfFreqA  / _sampleRate;
+        double hfIncB = 2.0 * Math.PI * HfFreqB  / _sampleRate;
 
         for (int frame = 0; frame < frames; frame++)
         {
-            // Airframe AM
-            float rumbleGain = 1f
-                + (float)Math.Sin(_rumblePhase1) * RumbleDepth1
-                + (float)Math.Sin(_rumblePhase2) * RumbleDepth2;
-            _rumblePhase1 += rumbleInc1; if (_rumblePhase1 > Math.PI * 2) _rumblePhase1 -= Math.PI * 2;
-            _rumblePhase2 += rumbleInc2; if (_rumblePhase2 > Math.PI * 2) _rumblePhase2 -= Math.PI * 2;
+            // Twin inverters: fundamental + harmonics from each oscillator, summed and halved so
+            // the beat is an interference pattern rather than a doubled-level tone.
+            float invSample = ((float)Math.Sin(_invPhaseA)       + (float)Math.Sin(_invPhaseB))       * 0.5f * InvLevel
+                            + ((float)Math.Sin(_invPhaseA * 2.0) + (float)Math.Sin(_invPhaseB * 2.0)) * 0.5f * InvH2Level
+                            + ((float)Math.Sin(_invPhaseA * 3.0) + (float)Math.Sin(_invPhaseB * 3.0)) * 0.5f * InvH3Level
+                            + ((float)Math.Sin(_invPhaseA * 5.0) + (float)Math.Sin(_invPhaseB * 5.0)) * 0.5f * InvH5Level;
+            invSample *= _strength;
+            _invPhaseA += incA; if (_invPhaseA > Math.PI * 2) _invPhaseA -= Math.PI * 2;
+            _invPhaseB += incB; if (_invPhaseB > Math.PI * 2) _invPhaseB -= Math.PI * 2;
 
-            // N1 fan
-            double n1Wobble = Math.Sin(_n1WobblePhase) * N1WobbleDepth;
-            _n1WobblePhase += n1WobbleInc; if (_n1WobblePhase > Math.PI * 2) _n1WobblePhase -= Math.PI * 2;
-            double n1Inc = 2.0 * Math.PI * (N1Freq + n1Wobble) / _sampleRate;
-            float n1Sample = ((float)Math.Sin(_n1Phase) * N1Level
-                           + (float)Math.Sin(_n1Phase * 2.0) * N1H2Level
-                           + (float)Math.Sin(_n1Phase * 3.0) * N1H3Level
-                           + (float)Math.Sin(_n1Phase * 4.0) * N1H4Level) * _strength;
-            _n1Phase += n1Inc; if (_n1Phase > Math.PI * 2) _n1Phase -= Math.PI * 2;
-
-            // N2 core
-            double n2Wobble = Math.Sin(_n2WobblePhase) * N2WobbleDepth;
-            _n2WobblePhase += n2WobbleInc; if (_n2WobblePhase > Math.PI * 2) _n2WobblePhase -= Math.PI * 2;
-            double n2Inc = 2.0 * Math.PI * (N2Freq + n2Wobble) / _sampleRate;
-            float n2Sample = ((float)Math.Sin(_n2Phase) * N2Level
-                           + (float)Math.Sin(_n2Phase * 2.0) * N2H2Level
-                           + (float)Math.Sin(_n2Phase * 3.0) * N2H3Level) * _strength;
-            _n2Phase += n2Inc; if (_n2Phase > Math.PI * 2) _n2Phase -= Math.PI * 2;
+            float hfSample = ((float)Math.Sin(_hfPhaseA) + (float)Math.Sin(_hfPhaseB)) * 0.5f * HfLevel * _strength;
+            _hfPhaseA += hfIncA; if (_hfPhaseA > Math.PI * 2) _hfPhaseA -= Math.PI * 2;
+            _hfPhaseB += hfIncB; if (_hfPhaseB > Math.PI * 2) _hfPhaseB -= Math.PI * 2;
 
             // Engine roar: Knuth LCG → one-pole LPF
             _noiseState  = _noiseState * 1664525u + 1013904223u;
             float roar   = _roarLpA * _roarLpState + (1f - _roarLpA) * ((int)_noiseState * (1f / 2147483648f));
             _roarLpState = roar;
 
-            // ~4.8kHz signature whine: independent wobble per oscillator keeps the beat from
-            // sounding like two clean, razor-locked test tones, then soft-saturated for grit.
-            double whineWobbleA = Math.Sin(_whineWobblePhaseA) * WhineWobbleDepth;
-            double whineWobbleB = Math.Sin(_whineWobblePhaseB * 1.3) * WhineWobbleDepth;
-            _whineWobblePhaseA += whineWobbleInc; if (_whineWobblePhaseA > Math.PI * 2) _whineWobblePhaseA -= Math.PI * 2;
-            _whineWobblePhaseB += whineWobbleInc; if (_whineWobblePhaseB > Math.PI * 2) _whineWobblePhaseB -= Math.PI * 2;
-            double whineIncA = 2.0 * Math.PI * (WhineFreqA + whineWobbleA) / _sampleRate;
-            double whineIncB = 2.0 * Math.PI * (WhineFreqB + whineWobbleB) / _sampleRate;
-
-            float whineRaw = ((float)Math.Sin(_whinePhaseA) + (float)Math.Sin(_whinePhaseB)) * 0.5f;
-            float whineSample = MathF.Tanh(whineRaw * WhineSatDrive) * WhineSatNorm * WhineLevel * _strength;
-            _whinePhaseA += whineIncA; if (_whinePhaseA > Math.PI * 2) _whinePhaseA -= Math.PI * 2;
-            _whinePhaseB += whineIncB; if (_whinePhaseB > Math.PI * 2) _whinePhaseB -= Math.PI * 2;
-
             int idx = offset + frame;
             float dry = buffer[idx];
             float x = dry;
 
-            x *= rumbleGain;                    // airframe vibration AM-modulates mic pickup
-            x += n1Sample + n2Sample;           // jet engine whine
-            x += roar * RoarLevel * _strength;  // structure-borne engine roar
-            x += whineSample;                   // ~4.8kHz signature whine -- the prominent element
+            x += invSample;                     // twin 400Hz inverter whine -- dominant element
+            x += hfSample;                      // avionics/gyro HF whine cluster
+            x += roar * RoarLevel * _strength;  // structure-borne engine roar (subordinate)
 
             // Transmitter ALC: clean makeup gain + peak limiter → loud, no crunch
             x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);

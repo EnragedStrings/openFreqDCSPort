@@ -532,12 +532,13 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 
     // 400Hz inverter whine -- a single oscillator, same fashion as the F-16 inverter. This is the
     // dominant element of the whole effect. Levels are 70% of the as-measured tuning
-    // (0.05/0.0043/0.0013/0.0016) per a direct "turn the whine down" request.
+    // (0.05/0.0043/0.0013/0.0016) per a direct "turn the whine down" request, then cut a further
+    // 60% (0.035->0.014 etc.) per a second, separate volume-reduction request.
     private const float InvFreq    = 398.4f;
-    private const float InvLevel   = 0.035f; // fundamental
-    private const float InvH2Level = 0.00301f; // ~-21dB vs fundamental (measured)
-    private const float InvH3Level = 0.00091f; // ~-32dB vs fundamental (measured)
-    private const float InvH5Level = 0.00112f; // ~-30dB vs fundamental (measured)
+    private const float InvLevel   = 0.0140f; // fundamental
+    private const float InvH2Level = 0.00120f; // ~-21dB vs fundamental (measured)
+    private const float InvH3Level = 0.00036f; // ~-32dB vs fundamental (measured)
+    private const float InvH5Level = 0.00045f; // ~-30dB vs fundamental (measured)
     // FM wobble -- same rate and depth as the F-16 inverter's (0.8Hz, ±3Hz), simulating
     // power-supply/engine-RPM frequency drift so the tone isn't perfectly static.
     private const float InvWobbleRate  = 0.8f; // Hz

@@ -711,23 +711,31 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 /// <summary>
 /// Signal chain:
 ///   clean PCM
-///   → [PreFade]  main-rotor AM: 17.2Hz blade-passage thump (4 blades @ ~258 RPM), shaped for a
-///                punchier "wop" than a plain sine, plus a lighter ~86.5Hz tail-rotor flutter
-///   → [PreFade]  blade-slap ring: a ~350Hz structural resonance re-triggered once per main-rotor
-///                blade pass and left to decay, rather than a fixed continuous tone
+///   → [PreFade]  engine/rotor roar: pink noise (Voss-McCartney, same algorithm as
+///                BackgroundNoiseGenerator), high-passed ~90Hz, gently low-passed ~3.5kHz, plus a
+///                broad noise-bandpass emphasis around 220-470Hz -- the dominant element
 ///   → [PreFade]  main gearbox whine: ~990Hz gear-mesh tone
-///   → [PreFade]  engine/transmission roar: noise → one-pole LPF (T700 turboshaft + gearbox)
+///   → [PreFade]  main-rotor AM: 17.2Hz blade-passage thump (4 blades @ ~258 RPM), shaped for a
+///                punchier "wop" than a plain sine, plus a lighter ~86.5Hz tail-rotor flutter --
+///                applied to the roar+gearbox bed as well as the dry voice, not just the voice
 ///   → [PreFade]  headset/boom-mic band-limit LPF 2400 Hz + partial dry blend
 ///   → RF fading  (handled by RadioEffect)
 ///
-/// Tuned against a pair of reference UH-60L cockpit recordings. The main rotor's 17.2Hz blade-
-/// passage rate (4 blades, ~258 RPM) is the strongest low-frequency feature; a ~350Hz resonance is
-/// nearly as strong and rings on every blade pass rather than sounding continuously, which is why
-/// it's modeled as a re-triggered decaying oscillator instead of a steady tone. A secondary
-/// ~86.5Hz component matches the tail rotor (geared ~5.03:1 off the main rotor). Because the
-/// PostFade stage high-passes at 300Hz, the rotor rate itself can't survive as an additive tone --
-/// it only reaches the transmitted audio as amplitude modulation of in-band content, which is
-/// physically consistent with how rotor thump actually reaches a radio downlink.
+/// Rebuilt against the reference UH-60L cockpit recording after an early version -- built the same
+/// way as the other effects here, from a handful of discrete oscillators -- turned out not to
+/// resemble it at all. The reference isn't a couple of tones over a quiet background; it's a loud,
+/// broadband wash across nearly the entire audible range (octave-band energy stays within ~17dB of
+/// peak from 80Hz to 20kHz -- close to pink noise's equal-energy-per-octave signature, not the
+/// steep single-pole rolloff a synthesized "engine roar" usually gets in these effects) with a
+/// modest bump around 300-500Hz and a clear, narrow ~990Hz tone. The former "blade-slap ring" --
+/// a clean decaying sine re-triggered every blade pass -- doesn't belong: the reference has no
+/// discrete tone there at all, just noisier broadband content, so that whole region is now a
+/// bandpassed noise emphasis instead of a pure tone. The reference's amplitude envelope also
+/// carries the 17.2Hz blade-passage rate directly (not just as sidebands on formants, since there's
+/// no voice in an ambience-only recording) -- meaning the physical vibration modulates everything
+/// the mic picks up, roar included, not just a transmitting pilot's voice. So thrumGain here
+/// multiplies the whole roar+gearbox+dry mix, unlike the convention in the other effects in this
+/// file where it only touches the dry voice.
 /// </summary>
 internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 {
@@ -740,8 +748,8 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
     private readonly float _muffleA;
     private float _muffleLP;
 
-    private const float AlcMakeup = 1.8f;
-    private const float AlcKnee   = 0.70f;
+    private const float AlcMakeup = 1.3f;
+    private const float AlcKnee   = 0.65f;
 
     // Main rotor: 4 blades @ ~258 RPM → 17.2Hz blade-passage frequency (measured 17.2-17.6Hz).
     // AM depth is NOT scaled by strength -- it's part of the platform character, same convention
@@ -751,34 +759,36 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
     private double _mainRotorPhase;
 
     // Tail rotor: geared ~5.03:1 off the main rotor → ~86.5Hz, matching the secondary ~80-88Hz
-    // peaks in the reference recordings. Lighter, higher-pitched flutter on top of the main thump.
+    // peaks in the reference recording. Lighter, higher-pitched flutter on top of the main thump.
     private const float TailRotorBpf     = MainRotorBpf * 5.03f;
     private const float TailRotorAmDepth = 0.06f;
     private double _tailRotorPhase;
 
-    // Blade-slap ring: each main-rotor blade pass excites a ~350Hz structural resonance (measured
-    // 351.6Hz, nearly as strong as the 17Hz fundamental) that rings and decays before the next
-    // blade pass. Re-triggered once per revolution rather than a fixed tone so it stays locked to
-    // blade rate regardless of strength.
-    private const float RingFreq  = 350f;
-    private const float RingLevel = 0.045f;
-    private readonly int _bladePassSamples;
-    private double _ringPhase;
-    private float _ringAmp;
-    private readonly float _ringDecayPerSample;
-    private int _samplesToNextBladePass;
+    // Engine/rotor roar -- Voss-McCartney pink noise (5 dice, same technique as
+    // BackgroundNoiseGenerator.GeneratePinkNoiseFast), shaped to match the reference's measured
+    // octave-band curve: roughly flat (pink) through the mids, gently high-passed below ~40Hz and
+    // gently low-passed above ~3.5kHz, with an extra broad bandpass emphasis around 220-470Hz
+    // (via LP470-LP220 subtraction, same "bandpass via one-pole subtraction" trick as
+    // GroundAmbientEffect's drivetrain whine) standing in for the reference's mild mid-range bump.
+    // This is the dominant element of the whole effect -- opposite of the old tone-first design.
+    private const float RoarLevel      = 0.11f;
+    private const float RoarEmphasis   = 0.075f;
+    private const float ShelfFloor     = 0.14f; // ~-17dB floor the top-end rolloff levels off at
+    private uint  _pinkLcg = 0x9E3779B9u;
+    private int   _pinkCounter;
+    private float _pinkSum;
+    private readonly float[] _pinkDice = new float[5];
+    private readonly float _hpfA;
+    private float _hpfLp;
+    private readonly float _shelfA;
+    private float _shelfLp;
+    private readonly float _bpLp1A, _bpLp2A;
+    private float _bpLp1, _bpLp2;
 
-    // Engine/transmission roar -- T700 turboshaft + main gearbox, broadband noise → one-pole LPF.
-    // 480Hz cutoff so energy survives the PostFade 300Hz high-pass, same reasoning as
-    // GroundAmbientEffect's engine roar.
-    private const float RoarLevel = 0.028f;
-    private readonly float _roarLpA;
-    private float _roarLpState;
-    private uint _roarNoiseState = 0x9E3779B9u;
-
-    // Main gearbox whine -- gear-mesh tone, clearly present in both reference recordings near 1kHz.
+    // Main gearbox whine -- gear-mesh tone, present in the reference recording near 1kHz but only
+    // as a modest peak above the broadband floor (~3dB over its neighborhood), not a dominant tone.
     private const float GearboxFreq  = 990f;
-    private const float GearboxLevel = 0.006f;
+    private const float GearboxLevel = 0.003f;
     private double _gearboxPhase;
 
     public AirUH60AmbientEffect(int sampleRate, float strength)
@@ -787,36 +797,47 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
         _strength   = strength;
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
-        _roarLpA = MathF.Exp(-2f * MathF.PI * 480f / sampleRate);
 
-        _bladePassSamples = Math.Max(1, (int)(sampleRate / MainRotorBpf));
-        // Ring decays to ~1% amplitude over one blade-pass period so it doesn't build up.
-        _ringDecayPerSample = MathF.Exp(MathF.Log(0.01f) / _bladePassSamples);
-        _samplesToNextBladePass = _bladePassSamples;
+        _hpfA   = MathF.Exp(-2f * MathF.PI * 20f   / sampleRate);
+        _shelfA = MathF.Exp(-2f * MathF.PI * 1000f / sampleRate);
+        _bpLp1A = MathF.Exp(-2f * MathF.PI * 470f  / sampleRate);
+        _bpLp2A = MathF.Exp(-2f * MathF.PI * 220f  / sampleRate);
+
+        for (int i = 0; i < _pinkDice.Length; i++)
+        {
+            _pinkLcg = _pinkLcg * 1664525u + 1013904223u;
+            _pinkDice[i] = (int)_pinkLcg * (1f / 2147483648f);
+            _pinkSum += _pinkDice[i];
+        }
+    }
+
+    // Voss-McCartney pink noise: see BackgroundNoiseGenerator.GeneratePinkNoiseFast for the
+    // full explanation of the dice-rolling algorithm this mirrors.
+    private float NextPink()
+    {
+        _pinkCounter++;
+        int changed = _pinkCounter ^ (_pinkCounter - 1);
+        for (int i = 0; i < _pinkDice.Length; i++)
+        {
+            if ((changed & (1 << i)) != 0)
+            {
+                _pinkSum -= _pinkDice[i];
+                _pinkLcg = _pinkLcg * 1664525u + 1013904223u;
+                _pinkDice[i] = (int)_pinkLcg * (1f / 2147483648f);
+                _pinkSum += _pinkDice[i];
+            }
+        }
+        return _pinkSum / _pinkDice.Length;
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
     {
-        double mainInc     = 2.0 * Math.PI * MainRotorBpf / _sampleRate;
-        double tailInc     = 2.0 * Math.PI * TailRotorBpf / _sampleRate;
-        double ringInc     = 2.0 * Math.PI * RingFreq     / _sampleRate;
-        double gearboxInc  = 2.0 * Math.PI * GearboxFreq  / _sampleRate;
+        double mainInc    = 2.0 * Math.PI * MainRotorBpf / _sampleRate;
+        double tailInc    = 2.0 * Math.PI * TailRotorBpf / _sampleRate;
+        double gearboxInc = 2.0 * Math.PI * GearboxFreq  / _sampleRate;
 
         for (int frame = 0; frame < frames; frame++)
         {
-            // Re-trigger the blade-slap resonance once per main-rotor blade pass.
-            if (--_samplesToNextBladePass <= 0)
-            {
-                _ringAmp = 1f;
-                _ringPhase = 0.0;
-                _samplesToNextBladePass = _bladePassSamples;
-            }
-
-            float ringSample = (float)Math.Sin(_ringPhase) * _ringAmp * RingLevel * _strength;
-            _ringPhase += ringInc;
-            if (_ringPhase > Math.PI * 2) _ringPhase -= Math.PI * 2;
-            _ringAmp *= _ringDecayPerSample;
-
             // Rotor thump: main + tail rotor AM. The main term is sharpened (sin raised to a
             // fractional power, sign-preserved) for a punchier "wop" than a plain sine would give.
             float mainWave    = (float)Math.Sin(_mainRotorPhase);
@@ -828,10 +849,23 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
             if (_mainRotorPhase > Math.PI * 2) _mainRotorPhase -= Math.PI * 2;
             if (_tailRotorPhase > Math.PI * 2) _tailRotorPhase -= Math.PI * 2;
 
-            // Engine/gearbox roar: Knuth LCG → one-pole LPF
-            _roarNoiseState = _roarNoiseState * 1664525u + 1013904223u;
-            float roar      = _roarLpA * _roarLpState + (1f - _roarLpA) * ((int)_roarNoiseState * (1f / 2147483648f));
-            _roarLpState    = roar;
+            // Engine/rotor roar: pink noise, high-passed, gently low-passed, plus a bandpassed
+            // mid-range emphasis -- see the field comment above for the target curve.
+            float pink = NextPink();
+            _hpfLp = _hpfA * _hpfLp + (1f - _hpfA) * pink;
+            float hpf = pink - _hpfLp;
+            _shelfLp = _shelfA * _shelfLp + (1f - _shelfA) * hpf;
+            // A plain LPF keeps declining forever; the reference's top end doesn't -- it drops off
+            // through the mid-highs then goes nearly flat from ~5kHz to 20kHz. Blending a little of
+            // the unfiltered (broadband) signal back in gives the rolloff a floor instead of an
+            // infinite slope, matching that leveling-off.
+            float shelf = _shelfLp * (1f - ShelfFloor) + hpf * ShelfFloor;
+
+            _bpLp1 = _bpLp1A * _bpLp1 + (1f - _bpLp1A) * pink;
+            _bpLp2 = _bpLp2A * _bpLp2 + (1f - _bpLp2A) * pink;
+            float bandEmphasis = _bpLp1 - _bpLp2;
+
+            float roarSample = (shelf * RoarLevel + bandEmphasis * RoarEmphasis) * _strength;
 
             float gearboxSample = (float)Math.Sin(_gearboxPhase) * GearboxLevel * _strength;
             _gearboxPhase += gearboxInc;
@@ -839,12 +873,10 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 
             int idx = offset + frame;
             float dry = buffer[idx];
-            float x = dry;
 
-            x *= thrumGain;                            // rotor vibration AM-modulates mic pickup
-            x += ringSample;                            // blade-slap structural resonance
-            x += roar * RoarLevel * _strength;          // engine + transmission roar
-            x += gearboxSample;                         // main gearbox gear-mesh whine
+            // Rotor vibration AM-modulates the whole mic pickup, not just a transmitting voice --
+            // see the class doc comment for why this differs from the other effects' convention.
+            float x = (dry + roarSample + gearboxSample) * thrumGain;
 
             x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
 

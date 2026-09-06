@@ -712,9 +712,11 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 /// Signal chain:
 ///   clean PCM
 ///   → [PreFade]  engine/rotor roar: pink noise (Voss-McCartney, same algorithm as
-///                BackgroundNoiseGenerator), high-passed ~90Hz, gently low-passed ~3.5kHz, plus a
-///                broad noise-bandpass emphasis around 220-470Hz -- the dominant element
-///   → [PreFade]  main gearbox whine: ~990Hz gear-mesh tone
+///                BackgroundNoiseGenerator), high-passed ~20Hz, low-passed ~1kHz with a floor so
+///                the top end levels off instead of rolling off forever, plus a broad
+///                noise-bandpass emphasis around 220-470Hz -- the dominant element
+///   → [PreFade]  main gearbox whine: ~995Hz gear-mesh tone with H2/H3 (2024/2986Hz) -- the
+///                measured high-pitched "whine" character a bare fundamental doesn't have
 ///   → [PreFade]  main-rotor AM: 17.2Hz blade-passage thump (4 blades @ ~258 RPM), shaped for a
 ///                punchier "wop" than a plain sine, plus a lighter ~86.5Hz tail-rotor flutter --
 ///                applied to the roar+gearbox bed as well as the dry voice, not just the voice
@@ -787,8 +789,14 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 
     // Main gearbox whine -- gear-mesh tone, present in the reference recording near 1kHz but only
     // as a modest peak above the broadband floor (~3dB over its neighborhood), not a dominant tone.
-    private const float GearboxFreq  = 990f;
-    private const float GearboxLevel = 0.003f;
+    // Measured precisely (65536-point FFT) as a clean harmonic series at 995.36/2023.68/2986.08Hz
+    // (H2 and H3 land almost exactly on 2x/3x the fundamental) -- H2 in particular is prominent,
+    // only -7.5dB below the fundamental, and is the high-pitched "whine" character on top of the
+    // low gear-mesh tone that a bare fundamental doesn't capture.
+    private const float GearboxFreq    = 995f;
+    private const float GearboxLevel   = 0.003f;
+    private const float GearboxH2Ratio = 0.42f; // -7.5dB vs fundamental (measured)
+    private const float GearboxH3Ratio = 0.23f; // -12.9dB vs fundamental (measured)
     private double _gearboxPhase;
 
     public AirUH60AmbientEffect(int sampleRate, float strength)
@@ -867,7 +875,9 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 
             float roarSample = (shelf * RoarLevel + bandEmphasis * RoarEmphasis) * _strength;
 
-            float gearboxSample = (float)Math.Sin(_gearboxPhase) * GearboxLevel * _strength;
+            float gearboxSample = ((float)Math.Sin(_gearboxPhase)
+                                 +  (float)Math.Sin(_gearboxPhase * 2.0) * GearboxH2Ratio
+                                 +  (float)Math.Sin(_gearboxPhase * 3.0) * GearboxH3Ratio) * GearboxLevel * _strength;
             _gearboxPhase += gearboxInc;
             if (_gearboxPhase > Math.PI * 2) _gearboxPhase -= Math.PI * 2;
 

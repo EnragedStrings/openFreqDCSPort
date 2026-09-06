@@ -787,14 +787,19 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
     private readonly float _bpLp1A, _bpLp2A;
     private float _bpLp1, _bpLp2;
 
-    // Main gearbox whine -- gear-mesh tone, present in the reference recording near 1kHz but only
-    // as a modest peak above the broadband floor (~3dB over its neighborhood), not a dominant tone.
-    // Measured precisely (65536-point FFT) as a clean harmonic series at 995.36/2023.68/2986.08Hz
-    // (H2 and H3 land almost exactly on 2x/3x the fundamental) -- H2 in particular is prominent,
-    // only -7.5dB below the fundamental, and is the high-pitched "whine" character on top of the
-    // low gear-mesh tone that a bare fundamental doesn't capture.
+    // Main gearbox whine -- gear-mesh tone, measured (65536-point FFT of the reference) as a clean
+    // harmonic series at 995.36/2023.68/2986.08Hz (H2 and H3 land almost exactly on 2x/3x the
+    // fundamental), only -7.5dB/-12.9dB below the fundamental -- the high-pitched "whine" on top
+    // of the low gear-mesh tone that a bare fundamental doesn't capture.
+    //
+    // GearboxLevel raised ~5x (0.003 -> 0.015) from the value that matched the reference's own
+    // octave-band curve: that number was calibrated against a silent "dry" buffer, where the tone
+    // was already the loudest peak in the whole render -- a low bar. Against actual voice, which
+    // has real energy in this same 1-3kHz range, a tone at the old level was 20-30x quieter than
+    // typical voice amplitude and effectively inaudible under normal listening. This trades some
+    // of the octave-band precision back for the tone actually surviving contact with real speech.
     private const float GearboxFreq    = 995f;
-    private const float GearboxLevel   = 0.003f;
+    private const float GearboxLevel   = 0.015f;
     private const float GearboxH2Ratio = 0.42f; // -7.5dB vs fundamental (measured)
     private const float GearboxH3Ratio = 0.23f; // -12.9dB vs fundamental (measured)
     private double _gearboxPhase;

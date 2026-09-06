@@ -520,38 +520,6 @@
                                 <controls:Card>
                                     <StackPanel Margin="16">
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                            <avalonia:MaterialIcon Kind="Microphone"
-                                                                   Width="16" Height="16"
-                                                                   Margin="0,0,8,0"
-                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
-                                            <TextBlock Text="Global PTT" Classes="SectionHeader" Margin="0" />
-                                        </StackPanel>
-                                        <TextBlock Classes="InputLabel" Margin="0,0,0,8" TextWrapping="Wrap"
-                                                   Text="Transmits on whichever radio you last clicked (any mode -- BMS, GCI, or DCS), instead of one fixed radio. Click a channel card to select it, then use this key to key up." />
-                                        <Grid ColumnDefinitions="*,Auto">
-                                            <Button Grid.Column="0"
-                                                    Command="{Binding BeginCaptureGlobalPttHotkeyCommand}"
-                                                    BorderBrush="{DynamicResource MaterialDividerBrush}"
-                                                    BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
-                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                                    ToolTip.Tip="{Binding Settings.GlobalPttHotkeyDisplay}">
-                                                <StackPanel Orientation="Horizontal" Spacing="4">
-                                                    <avalonia:MaterialIcon Kind="KeyboardOutline" Width="18" Height="18" />
-                                                    <TextBlock Text="{Binding Settings.GlobalPttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
-                                                               VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
-                                                               TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
-                                                </StackPanel>
-                                            </Button>
-                                            <Button Grid.Column="1" Content="Clear"
-                                                    Command="{Binding ClearGlobalPttHotkeyCommand}"
-                                                    Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
-                                        </Grid>
-                                    </StackPanel>
-                                </controls:Card>
-
-                                <controls:Card>
-                                    <StackPanel Margin="16">
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                             <avalonia:MaterialIcon Kind="KeyboardOutline"
                                                                    Width="16" Height="16"
                                                                    Margin="0,0,8,0"
@@ -1014,6 +982,39 @@
                                     </StackPanel>
                                 </controls:Card>
                             </StackPanel>
+
+                            <!-- Global PTT (all modes: BMS, GCI, DCS) -->
+                            <controls:Card>
+                                <StackPanel Margin="16">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <avalonia:MaterialIcon Kind="Microphone"
+                                                               Width="16" Height="16"
+                                                               Margin="0,0,8,0"
+                                                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                        <TextBlock Text="Global PTT" Classes="SectionHeader" Margin="0" />
+                                    </StackPanel>
+                                    <TextBlock Classes="InputLabel" Margin="0,0,0,8" TextWrapping="Wrap"
+                                               Text="Transmits on whichever radio you last clicked (any mode -- BMS, GCI, or DCS), instead of one fixed radio. Click a channel card to select it, then use this key to key up." />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Button Grid.Column="0"
+                                                Command="{Binding BeginCaptureGlobalPttHotkeyCommand}"
+                                                BorderBrush="{DynamicResource MaterialDividerBrush}"
+                                                BorderThickness="1" CornerRadius="4" Padding="6,4" Classes="Flat"
+                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                ToolTip.Tip="{Binding Settings.GlobalPttHotkeyDisplay}">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <avalonia:MaterialIcon Kind="KeyboardOutline" Width="18" Height="18" />
+                                                <TextBlock Text="{Binding Settings.GlobalPttHotkeyDisplay}" Classes="Body2" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center" FontFamily="Consolas,Courier New,monospace"
+                                                           TextTrimming="LeadingCharacterEllipsis" MaxWidth="200" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Grid.Column="1" Content="Clear"
+                                                Command="{Binding ClearGlobalPttHotkeyCommand}"
+                                                Margin="8,0,0,0" Padding="8,4" Classes="Flat" />
+                                    </Grid>
+                                </StackPanel>
+                            </controls:Card>
 
                             <!-- Debug Mode Card -->
                             <controls:Card>

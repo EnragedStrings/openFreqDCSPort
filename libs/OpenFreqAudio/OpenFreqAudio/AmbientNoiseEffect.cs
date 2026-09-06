@@ -26,6 +26,11 @@ public enum AmbientNoiseType
     /// <summary>UH-60L cockpit: main/tail rotor blade-passage thump, engine/gearbox roar, headset muffle.</summary>
     AirUH60,
 
+    /// <summary>Generic helicopter cockpit (AH-64/other): same rotor-thump/engine-roar signature as
+    /// <see cref="AirUH60"/>, minus its gearbox whine tone -- for airframes sharing the general
+    /// rotorcraft acoustic profile without a measured reference of their own.</summary>
+    AirHelicopterGeneric,
+
     /// <summary>Ground vehicle (APC, HMMWV, tank).</summary>
     Ground,
 
@@ -67,7 +72,8 @@ internal static class AmbientNoiseEffectFactory
             AmbientNoiseType.AirF15     => new AirF15AmbientEffect(sampleRate, strength),
             AmbientNoiseType.AirGeneric => new AirGenericAmbientEffect(sampleRate, strength),
             AmbientNoiseType.AirA10     => new AirA10AmbientEffect(sampleRate, strength),
-            AmbientNoiseType.AirUH60    => new AirUH60AmbientEffect(sampleRate, strength),
+            AmbientNoiseType.AirUH60    => new AirUH60AmbientEffect(sampleRate, strength, includeGearbox: true),
+            AmbientNoiseType.AirHelicopterGeneric => new AirUH60AmbientEffect(sampleRate, strength, includeGearbox: false),
             AmbientNoiseType.Ground     => new GroundAmbientEffect(sampleRate, strength),
             AmbientNoiseType.Stationary => new StationaryAmbientEffect(sampleRate, strength),
             _                           => NullAmbientEffect.Instance,
@@ -738,11 +744,18 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 /// the mic picks up, roar included, not just a transmitting pilot's voice. So thrumGain here
 /// multiplies the whole roar+gearbox+dry mix, unlike the convention in the other effects in this
 /// file where it only touches the dry voice.
+///
+/// Also backs <see cref="AmbientNoiseType.AirHelicopterGeneric"/> via <paramref name="includeGearbox"/>
+/// below -- everything here except the gear-mesh whine (rotor thump, pink-noise roar, headset
+/// muffle) is generic rotorcraft acoustics, not something specific to the UH-60's measured
+/// reference recording, so a plain "Helicopter" preset with no dedicated reference of its own
+/// reuses this model with just that one UH-60-specific tone switched off.
 /// </summary>
 internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 {
     private readonly int _sampleRate;
     private readonly float _strength;
+    private readonly bool _includeGearbox;
 
     // Headset/boom-mic band-limit -- higher cutoff and lighter blend than a jet oxygen mask;
     // UH-60 crews fly HGU-56 helmets with a boom mic, not a full mask.
@@ -804,10 +817,11 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
     private const float GearboxH3Ratio = 0.23f; // -12.9dB vs fundamental (measured)
     private double _gearboxPhase;
 
-    public AirUH60AmbientEffect(int sampleRate, float strength)
+    public AirUH60AmbientEffect(int sampleRate, float strength, bool includeGearbox = true)
     {
         _sampleRate = sampleRate;
         _strength   = strength;
+        _includeGearbox = includeGearbox;
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
 
@@ -880,11 +894,15 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
 
             float roarSample = (shelf * RoarLevel + bandEmphasis * RoarEmphasis) * _strength;
 
-            float gearboxSample = ((float)Math.Sin(_gearboxPhase)
-                                 +  (float)Math.Sin(_gearboxPhase * 2.0) * GearboxH2Ratio
-                                 +  (float)Math.Sin(_gearboxPhase * 3.0) * GearboxH3Ratio) * GearboxLevel * _strength;
-            _gearboxPhase += gearboxInc;
-            if (_gearboxPhase > Math.PI * 2) _gearboxPhase -= Math.PI * 2;
+            float gearboxSample = 0f;
+            if (_includeGearbox)
+            {
+                gearboxSample = ((float)Math.Sin(_gearboxPhase)
+                              +  (float)Math.Sin(_gearboxPhase * 2.0) * GearboxH2Ratio
+                              +  (float)Math.Sin(_gearboxPhase * 3.0) * GearboxH3Ratio) * GearboxLevel * _strength;
+                _gearboxPhase += gearboxInc;
+                if (_gearboxPhase > Math.PI * 2) _gearboxPhase -= Math.PI * 2;
+            }
 
             int idx = offset + frame;
             float dry = buffer[idx];

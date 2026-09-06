@@ -484,25 +484,20 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
 ///   clean PCM
 ///   → [PreFade]  airframe AM: two beating oscillators (57 Hz + 76 Hz)
 ///   → [PreFade]  engine whine: N1 fan series (~480 Hz) + N2 core series (~750 Hz)
-///   → [PreFade]  twin 400Hz inverter whine: two independent oscillators (~399/~398Hz) beating,
-///                each with its own slow FM wobble (same idea as the F-16 inverter's) so the
-///                ~1.8Hz beat isn't locked to a perfectly constant rate -- dominant element,
-///                unlike the jet-fighter effects, here the whine outweighs the engine roar rather
-///                than the other way around
+///   → [PreFade]  400Hz inverter whine: a single oscillator with a slow FM wobble, same
+///                fashion as the F-16 inverter -- dominant element, unlike the jet-fighter
+///                effects, here the whine outweighs the engine roar rather than the other way
+///                around
 ///   → [PreFade]  HF avionics/gyro whine cluster (~4.7-4.8kHz), light
 ///   → [PreFade]  engine roar: noise → one-pole LPF (additive, subordinate to the whine)
 ///   → [PreFade]  oxygen-mask two-pole LPF 1900 Hz + nasal cavity blend
 ///   → RF fading  (handled by RadioEffect)
 ///
 /// Tuned against a pair of reference A-10C cockpit recordings: the ~398-400Hz tone is by far the
-/// loudest feature in the spectrum (everything else is 20dB+ down), it beats slowly at ~1.8Hz,
-/// and there's a much quieter high-pitched cluster around 4.7-4.8kHz. The twin-TF34 airframe runs
-/// two independent 400Hz AC inverters a couple Hz apart, which produces exactly that slow beat as
-/// a byproduct of summing two real oscillators rather than needing an explicit LFO. Each generator
-/// is engine-driven and frequency-wild (no constant-speed drive), so its exact frequency drifts a
-/// little with that engine's RPM -- modeled with the same FM-wobble technique as the F-16
-/// inverter, but at two different rates so the two sides drift independently and the beat itself
-/// wanders instead of ticking at a metronomically exact 1.8Hz.
+/// loudest feature in the spectrum (everything else is 20dB+ down), and there's a much quieter
+/// high-pitched cluster around 4.7-4.8kHz. Modeled as a single oscillator, same as the F-16
+/// inverter, with the same FM-wobble technique (±3Hz at 0.8Hz) so it isn't a perfectly static
+/// tone.
 /// </summary>
 internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 {
@@ -535,29 +530,20 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     private const float N2WobbleRate = 0.7f, N2WobbleDepth = 7.0f;
     private double _n2Phase, _n2WobblePhase;
 
-    // Twin 400Hz inverter whine -- two real oscillators a couple Hz apart so the ~1.8Hz beat
-    // measured in the reference recordings falls out of the superposition for free, rather than
-    // being faked with an LFO. This is the dominant element of the whole effect. Levels are 70%
-    // of the as-measured tuning (0.05/0.0043/0.0013/0.0016) per a direct "turn the whine down"
-    // request.
-    private const float InvFreqA   = 399.3f;
-    private const float InvFreqB   = 397.5f;
+    // 400Hz inverter whine -- a single oscillator, same fashion as the F-16 inverter. This is the
+    // dominant element of the whole effect. Levels are 70% of the as-measured tuning
+    // (0.05/0.0043/0.0013/0.0016) per a direct "turn the whine down" request.
+    private const float InvFreq    = 398.4f;
     private const float InvLevel   = 0.035f; // fundamental
     private const float InvH2Level = 0.00301f; // ~-21dB vs fundamental (measured)
     private const float InvH3Level = 0.00091f; // ~-32dB vs fundamental (measured)
     private const float InvH5Level = 0.00112f; // ~-30dB vs fundamental (measured)
-    // Per-oscillator FM wobble -- same magnitude as the F-16 inverter's (±3Hz), but at two
-    // different rates so each engine-driven generator drifts independently instead of moving in
-    // lockstep. That makes the beat between them wander a bit instead of holding a perfectly
-    // constant 1.8Hz, which is closer to how two independent frequency-wild generators actually
-    // behave (their exact frequency tracks that engine's RPM, which is never perfectly steady).
-    private const float InvWobbleRateA  = 0.8f; // Hz -- matches the F-16 inverter's wobble rate
-    private const float InvWobbleRateB  = 0.6f; // Hz -- deliberately different from A
-    private const float InvWobbleDepth  = 3.0f; // ±Hz drift, same magnitude as the F-16 inverter
-    private double _invPhaseA;
-    private double _invPhaseB;
-    private double _invWobblePhaseA;
-    private double _invWobblePhaseB;
+    // FM wobble -- same rate and depth as the F-16 inverter's (0.8Hz, ±3Hz), simulating
+    // power-supply/engine-RPM frequency drift so the tone isn't perfectly static.
+    private const float InvWobbleRate  = 0.8f; // Hz
+    private const float InvWobbleDepth = 3.0f; // ±Hz drift
+    private double _invPhase;
+    private double _invWobblePhase;
 
     // High-pitched gyro/avionics-cooling whine cluster -- a tight pair of tones near 4.7-4.8kHz,
     // ~20-25dB below the inverter, present in both reference recordings. Also cut to 70% alongside
@@ -592,8 +578,7 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
         double rumbleInc2 = 2.0 * Math.PI * RumbleFreq2 / _sampleRate;
         double n1WobbleInc  = 2.0 * Math.PI * N1WobbleRate / _sampleRate;
         double n2WobbleInc  = 2.0 * Math.PI * N2WobbleRate / _sampleRate;
-        double invWobbleIncA = 2.0 * Math.PI * InvWobbleRateA / _sampleRate;
-        double invWobbleIncB = 2.0 * Math.PI * InvWobbleRateB / _sampleRate;
+        double invWobbleInc = 2.0 * Math.PI * InvWobbleRate / _sampleRate;
         double hfIncA = 2.0 * Math.PI * HfFreqA  / _sampleRate;
         double hfIncB = 2.0 * Math.PI * HfFreqB  / _sampleRate;
 
@@ -625,26 +610,17 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
                            + (float)Math.Sin(_n2Phase * 3.0) * N2H3Level) * _strength;
             _n2Phase += n2Inc; if (_n2Phase > Math.PI * 2) _n2Phase -= Math.PI * 2;
 
-            // Twin inverters: each oscillator's instantaneous frequency wobbles independently
-            // (own rate, own phase) so the two sides drift apart and back together instead of
-            // holding a perfectly constant offset -- the beat rate wanders instead of ticking at
-            // a metronomically exact 1.8Hz.
-            double invWobbleA = Math.Sin(_invWobblePhaseA) * InvWobbleDepth;
-            double invWobbleB = Math.Sin(_invWobblePhaseB) * InvWobbleDepth;
-            _invWobblePhaseA += invWobbleIncA; if (_invWobblePhaseA > Math.PI * 2) _invWobblePhaseA -= Math.PI * 2;
-            _invWobblePhaseB += invWobbleIncB; if (_invWobblePhaseB > Math.PI * 2) _invWobblePhaseB -= Math.PI * 2;
-            double incA = 2.0 * Math.PI * (InvFreqA + invWobbleA) / _sampleRate;
-            double incB = 2.0 * Math.PI * (InvFreqB + invWobbleB) / _sampleRate;
+            // Inverter: wobble LFO shifts instantaneous phase increment for FM effect, same
+            // fashion as the F-16 inverter.
+            double invWobble = Math.Sin(_invWobblePhase) * InvWobbleDepth;
+            double invInc = 2.0 * Math.PI * (InvFreq + invWobble) / _sampleRate;
+            _invWobblePhase += invWobbleInc; if (_invWobblePhase > Math.PI * 2) _invWobblePhase -= Math.PI * 2;
 
-            // Fundamental + harmonics from each oscillator, summed and halved so the beat is an
-            // interference pattern rather than a doubled-level tone.
-            float invSample = ((float)Math.Sin(_invPhaseA)       + (float)Math.Sin(_invPhaseB))       * 0.5f * InvLevel
-                            + ((float)Math.Sin(_invPhaseA * 2.0) + (float)Math.Sin(_invPhaseB * 2.0)) * 0.5f * InvH2Level
-                            + ((float)Math.Sin(_invPhaseA * 3.0) + (float)Math.Sin(_invPhaseB * 3.0)) * 0.5f * InvH3Level
-                            + ((float)Math.Sin(_invPhaseA * 5.0) + (float)Math.Sin(_invPhaseB * 5.0)) * 0.5f * InvH5Level;
-            invSample *= _strength;
-            _invPhaseA += incA; if (_invPhaseA > Math.PI * 2) _invPhaseA -= Math.PI * 2;
-            _invPhaseB += incB; if (_invPhaseB > Math.PI * 2) _invPhaseB -= Math.PI * 2;
+            float invSample = ((float)Math.Sin(_invPhase)       * InvLevel
+                            +  (float)Math.Sin(_invPhase * 2.0) * InvH2Level
+                            +  (float)Math.Sin(_invPhase * 3.0) * InvH3Level
+                            +  (float)Math.Sin(_invPhase * 5.0) * InvH5Level) * _strength;
+            _invPhase += invInc; if (_invPhase > Math.PI * 2) _invPhase -= Math.PI * 2;
 
             float hfSample = ((float)Math.Sin(_hfPhaseA) + (float)Math.Sin(_hfPhaseB)) * 0.5f * HfLevel * _strength;
             _hfPhaseA += hfIncA; if (_hfPhaseA > Math.PI * 2) _hfPhaseA -= Math.PI * 2;
@@ -661,7 +637,7 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 
             x *= rumbleGain;                    // airframe vibration AM-modulates mic pickup
             x += n1Sample + n2Sample;           // jet engine whine
-            x += invSample;                     // twin 400Hz inverter whine -- dominant element
+            x += invSample;                     // 400Hz inverter whine -- dominant element
             x += hfSample;                      // avionics/gyro HF whine cluster
             x += roar * RoarLevel * _strength;  // structure-borne engine roar (subordinate)
 

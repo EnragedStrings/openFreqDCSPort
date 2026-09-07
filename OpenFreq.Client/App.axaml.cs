@@ -71,6 +71,20 @@ public partial class App : Application
                 DataContext = mainViewModel,
             };
 
+#if WINDOWS
+            // HotkeyService.Start() (above) runs before this window exists, so it has to fall
+            // back to a placeholder window for DirectInput's cooperative-level handle. Rebind it
+            // to our own window now that one exists -- otherwise every joystick device stays
+            // anchored to that placeholder for the life of the process, which is what caused
+            // HOTAS bindings to silently die until a full Windows restart (see HotkeyService for
+            // the full explanation).
+            var joystickWindowHandle = desktop.MainWindow.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            if (joystickWindowHandle != IntPtr.Zero)
+            {
+                serviceProvider.GetRequiredService<IHotkeyService>().AttachWindow(joystickWindowHandle);
+            }
+#endif
+
             desktop.ShutdownRequested += async (s, e) =>
             {
                 // Defer shutdown until we're done cleaning up

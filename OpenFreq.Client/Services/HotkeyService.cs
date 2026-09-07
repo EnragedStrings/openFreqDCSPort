@@ -33,7 +33,10 @@ public class HotkeyService : IHotkeyService
     private readonly Dictionary<HotkeyBinding, List<Guid>> _toggleOverlayBindings = new(new HotkeyBindingComparer());
 
 #if WINDOWS
-    // DirectInput for joystick support (Windows only)
+    // DirectInput for joystick support (Windows only). Guarded by _joystickLock since
+    // PollJoysticks runs on its own thread while AttachWindow/RegisterHotkey/etc. can be called
+    // from the UI thread concurrently.
+    private readonly object _joystickLock = new();
     private IDirectInput8? _directInput;
     private readonly List<IDirectInputDevice8> _joystickDevices = [];
     private readonly Dictionary<Guid, JoystickState> _previousJoystickStates = [];
@@ -118,7 +121,15 @@ public class HotkeyService : IHotkeyService
 #if WINDOWS
     private void InitializeDirectInput()
     {
-        // Get window handle - try to get from main window, fallback to desktop
+        // Get window handle - try to get from main window, fallback to desktop. Start() runs
+        // before App.axaml.cs assigns desktop.MainWindow, so mainWindow is always null here and
+        // this always falls through to GetDesktopWindow() -- a window owned by explorer.exe, not
+        // this process. That's fine as a temporary placeholder (DirectInput needs *a* window to
+        // set the cooperative level against before it will acquire anything), but every device
+        // acquired against it must get rebound once the real window exists, via AttachWindow --
+        // otherwise DirectInput's background/focus-tracking state stays anchored to a window that
+        // outlives this app's process, which is what caused bindings to require a full Windows
+        // restart (not just an app restart) to recover.
         try
         {
             var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
@@ -167,9 +178,12 @@ public class HotkeyService : IHotkeyService
 
                 if (result.Success)
                 {
-                    _joystickDevices.Add(device);
-                    _previousJoystickStates[deviceInstance.InstanceGuid] = new JoystickState();
-                    _deviceNames[deviceInstance.InstanceGuid] = deviceInstance.ProductName;
+                    lock (_joystickLock)
+                    {
+                        _joystickDevices.Add(device);
+                        _previousJoystickStates[deviceInstance.InstanceGuid] = new JoystickState();
+                        _deviceNames[deviceInstance.InstanceGuid] = deviceInstance.ProductName;
+                    }
 
                     _logger.LogInformation("Acquired joystick: {DeviceName} (GUID: {Guid})",
                         deviceInstance.ProductName, deviceInstance.InstanceGuid);
@@ -222,7 +236,10 @@ public class HotkeyService : IHotkeyService
                     TryAcquireNewDevices();
                 }
 
-                foreach (var device in _joystickDevices.ToList()) // ToList to avoid collection modification
+                List<IDirectInputDevice8> devicesSnapshot;
+                lock (_joystickLock) { devicesSnapshot = _joystickDevices.ToList(); }
+
+                foreach (var device in devicesSnapshot)
                 {
                     try
                     {
@@ -234,10 +251,14 @@ public class HotkeyService : IHotkeyService
 
                         var deviceGuid = device.DeviceInfo.InstanceGuid; // Get GUID from device
 
-                        if (!_previousJoystickStates.TryGetValue(deviceGuid, out var previousState))
+                        JoystickState? previousState;
+                        lock (_joystickLock)
                         {
-                            _previousJoystickStates[deviceGuid] = currentState;
-                            continue;
+                            if (!_previousJoystickStates.TryGetValue(deviceGuid, out previousState))
+                            {
+                                _previousJoystickStates[deviceGuid] = currentState;
+                                continue;
+                            }
                         }
 
                         // Compare button states
@@ -260,18 +281,40 @@ public class HotkeyService : IHotkeyService
                         }
 
                         // Update previous state
-                        _previousJoystickStates[deviceGuid] = currentState;
+                        lock (_joystickLock) { _previousJoystickStates[deviceGuid] = currentState; }
                     }
                     catch (SharpGen.Runtime.SharpGenException ex) when (ex.HResult == unchecked((int)0x8007001E))
                     {
-                        // Device unplugged — evict and stop polling it
+                        // DIERR_INPUTLOST: access to the device was temporarily lost -- this fires
+                        // on entirely routine events (focus change, a UAC prompt, lock screen,
+                        // sleep/resume, another app briefly taking exclusive input), NOT just on a
+                        // real unplug. Per Microsoft's own guidance the correct response is simply
+                        // to reacquire; only evict the device if that reacquire itself fails, which
+                        // is the actual signal it's gone. Treating every INPUTLOST as a removal
+                        // (as this used to) tore the device down on routine events far more often
+                        // than real disconnects, and since those devices only ever got rebuilt
+                        // against the same fallback window (see InitializeDirectInput/AttachWindow),
+                        // repeated churn is what left bindings dead until a full Windows restart.
                         var guid = device.DeviceInfo.InstanceGuid;
-                        var name = _deviceNames.GetValueOrDefault(guid, guid.ToString());
-                        _logger.LogInformation("Joystick disconnected: {DeviceName} ({Guid}), removing", name, guid);
-                        _joystickDevices.Remove(device);
-                        _previousJoystickStates.Remove(guid);
-                        _deviceNames.Remove(guid);
-                        try { device.Unacquire(); device.Dispose(); } catch { /* don't care */ }
+                        var name = GetDeviceName(guid);
+                        try
+                        {
+                            var reacquire = device.Acquire();
+                            if (reacquire.Success)
+                            {
+                                _logger.LogDebug("Reacquired joystick after temporary input loss: {DeviceName} ({Guid})", name, guid);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("Joystick disconnected: {DeviceName} ({Guid}), removing", name, guid);
+                                EvictDevice(device, guid);
+                            }
+                        }
+                        catch (Exception reacquireEx)
+                        {
+                            _logger.LogInformation(reacquireEx, "Joystick disconnected: {DeviceName} ({Guid}), removing", name, guid);
+                            EvictDevice(device, guid);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -291,12 +334,31 @@ public class HotkeyService : IHotkeyService
         _logger.LogDebug("Joystick polling thread stopped");
     }
 
+    private string GetDeviceName(Guid deviceGuid)
+    {
+        lock (_joystickLock)
+        {
+            return _deviceNames.GetValueOrDefault(deviceGuid, deviceGuid.ToString());
+        }
+    }
+
+    /// <summary>Removes a device that's actually gone (a reacquire attempt itself failed), as
+    /// opposed to a routine, recoverable DIERR_INPUTLOST -- see the catch block in
+    /// PollJoysticks that calls this.</summary>
+    private void EvictDevice(IDirectInputDevice8 device, Guid guid)
+    {
+        lock (_joystickLock)
+        {
+            _joystickDevices.Remove(device);
+            _previousJoystickStates.Remove(guid);
+            _deviceNames.Remove(guid);
+        }
+        try { device.Unacquire(); device.Dispose(); } catch { /* don't care */ }
+    }
+
     private void OnJoystickButtonPressed(Guid deviceGuid, int buttonIndex)
     {
-        if (!_deviceNames.TryGetValue(deviceGuid, out var deviceName))
-        {
-            deviceName = "Unknown Device";
-        }
+        var deviceName = GetDeviceName(deviceGuid);
 
         var binding = new JoystickButtonBinding(deviceGuid, deviceName, buttonIndex);
 
@@ -322,10 +384,7 @@ public class HotkeyService : IHotkeyService
 
     private void OnJoystickButtonReleased(Guid deviceGuid, int buttonIndex)
     {
-        if (!_deviceNames.TryGetValue(deviceGuid, out var deviceName))
-        {
-            deviceName = "Unknown Device";
-        }
+        var deviceName = GetDeviceName(deviceGuid);
 
         var binding = new JoystickButtonBinding(deviceGuid, deviceName, buttonIndex);
 
@@ -354,7 +413,9 @@ public class HotkeyService : IHotkeyService
         if (_directInput == null) return;
         try
         {
-            var knownGuids = new HashSet<Guid>(_joystickDevices.Select(d => d.DeviceInfo.InstanceGuid));
+            HashSet<Guid> knownGuids;
+            lock (_joystickLock) { knownGuids = new HashSet<Guid>(_joystickDevices.Select(d => d.DeviceInfo.InstanceGuid)); }
+
             var attached = _directInput.GetDevices(DeviceClass.GameControl, DeviceEnumerationFlags.AttachedOnly);
             foreach (var deviceInstance in attached)
             {
@@ -367,9 +428,12 @@ public class HotkeyService : IHotkeyService
                     var result = device.Acquire();
                     if (result.Success)
                     {
-                        _joystickDevices.Add(device);
-                        _previousJoystickStates[deviceInstance.InstanceGuid] = new JoystickState();
-                        _deviceNames[deviceInstance.InstanceGuid] = deviceInstance.ProductName;
+                        lock (_joystickLock)
+                        {
+                            _joystickDevices.Add(device);
+                            _previousJoystickStates[deviceInstance.InstanceGuid] = new JoystickState();
+                            _deviceNames[deviceInstance.InstanceGuid] = deviceInstance.ProductName;
+                        }
                         _logger.LogInformation("Joystick reconnected: {DeviceName} ({Guid})", deviceInstance.ProductName, deviceInstance.InstanceGuid);
                     }
                     else
@@ -395,29 +459,66 @@ public class HotkeyService : IHotkeyService
         _pollingThread?.Join(1000);
         _pollingThread = null;
 
-        // Release and dispose devices
-        foreach (var device in _joystickDevices)
+        lock (_joystickLock)
         {
-            try
+            // Release and dispose devices
+            foreach (var device in _joystickDevices)
             {
-                device.Unacquire();
-                device.Dispose();
+                try
+                {
+                    device.Unacquire();
+                    device.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error releasing joystick device");
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Error releasing joystick device");
-            }
-        }
 
-        _joystickDevices.Clear();
-        _previousJoystickStates.Clear();
-        _deviceNames.Clear();
+            _joystickDevices.Clear();
+            _previousJoystickStates.Clear();
+            _deviceNames.Clear();
+        }
 
         // Dispose DirectInput
         _directInput?.Dispose();
         _directInput = null;
 
         _logger.LogDebug("DirectInput stopped and cleaned up");
+    }
+
+    public void AttachWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || windowHandle == _windowHandle) return;
+
+        var previousHandle = _windowHandle;
+        _windowHandle = windowHandle;
+
+        // Re-bind every currently-acquired device's cooperative level to the app's own window
+        // instead of whatever placeholder Start() used (see InitializeDirectInput) -- otherwise
+        // DirectInput's background/focus-tracking state for these devices stays anchored to a
+        // window that outlives this process, and only a full Windows restart (which tears down
+        // that window) clears it. New devices picked up later by TryAcquireNewDevices already use
+        // the updated _windowHandle automatically.
+        List<IDirectInputDevice8> devicesSnapshot;
+        lock (_joystickLock) { devicesSnapshot = _joystickDevices.ToList(); }
+
+        foreach (var device in devicesSnapshot)
+        {
+            try
+            {
+                device.Unacquire();
+                device.SetCooperativeLevel(_windowHandle, CooperativeLevel.Background | CooperativeLevel.NonExclusive);
+                device.Acquire();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to rebind joystick {Guid} to app window", device.DeviceInfo.InstanceGuid);
+            }
+        }
+
+        _logger.LogDebug("Rebound {Count} joystick device(s) from window {Previous:X} to app window {Current:X}",
+            devicesSnapshot.Count, previousHandle.ToInt64(), windowHandle.ToInt64());
     }
 
     public List<JoystickDeviceInfo> GetAvailableJoysticks()
@@ -467,7 +568,10 @@ public class HotkeyService : IHotkeyService
 
     public bool IsJoystickConnected(Guid deviceInstanceGuid)
     {
-        return _joystickDevices.Any(d => d.DeviceInfo.InstanceGuid == deviceInstanceGuid);
+        lock (_joystickLock)
+        {
+            return _joystickDevices.Any(d => d.DeviceInfo.InstanceGuid == deviceInstanceGuid);
+        }
     }
 
     // Win32 API import for getting desktop window handle
@@ -595,10 +699,13 @@ public class HotkeyService : IHotkeyService
         // Create a mapping of unique capture IDs to bindings
         var captureIdToBinding = new Dictionary<Guid, JoystickButtonBinding>();
 
-        foreach (var device in _joystickDevices)
+        List<IDirectInputDevice8> captureDevicesSnapshot;
+        lock (_joystickLock) { captureDevicesSnapshot = _joystickDevices.ToList(); }
+
+        foreach (var device in captureDevicesSnapshot)
         {
             var deviceGuid = device.DeviceInfo.InstanceGuid;
-            var deviceName = _deviceNames.TryGetValue(deviceGuid, out var name) ? name : "Unknown";
+            var deviceName = GetDeviceName(deviceGuid);
             var buttonCount = device.Capabilities.ButtonCount;
 
             for (int i = 0; i < buttonCount; i++)

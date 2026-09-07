@@ -38,6 +38,13 @@ public interface IHotkeyService : IDisposable, ILifecycleService
     // Joystick-specific methods (Windows only)
     List<JoystickDeviceInfo> GetAvailableJoysticks();
     bool IsJoystickConnected(Guid deviceInstanceGuid);
+
+    /// <summary>Rebinds DirectInput's cooperative-level window to <paramref name="windowHandle"/>,
+    /// re-acquiring every currently-held device against it. Start() runs before the app's
+    /// MainWindow exists, so it has to fall back to a placeholder handle; call this once the real
+    /// window is available (see App.axaml.cs) so devices aren't left anchored to that fallback for
+    /// the life of the process.</summary>
+    void AttachWindow(IntPtr windowHandle);
 #endif
 
     public enum HotkeyType

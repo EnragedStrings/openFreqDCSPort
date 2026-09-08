@@ -21,6 +21,11 @@ public interface IOpenFreqService : IDisposable
     int AudioParamsUpdateFrequency { get; set; }
     bool SidetoneEnabled { get; set; }
     bool MicNormalizationEnabled { get; set; }
+
+    /// <summary>Live mirror of OpenFreqSettings.ShareTranscripts -- see its own doc comment.
+    /// Read by RecordProcedure to decide whether to buffer raw mic PCM for local speech-to-text.
+    /// </summary>
+    bool ShareTranscripts { get; set; }
     bool InputMeterEnabled { get; set; }
     double InputGain { get; set; }
     bool DcsLineOfSightEnabled { get; set; }

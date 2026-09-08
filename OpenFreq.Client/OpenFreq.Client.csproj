@@ -66,6 +66,8 @@
         <PackageReference Include="SharpHook" Version="7.1.1" />
         <PackageReference Include="SkiaSharp.Svg" Version="1.60.0" />
         <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />
+        <PackageReference Include="Whisper.net" Version="1.9.1" />
+        <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     </ItemGroup>
 
     <ItemGroup>

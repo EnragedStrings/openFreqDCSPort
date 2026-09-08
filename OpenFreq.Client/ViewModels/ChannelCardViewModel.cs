@@ -150,11 +150,12 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         Channel.ChannelTransmissionStatus.Idle;
 
     /// <summary>Why an incoming transmission on this channel isn't actually audible right now
-    /// (see OpenFreqService.SignalBlockedStatusChanged) -- e.g. "LOS BLOCKED" -- shown alongside
-    /// TransmissionStatus rather than replacing it, since the peer-transmitting indicator is
-    /// deliberately left alone (it reflects the PTT signal, not audibility) per explicit product
-    /// decision. None/null when the last evaluated transmission on this frequency came through
-    /// fine.</summary>
+    /// (see OpenFreqService.SignalBlockedStatusChanged) -- e.g. "LOS BLOCKED". TransmissionStatus
+    /// itself already stops showing Receiving when this is non-null (see
+    /// OpenFreqService.RecomputeFrequencyTransmissionStatus) -- this text exists to explain *why*
+    /// nothing is audible, since a silent, unlit channel card looks identical to "no one is
+    /// transmitting" otherwise. None/null when the last evaluated transmission on this frequency
+    /// came through fine.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSignalBlockedText))]
     public partial string? SignalBlockedText { get; set; }

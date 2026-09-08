@@ -53,6 +53,14 @@ public class OpenFreqSettings
     public string DisplayName { get; set; } = "Unnamed";
     public bool SidetoneEnabled { get; set; } = false;
     public bool MicNormalizationEnabled { get; set; } = true;
+
+    /// <summary>Opt-in to local speech-to-text of this client's own transmissions, sent to the
+    /// server (see IRtcClient.SendTranscriptAsync) so bot-capable listeners can receive a
+    /// transcript -- off by default, per AuthenticateMessage.WantsTranscripts's own doc comment
+    /// ("the normal client won't [transcribe] by default"). Read once at connect time (like
+    /// DisplayName/OpenFreqPassword above); toggling it mid-session takes effect on the next
+    /// (re)connect, not live.</summary>
+    public bool ShareTranscripts { get; set; } = false;
     public double InputGain { get; set; } = 1.0;
     public double SidetoneVolume { get; set; } = 0.4;
     public double MasterVolume { get; set; } = 1.0;

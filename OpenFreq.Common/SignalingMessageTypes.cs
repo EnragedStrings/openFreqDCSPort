@@ -24,4 +24,12 @@ public static class SignalingMessageTypes
     public const string DcsLosOracleResponse = "dcs-los-oracle-response";
     public const string SatelliteEphemerisUpdate = "satellite-ephemeris-update";
     public const string SatcomLinkState = "satcom-link-state";
+
+    /// <summary>Client -&gt; server: the transmitting client's own local speech-to-text result for
+    /// one completed PTT session -- see TransmissionTranscriptMessage.</summary>
+    public const string TransmissionTranscript = "transmission-transcript";
+
+    /// <summary>Server -&gt; one bot-capable client: relays a transcript it's allowed to see -- see
+    /// TranscriptDeliveryMessage.</summary>
+    public const string TranscriptDelivery = "transcript-delivery";
 }

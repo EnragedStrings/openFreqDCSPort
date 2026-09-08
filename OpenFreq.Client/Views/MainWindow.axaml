@@ -1016,6 +1016,24 @@
                                 </StackPanel>
                             </controls:Card>
 
+                            <!-- Speech-to-text transcript sharing (all modes: BMS, GCI, DCS) -->
+                            <controls:Card>
+                                <StackPanel Margin="16">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <avalonia:MaterialIcon Kind="Microphone"
+                                                               Width="16" Height="16"
+                                                               Margin="0,0,8,0"
+                                                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                        <TextBlock Text="Speech-to-Text" Classes="SectionHeader" Margin="0" />
+                                    </StackPanel>
+                                    <CheckBox Content="Share transcripts with bot listeners"
+                                              IsChecked="{Binding Settings.ShareTranscripts}" />
+                                    <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
+                                               Text="Runs local speech-to-text on your own transmissions and reports the text to the server, which only relays it to clients that requested transcripts (e.g. a bot/GCI-automation tool) and could plausibly have heard you -- your voice audio never leaves this PC, and normal clients never see it. Off by default. Takes effect on the next connect."
+                                               FontStyle="Italic" />
+                                </StackPanel>
+                            </controls:Card>
+
                             <!-- Debug Mode Card -->
                             <controls:Card>
                                 <StackPanel Margin="16">

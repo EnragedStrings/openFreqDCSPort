@@ -33,6 +33,7 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
     public event EventHandler<DcsLosOracleRequestEventArgs>? DcsLosOracleRequestReceived;
+    public event EventHandler<TranscriptReceivedEventArgs>? TranscriptReceived;
 
     private RtpAudioReceiver? _rtpReceiver;
     private RtpAudioSender? _rtpSender;
@@ -63,6 +64,19 @@ public class OpenFreqRtcClient : IRtcClient
     private readonly Dictionary<int, bool> _frequencyTransmissionState = new();
     private readonly Dictionary<int, HashSet<string>> _frequencyPeers = new();
 
+    // The TransmissionId minted for each frequency's currently-active (local) transmission, if
+    // any -- keyed alongside _frequencyTransmissionState, populated in StartTransmissionAsync and
+    // consumed by StopTransmissionAsync/TransmissionHeartbeatAsync. See
+    // AudioTransmissionMessage.TransmissionId's own doc comment for why this exists.
+    private readonly Dictionary<int, Guid> _activeTransmissionIds = new();
+
+    // The position (if any) a frequency was joined with -- see JoinChannelMessage.Lat/Lon/Alt.
+    // Replayed on reconnect (ReconnectAsync) alongside the join itself, so a bot's declared
+    // listening position for e.g. "Nellis Tower" survives a dropped/re-established connection.
+    private readonly Dictionary<int, (double Lat, double Lon, double Alt)> _frequencyJoinPositions = new();
+
+    private readonly bool _wantsTranscripts;
+
     private readonly ILogger<OpenFreqRtcClient> _logger;
     private readonly ILoggerFactory _loggerFactory;
 
@@ -77,13 +91,15 @@ public class OpenFreqRtcClient : IRtcClient
 
     public bool IsAuthenticated { get; private set; }
 
-    public OpenFreqRtcClient(ILoggerFactory loggerFactory, string serverIp, string password, string? myDisplayName)
+    public OpenFreqRtcClient(ILoggerFactory loggerFactory, string serverIp, string password, string? myDisplayName,
+        bool wantsTranscripts = false)
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<OpenFreqRtcClient>();
         ServerIp = serverIp;
         _password = password;
         MyDisplayName = myDisplayName;
+        _wantsTranscripts = wantsTranscripts;
     }
 
     /// <summary>
@@ -158,7 +174,8 @@ public class OpenFreqRtcClient : IRtcClient
 
         // Authenticate
         await SendMessageAsync(
-            SignalingMessageFactory.CreateAuthenticate(_password, MyDisplayName, OpenFreqVersion.Current));
+            SignalingMessageFactory.CreateAuthenticate(_password, MyDisplayName, OpenFreqVersion.Current,
+                _wantsTranscripts));
 
         // Wait for authentication response with timeout
         var startTime = DateTime.UtcNow;
@@ -239,9 +256,14 @@ public class OpenFreqRtcClient : IRtcClient
                 await ConnectInternalAsync(connectTimeout);
 
                 // Channel membership lives on the server and is dropped when the socket dies,
-                // so re-send a join for every frequency we were on before the drop.
+                // so re-send a join for every frequency we were on before the drop -- including
+                // any declared listening position, so it isn't silently lost across a reconnect.
                 foreach (var frequencyKhz in joinedFrequencies)
-                    await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz));
+                {
+                    var hasPosition = _frequencyJoinPositions.TryGetValue(frequencyKhz, out var pos);
+                    await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz,
+                        hasPosition ? pos.Lat : null, hasPosition ? pos.Lon : null, hasPosition ? pos.Alt : null));
+                }
 
                 _logger.LogInformation(
                     "Reconnected after {Attempts} attempt(s); rejoined {Count} frequency(ies)",
@@ -287,14 +309,14 @@ public class OpenFreqRtcClient : IRtcClient
     /// <summary>
     /// Join a frequency channel
     /// </summary>
-    public async Task JoinFrequencyAsync(int frequencyKhz)
+    public async Task JoinFrequencyAsync(int frequencyKhz, double? lat = null, double? lon = null, double? alt = null)
     {
         if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz));
+        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz, lat, lon, alt));
 
         if (!_frequencyPeers.ContainsKey(frequencyKhz))
         {
@@ -302,6 +324,11 @@ public class OpenFreqRtcClient : IRtcClient
         }
 
         _frequencyTransmissionState[frequencyKhz] = false;
+
+        if (lat is { } latVal && lon is { } lonVal && alt is { } altVal)
+            _frequencyJoinPositions[frequencyKhz] = (latVal, lonVal, altVal);
+        else
+            _frequencyJoinPositions.Remove(frequencyKhz);
     }
 
     /// <summary>
@@ -318,13 +345,16 @@ public class OpenFreqRtcClient : IRtcClient
 
         _frequencyPeers.Remove(frequencyKhz);
         _frequencyTransmissionState.Remove(frequencyKhz);
+        _frequencyJoinPositions.Remove(frequencyKhz);
+        _activeTransmissionIds.Remove(frequencyKhz);
         OnFrequencyLeft(frequencyKhz);
     }
 
     /// <summary>
     /// Start transmitting on a frequency
     /// </summary>
-    public async Task StartTransmissionAsync(int frequencyKhz)
+    public async Task<Guid> StartTransmissionAsync(int frequencyKhz, double? lat = null, double? lon = null,
+        double? alt = null)
     {
         if (!IsAuthenticated)
         {
@@ -338,11 +368,17 @@ public class OpenFreqRtcClient : IRtcClient
 
         _frequencyTransmissionState[frequencyKhz] = true;
 
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true));
+        var transmissionId = Guid.NewGuid();
+        _activeTransmissionIds[frequencyKhz] = transmissionId;
+
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true,
+            transmissionId, lat, lon, alt));
         OnTransmissionStateChanged(frequencyKhz, true);
 
         // Start heartbeat for this frequency
         _ = Task.Run(() => TransmissionHeartbeatAsync(frequencyKhz), _cts.Token);
+
+        return transmissionId;
     }
 
     /// <summary>
@@ -362,8 +398,22 @@ public class OpenFreqRtcClient : IRtcClient
 
         _frequencyTransmissionState[frequencyKhz] = false;
 
-        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false, is3d: true));
+        _activeTransmissionIds.Remove(frequencyKhz, out var transmissionId);
+
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, false, is3d: true,
+            transmissionId == default ? null : transmissionId));
         OnTransmissionStateChanged(frequencyKhz, false);
+    }
+
+    /// <summary>
+    /// Reports this client's own local speech-to-text result for one completed PTT session -- see
+    /// TransmissionTranscriptMessage's own doc comment. Fire-and-forget: the server relays it (or
+    /// not, per the LOS-gating contract) to interested peers independently; no reply is expected.
+    /// </summary>
+    public async Task SendTranscriptAsync(Guid transmissionId, List<TranscriptWordDto> words, string? language = null)
+    {
+        if (!IsAuthenticated) return;
+        await SendMessageAsync(SignalingMessageFactory.CreateTransmissionTranscript(transmissionId, words, language));
     }
 
     /// <summary>
@@ -481,7 +531,9 @@ public class OpenFreqRtcClient : IRtcClient
                 break;
             }
 
-            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true));
+            _activeTransmissionIds.TryGetValue(frequencyKhz, out var transmissionId);
+            await SendMessageAsync(SignalingMessageFactory.CreateTransmission(frequencyKhz, true, is3d: true,
+                transmissionId == default ? null : transmissionId));
             await Task.Delay(333, _cts.Token); // ~3 times per second
         }
     }
@@ -699,6 +751,13 @@ public class OpenFreqRtcClient : IRtcClient
                         SignalingMessageFactory.DeserializePayload<DcsLosOracleRequestMessage>(message.Payload);
                     if (losOracleRequest != null)
                         DcsLosOracleRequestReceived?.Invoke(this, new DcsLosOracleRequestEventArgs(losOracleRequest));
+                    break;
+
+                case SignalingMessageTypes.TranscriptDelivery:
+                    var transcriptDelivery =
+                        SignalingMessageFactory.DeserializePayload<TranscriptDeliveryMessage>(message.Payload);
+                    if (transcriptDelivery != null)
+                        TranscriptReceived?.Invoke(this, new TranscriptReceivedEventArgs(transcriptDelivery));
                     break;
             }
         }

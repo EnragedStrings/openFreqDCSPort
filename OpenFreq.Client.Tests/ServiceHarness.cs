@@ -27,6 +27,7 @@ internal sealed class ServiceHarness
     public IFalconRadioSharedMemoryService FalconRadio { get; } = Substitute.For<IFalconRadioSharedMemoryService>();
     public IDcsExportService Dcs { get; } = Substitute.For<IDcsExportService>();
     public IAcmiClientService Acmi { get; } = Substitute.For<IAcmiClientService>();
+    public ISpeechTranscriber SpeechTranscriber { get; } = Substitute.For<ISpeechTranscriber>();
 
     public OpenFreqService Service { get; }
 
@@ -41,9 +42,11 @@ internal sealed class ServiceHarness
         var signalFactory = Substitute.For<ISignalCalculatorFactory>();
         signalFactory.Create(default!, default, default, default, default, default!).ReturnsForAnyArgs(SignalCalculator);
 
+        SpeechTranscriber.TranscribeAsync(default!, default).ReturnsForAnyArgs([]);
+
         Service = new OpenFreqService(
             Falcon, FalconRadio, Dcs, NullLogger<OpenFreqService>.Instance, NullLoggerFactory.Instance, Acmi,
-            rtcFactory, playbackFactory, signalFactory);
+            rtcFactory, playbackFactory, signalFactory, SpeechTranscriber);
     }
 
     /// <summary>Run Initialize() with sane defaults (GCI mode, device 0).</summary>

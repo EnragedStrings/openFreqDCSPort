@@ -17,6 +17,18 @@ public class ClientSession(string id, string displayName, WebSocket webSocket, s
     public bool Is3d { get; set; }
     public SemaphoreSlim SendLock { get; } = new(1, 1);
 
+    /// <summary>Opt-in capability declared at authenticate time -- see
+    /// AuthenticateMessage.WantsTranscripts's own doc comment. A normal GUI client never sets this;
+    /// a bot client does.</summary>
+    public bool WantsTranscripts { get; set; }
+
+    /// <summary>The position (if any) this client declared when joining a given frequency -- see
+    /// JoinChannelMessage.Lat/Lon/Alt. Only meaningful alongside WantsTranscripts: a bot operating
+    /// multiple named positions (e.g. "Nellis Tower" on one frequency, "Luke Tower" on another)
+    /// declares each one's own position separately. Absent for a frequency means "unknown position,"
+    /// not "no position" -- see TranscriptDeliveryMessage's own doc comment on how that's treated.</summary>
+    public ConcurrentDictionary<int, (double Lat, double Lon, double Alt)> FrequencyListenerPositions { get; } = new();
+
     // Latest SATCOM state this client reported (message-driven; consumed by SignalingServer's
     // independent SatcomTickLoopAsync, which runs on its own cadence rather than only reacting to
     // message arrival). Null/default NetId means "not currently using SATCOM".

@@ -125,6 +125,90 @@ Useful switches:
 The script reuses `installer/windows/Install-DcsExport.ps1` so Lua export changes
 get copied into `Saved Games\DCS...\Mods\Services\OpenFreqDCS` before launch.
 
+## Bot Clients & Speech-to-Text Transcripts
+
+OpenFreq is gaining a second, opt-in way to consume a transmission besides hearing it: a **text
+transcript**, delivered only to clients that ask for it (a "bot client" — think an LLM-driven
+ATC/GCI controller), gated by the same line-of-sight/audibility physics a real listener is subject
+to. The goal is that third-party developers can build their own bot tooling (their own LLM, their
+own TTS) against the wire protocol alone, without touching this codebase.
+
+**Built so far:**
+- **Protocol**: a `TransmissionId` now identifies one PTT key-down-to-key-up session end to end; a
+  new opt-in `wantsTranscripts` capability flag (off by default — a normal client never receives
+  transcripts); a client can declare a static listening position per frequency it joins (so one bot
+  process can run several independently-positioned "controllers," e.g. a Nellis Tower and a Luke
+  Tower, over a single connection); new `transmission-transcript` (client → server) and
+  `transcript-delivery` (server → bot) messages, the latter carrying word-level timing.
+- **Server-side gating** (`OpenFreq.Server/TranscriptDeliveryService.cs`): a transcript is only
+  relayed to a bot that's joined the right frequency, asked for transcripts, and — when both sides'
+  positions are known — passes a real terrain line-of-sight check (reusing the same oracle
+  mechanism the SRS bridge already used, now shared via `LosOracleService`). Unresolvable LOS fails
+  closed (not delivered), matching "shouldn't be sent if there's no LOS" rather than risking a false
+  positive.
+- **"Stepped" transmissions**: if two transmitters were active on the same frequency at once, and a
+  given bot's own audibility reaches *both* of them, the words spoken during the overlap are
+  dropped from what that bot receives — a bot that could only actually hear one of the two callers
+  never gets an artificially clean transcript of both. This is evaluated independently per bot, so
+  two bots with different LOS pictures to the same pair of transmitters can legitimately see
+  different text for the same transmission.
+- **Client-side speech-to-text**: local, fully offline transcription via
+  [Whisper.net](https://github.com/sandrohanea/whisper.net) (whisper.cpp) run on the raw,
+  pre-effects mic buffer for the best possible source audio — no voice audio ever leaves the
+  machine. The model downloads once on first use and is cached locally rather than bundled with the
+  install. Off by default; enable it under Settings → Speech-to-Text.
+- **Channel-card fix**: the "someone is transmitting" indicator on a channel card now reflects
+  actual audibility (LOS/range), not just the raw PTT signal — you no longer see a peer light up as
+  transmitting when you couldn't actually hear them.
+
+**Next steps:**
+- A demo `OpenFreq.BotClient` reference project — a config-driven console app that connects, joins
+  one or more named/positioned frequencies at once, prints incoming transcripts, and demonstrates
+  the "respond with an audio file" half of the loop (`IRtcClient.SendAudio`/
+  `StartTransmissionAsync`/`StopTransmissionAsync` already support this; the demo just needs to
+  read a WAV file and pace it out in real time). This is the actual runnable proof-of-concept for
+  third-party developers to build against.
+- Protocol reference documentation (`docs/protocol.md`) written for developers who'll never read
+  the C# source: the WebSocket message catalog, the UDP/RTP audio format, and a full connect →
+  join → PTT → transcript sequence walkthrough, so someone can implement a bot client in any
+  language without reverse-engineering this repo.
+
+## Known Gaps
+
+### Intercom (crew-to-crew, multicrew aircraft)
+
+OpenFreq does not route intercom (ICS) traffic at all today — this is a deliberate, documented
+scope boundary, not an oversight (see `DCS/OpenFreqDCS/Scripts/OpenFreqDCS.lua`'s own comments on
+the UH-60L and C-130J-30 exports: *"OpenFreq doesn't route intercom traffic"*). A multicrew
+aircraft's cabin/cockpit intercom between pilot, copilot, and crew stays purely internal to DCS —
+it never reaches other OpenFreq clients, and the SRS bridge explicitly filters intercom-modulation
+frequencies out of everything it relays.
+
+**Next steps — SRS already has a working implementation to port from:**
+1. **Cockpit switch mapping** (per-aircraft, in SRS's own `Scripts/DCS-SRS/Scripts/DCS-SRS-Modules/
+   *.lua` — the same directory OpenFreq's own `buildXRadios()` functions already mirror for real
+   radios). The pattern is consistent across aircraft: intercom is exposed as one dedicated,
+   synthetic "radio" entry with a special modulation/model value (`modulation = 2` /
+   `SR.RadioModels.Intercom`, a sentinel frequency like `100.0`), fed by the aircraft's actual ICS
+   panel arguments. The UH-60L module (`UH60L.lua`) is a concrete, already-studied example: ICS
+   master power/volume/hot-mic (arguments 401/402), a transmit-selector argument that includes an
+   ICS position alongside the real radios (argument 400), and per-radio ICS-monitor switches
+   (arguments 403-407).
+2. **Client-side audio routing** (SRS's C# app, not the DCS export): `Common/Audio/Providers/
+   RadioMixingProvider.cs` recognizes intercom by a reserved radio id (`radioId == 0`) and gives it
+   its own transmission-start audio cue distinct from a real radio's squelch/static. Unlike a real
+   radio, intercom logically isn't subject to RF range/terrain LOS at all — it's a wire between
+   headsets in the same aircraft, not a transmission through the world, so whatever plays the
+   equivalent role in OpenFreq's pipeline (`OpenFreqAudio`/`RadioPlayback`) would need a path that
+   bypasses `ISignalCalculator`/terrain-LOS gating entirely for this one "channel."
+3. Porting this into OpenFreq means: extending `OpenFreqDCS.lua` with an `AmbientNoiseType`-style
+   dedicated intercom "radio" per aircraft (starting with UH-60L and C-130J-30, which already have
+   the placeholder comments), a client-side concept of an intercom channel that's always in-range
+   for other crew on the *same* aircraft/unit and never leaves that aircraft, and — the genuinely
+   hard part DCS-SRS itself flags for the C-130J-30 — DCS's export API has no reliable way to tell
+   which crew seat a player occupies, so per-seat intercom state may need the same "pilot-seat-only,
+   documented limitation" treatment the radio export already has for that aircraft.
+
 ## Contributing
 
 Pull requests are welcome. Due to the complexity of the project, please keep them small. For bugfixes, please specify clear testing/repro cases.

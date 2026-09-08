@@ -21,6 +21,7 @@ public sealed class RtcClientHarness : IAsyncDisposable
     public AsyncEventStream<AllPeersStatusEventArgs> AllPeersStatus { get; } = new();
     public AsyncEventStream<ServerSettingsEventArgs> ServerSettings { get; } = new();
     public AsyncEventStream<OpenFreq.Common.ErrorEventArgs> Errors { get; } = new();
+    public AsyncEventStream<TranscriptReceivedEventArgs> TranscriptReceived { get; } = new();
 
     private RtcClientHarness(OpenFreqRtcClient client)
     {
@@ -33,13 +34,16 @@ public sealed class RtcClientHarness : IAsyncDisposable
         client.AllPeersStatusUpdateReceived += (_, e) => AllPeersStatus.Publish(e);
         client.ServerSettingsChanged += (_, e) => ServerSettings.Publish(e);
         client.ErrorOccurred += (_, e) => Errors.Publish(e);
+        client.TranscriptReceived += (_, e) => TranscriptReceived.Publish(e);
     }
 
     public string? PeerId => Client.MyPeerId;
 
-    public static RtcClientHarness Create(SignalingServerHarness server, string displayName, string password = "")
+    public static RtcClientHarness Create(SignalingServerHarness server, string displayName, string password = "",
+        bool wantsTranscripts = false)
     {
-        var client = new OpenFreqRtcClient(NullLoggerFactory.Instance, server.ServerAddress, password, displayName);
+        var client = new OpenFreqRtcClient(NullLoggerFactory.Instance, server.ServerAddress, password, displayName,
+            wantsTranscripts);
         return new RtcClientHarness(client);
     }
 

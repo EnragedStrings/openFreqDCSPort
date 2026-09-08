@@ -116,6 +116,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial bool SidetoneEnabled { get; set; } = false;
     [ObservableProperty] public partial bool MicNormalizationEnabled { get; set; } = true;
 
+    /// <summary>See OpenFreqSettings.ShareTranscripts's own doc comment.</summary>
+    [ObservableProperty] public partial bool ShareTranscripts { get; set; } = false;
+
     /// <summary>When true, per-channel Volume/Squelch controls in the UI override the
     /// cockpit-driven values for DCS/BMS channels. When false (default), cockpit controls win
     /// and manual per-channel controls are disabled for those channels.</summary>
@@ -526,6 +529,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnMicNormalizationEnabledChanged(bool value) => _openFreqService.MicNormalizationEnabled = value;
 
+    partial void OnShareTranscriptsChanged(bool value) => _openFreqService.ShareTranscripts = value;
+
     partial void OnInputMeterEnabledChanged(bool value) => _openFreqService.InputMeterEnabled = value;
 
     partial void OnInputGainChanged(double value) => _openFreqService.InputGain = value;
@@ -634,6 +639,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MasterVolume = settings.MasterVolume;
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
+        ShareTranscripts = settings.ShareTranscripts;
         InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
         MinimizeOnConnect = settings.MinimizeOnConnect;
@@ -837,6 +843,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MasterVolume = MasterVolume,
             SidetoneEnabled = SidetoneEnabled,
             MicNormalizationEnabled = MicNormalizationEnabled,
+            ShareTranscripts = ShareTranscripts,
             InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
             MinimizeOnConnect = MinimizeOnConnect,

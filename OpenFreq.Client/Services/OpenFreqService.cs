@@ -39,6 +39,15 @@ public class OpenFreqService : IOpenFreqService
     private int _recordHandle;
     private readonly ConcurrentDictionary<int, List<int>> _activeTransmissionsAndMutedFrequencies = new();
 
+    private readonly ISpeechTranscriber _speechTranscriber;
+
+    // Raw pre-effects mic PCM accumulated per currently-transmitting frequency, only while
+    // ShareTranscripts is on -- see StartTransmissionAsync/StopTransmissionAsync and
+    // RecordProcedure. Populated with the TransmissionId StartTransmissionAsync returned, so the
+    // resulting transcript can be correlated back to the right PTT session once StopTransmissionAsync
+    // hands the buffer off for transcription.
+    private readonly ConcurrentDictionary<int, (Guid TransmissionId, List<short> Samples)> _transcriptionBuffers = new();
+
     // Frequencies currently routed through the SATCOM vocoder path (see SetSatcomState) --
     // CalculateAudioParamsSync's terrestrial free-space/LOS model has no idea these exist and
     // computes it anyway (distance/terrain between the two AIRCRAFT), which is simply the wrong
@@ -53,6 +62,12 @@ public class OpenFreqService : IOpenFreqService
     // Change-tracked so SignalBlockedStatusChanged fires on real transitions only, not on every
     // ~20ms packet while a block (or a clear signal) is ongoing.
     private readonly ConcurrentDictionary<int, SignalBlockReason> _lastSignalBlockedReason = new();
+
+    // Last-known raw PTT signaling state per frequency (from PeerTransmissionEventArgs), kept so
+    // RecomputeFrequencyTransmissionStatus can re-derive the public Transmitting/Receiving/Idle
+    // status whenever EITHER input changes -- the PTT signal itself, or _lastSignalBlockedReason
+    // above changing mid-transmission (e.g. an aircraft flies behind terrain mid-call).
+    private readonly ConcurrentDictionary<int, (bool IsTransmitting, bool Is3d)> _peerTransmittingByFrequency = new();
 
     // Frequencies currently transmitting a synthesized tone (see StartToneTransmissionAsync)
     // rather than real mic audio. Subset of _activeTransmissionsAndMutedFrequencies' keys.
@@ -165,7 +180,7 @@ public class OpenFreqService : IOpenFreqService
         ILogger<OpenFreqService> logger,
         ILoggerFactory loggerFactory, IAcmiClientService acmiClientService,
         IRtcClientFactory rtcClientFactory, IPlaybackServiceFactory playbackServiceFactory,
-        ISignalCalculatorFactory signalCalculatorFactory)
+        ISignalCalculatorFactory signalCalculatorFactory, ISpeechTranscriber speechTranscriber)
     {
         _falconSharedMemoryService = falconSharedMemoryService;
         _falconRadioSharedMemoryService = falconRadioSharedMemoryService;
@@ -176,6 +191,7 @@ public class OpenFreqService : IOpenFreqService
         _rtcClientFactory = rtcClientFactory;
         _playbackServiceFactory = playbackServiceFactory;
         _signalCalculatorFactory = signalCalculatorFactory;
+        _speechTranscriber = speechTranscriber;
 
         // Initialize signal strength tracker with callback
         _signalStrengthTracker = new SignalStrengthTracker(
@@ -225,6 +241,9 @@ public class OpenFreqService : IOpenFreqService
             UpdateMicCaptureState();
         }
     } = true;
+
+    /// <summary>See IOpenFreqService.ShareTranscripts's own doc comment.</summary>
+    public bool ShareTranscripts { get; set; }
 
     public bool InputMeterEnabled
     {
@@ -367,7 +386,7 @@ public class OpenFreqService : IOpenFreqService
         // Create client with server settings
         _logger.LogDebug("Creating new client");
         _client = _rtcClientFactory.Create(_loggerFactory,
-            settings.OpenFreqServerAddress, settings.OpenFreqPassword, myDisplayName);
+            settings.OpenFreqServerAddress, settings.OpenFreqPassword, myDisplayName, settings.ShareTranscripts);
         _logger.LogDebug("Client created: {ClientHashCode}", _client.GetHashCode());
 
         // Subscribe to client events
@@ -802,7 +821,10 @@ public class OpenFreqService : IOpenFreqService
             if (_playbackService != null) _playbackService.SidetoneEnabled = SidetoneEnabled;
         }
 
-        await _client.StartTransmissionAsync(frequencyKhz);
+        var transmissionId = await _client.StartTransmissionAsync(frequencyKhz);
+        if (ShareTranscripts)
+            _transcriptionBuffers[frequencyKhz] = (transmissionId, new List<short>());
+
         OnStatusMessage($"Transmitting on {frequencyKhz / 1000d:F3}");
     }
 
@@ -834,8 +856,34 @@ public class OpenFreqService : IOpenFreqService
             UpdateMicCaptureState();
         }
 
+        if (_transcriptionBuffers.TryRemove(frequencyKhz, out var pending))
+            _ = TranscribeAndSendAsync(pending.TransmissionId, pending.Samples);
+
         await _client.StopTransmissionAsync(frequencyKhz);
         OnStatusMessage($"Stopped transmitting on {frequencyKhz / 1000d:F3} MHz");
+    }
+
+    /// <summary>Runs local speech-to-text on one completed PTT session's buffered raw mic PCM and
+    /// reports the result -- fire-and-forget from StopTransmissionAsync's perspective, since
+    /// transcription (typically low single-digit seconds) must never hold up PTT release. Never
+    /// throws: a failed/slow/no-op transcription is logged and simply means no transcript gets
+    /// sent for this transmission, not a crash.</summary>
+    private async Task TranscribeAndSendAsync(Guid transmissionId, List<short> samples)
+    {
+        try
+        {
+            if (samples.Count == 0 || _client == null) return;
+
+            var words = await _speechTranscriber.TranscribeAsync(samples.ToArray(), OpenFreqRtcClient.SAMPLE_RATE);
+            if (words.Count == 0) return;
+
+            await _client.SendTranscriptAsync(transmissionId, words);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to transcribe/send transcript for transmission {TransmissionId}",
+                transmissionId);
+        }
     }
 
     /// <inheritdoc />
@@ -1176,6 +1224,15 @@ public class OpenFreqService : IOpenFreqService
             // Copy audio data once
             short[] audioData = new short[length / 2];
             Marshal.Copy(buffer, audioData, 0, audioData.Length);
+
+            // Speech-to-text capture: the truest possible source audio, before normalization/gain/
+            // tone-substitution below touch it -- see WhisperSpeechTranscriber and
+            // StartTransmissionAsync/StopTransmissionAsync, which own the buffers this appends to.
+            if (ShareTranscripts && !_transcriptionBuffers.IsEmpty)
+            {
+                foreach (var buffered in _transcriptionBuffers.Values)
+                    buffered.Samples.AddRange(audioData);
+            }
 
             // Normalize transmit level so loud/quiet mics land near a common
             // reference. Applied before sidetone + send so the operator hears
@@ -1628,14 +1685,37 @@ public class OpenFreqService : IOpenFreqService
                 new PeerData(e.PeerId, e.PeerDisplayName,
                     e.IsTransmitting ? PeerData.PeerStatus.Transmitting : PeerData.PeerStatus.Receiving), e.Is3d));
 
-        // Own TX is authoritative: don't let peer state overwrite Transmitting in subscribers
-        OnFrequencyTransmissionStatusChanged(e.FrequencyKhz,
-            _activeTransmissionsAndMutedFrequencies.ContainsKey(e.FrequencyKhz)
-                ? Channel.ChannelTransmissionStatus.Transmitting
-                : e.IsTransmitting
-                    ? Channel.ChannelTransmissionStatus.Receiving
-                    : Channel.ChannelTransmissionStatus.Idle,
-            e.Is3d);
+        _peerTransmittingByFrequency[e.FrequencyKhz] = (e.IsTransmitting, e.Is3d);
+        RecomputeFrequencyTransmissionStatus(e.FrequencyKhz);
+    }
+
+    /// <summary>Re-derives and publishes the Transmitting/Receiving/Idle status for one frequency
+    /// from its two independent inputs: the raw PTT signal (_peerTransmittingByFrequency, from the
+    /// WebSocket signaling channel) and the last-known audibility result (_lastSignalBlockedReason,
+    /// from the UDP audio stream) -- called whenever either one changes, not just on PTT edges, so
+    /// a mid-transmission LOS change (or the very first audio packet correcting an optimistic
+    /// initial guess) updates the indicator promptly. A peer keying up no longer shows as
+    /// "Receiving" unless their transmission is also currently audible to us -- see
+    /// ChannelCardViewModel.TransmissionStatus's doc comment for why this used to be deliberately
+    /// PTT-only, and why that's been reversed.</summary>
+    private void RecomputeFrequencyTransmissionStatus(int frequencyKhz)
+    {
+        var (peerTransmitting, is3d) = _peerTransmittingByFrequency.TryGetValue(frequencyKhz, out var state)
+            ? state
+            : (false, true);
+
+        var blocked = _lastSignalBlockedReason.TryGetValue(frequencyKhz, out var reason) &&
+                      reason != SignalBlockReason.None;
+
+        // Own TX is authoritative: don't let peer/audibility state overwrite Transmitting for our
+        // own key-up in subscribers.
+        var status = _activeTransmissionsAndMutedFrequencies.ContainsKey(frequencyKhz)
+            ? Channel.ChannelTransmissionStatus.Transmitting
+            : peerTransmitting && !blocked
+                ? Channel.ChannelTransmissionStatus.Receiving
+                : Channel.ChannelTransmissionStatus.Idle;
+
+        OnFrequencyTransmissionStatusChanged(frequencyKhz, status, is3d);
     }
 
     /// <summary>
@@ -2118,6 +2198,7 @@ public class OpenFreqService : IOpenFreqService
 
         _lastSignalBlockedReason[frequencyKhz] = reason;
         SignalBlockedStatusChanged?.Invoke(this, new SignalBlockedStatusEventArgs(frequencyKhz, reason));
+        RecomputeFrequencyTransmissionStatus(frequencyKhz);
     }
 
     private void OnPeerActivity(object? sender, PeerActivityEventArgs args) =>

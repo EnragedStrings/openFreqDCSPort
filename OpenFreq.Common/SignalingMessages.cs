@@ -21,6 +21,13 @@ public class AuthenticateMessage
     [JsonPropertyName("password")] public string? Password { get; set; }
     [JsonPropertyName("displayName")] public string? DisplayName { get; set; }
     [JsonPropertyName("version")] public string? Version { get; set; }
+
+    /// <summary>Opt-in capability declaration: "relay me transcripts of transmissions I could
+    /// plausibly hear" -- see TranscriptDeliveryMessage. Defaults to false/absent for every
+    /// existing client (the GUI client, OpenFreq.Testclient, the SRS bridge); a bot client sets
+    /// this true. Deliberately global to the connection, not per-frequency-join -- a bot exists to
+    /// process every transmission it hears, not some of them.</summary>
+    [JsonPropertyName("wantsTranscripts")] public bool WantsTranscripts { get; set; }
 }
 
 /// <summary>
@@ -29,6 +36,16 @@ public class AuthenticateMessage
 public class JoinChannelMessage
 {
     [JsonPropertyName("frequency")] public int FrequencyKhz { get; set; }
+
+    /// <summary>Optional: "treat this specific channel-join as listening from this geodetic
+    /// position." Only meaningful to clients that want position-gated transcript delivery (see
+    /// AuthenticateMessage.WantsTranscripts) -- a bot operating multiple named positions (e.g. a
+    /// "Nellis Tower" and a "Luke Tower") declares each one's position when joining that position's
+    /// frequency. Null/absent for every other client -- their own client-side audibility model is
+    /// unaffected either way.</summary>
+    [JsonPropertyName("lat")] public double? LatitudeDeg { get; set; }
+    [JsonPropertyName("lon")] public double? LongitudeDeg { get; set; }
+    [JsonPropertyName("alt")] public double? AltitudeMeters { get; set; }
 }
 
 /// <summary>
@@ -49,6 +66,24 @@ public class AudioTransmissionMessage
     [JsonPropertyName("transmitting")] public bool Transmitting { get; set; }
 
     [JsonPropertyName("3d")] public bool Is3d { get; set; }
+
+    /// <summary>Identifies one PTT key-down-to-key-up session, minted client-side once per
+    /// StartTransmissionAsync call and carried on both the start (transmitting:true) and stop
+    /// (transmitting:false) messages for that session (and the 333ms heartbeat resends in between).
+    /// Lets the server correlate a later TransmissionTranscriptMessage (which can arrive seconds
+    /// after the PTT session itself, once local speech-to-text finishes) back to the transmission
+    /// it belongs to -- see SignalingServer's pending-transmission registry. Null/absent for any
+    /// client that predates this field; such transmissions simply can't carry a transcript.</summary>
+    [JsonPropertyName("transmissionId")] public string? TransmissionId { get; set; }
+
+    /// <summary>Optional: this transmitter's own geodetic position at the moment of this
+    /// transmission, if the client mode knows one (DCS export position, or a GCI location's
+    /// configured static position) -- the "from" side of a transcript-delivery LOS check. Null/
+    /// absent means the transmission simply can't be LOS-gated (delivered to every capable
+    /// listener) -- see TranscriptDeliveryMessage's own doc comment.</summary>
+    [JsonPropertyName("lat")] public double? LatitudeDeg { get; set; }
+    [JsonPropertyName("lon")] public double? LongitudeDeg { get; set; }
+    [JsonPropertyName("alt")] public double? AltitudeMeters { get; set; }
 }
 
 /// <summary>
@@ -351,4 +386,78 @@ public class SatcomLinkStateMessage
     [JsonPropertyName("downTerminalGainDb")] public double? DownlinkTerminalGainDb { get; set; }
 
     [JsonPropertyName("frames")] public List<SatcomFrameDispositionDto> FrameDispositions { get; set; } = [];
+}
+
+/// <summary>One transcribed word/token and its time span, seconds relative to the start of the PTT
+/// session it belongs to (transmission t=0 is StartTransmissionAsync's key-down moment) -- word-
+/// level rather than sentence-level specifically so the server can drop just the words that
+/// actually fall inside a "stepped" (overlapping-transmission) window rather than a whole sentence,
+/// when redacting a transcript for one bot at delivery time -- see TranscriptDeliveryMessage's own
+/// doc comment. Text must carry its own leading whitespace exactly as it should appear once
+/// concatenated with its neighbors (the same convention whisper.cpp itself uses when reconstructing
+/// sentence text from tokens) -- the server rebuilds a trimmed transcript by plain concatenation of
+/// the surviving words in order, not by joining them with an inserted separator.</summary>
+public class TranscriptWordDto
+{
+    [JsonPropertyName("w")] public string Text { get; set; } = string.Empty;
+    [JsonPropertyName("s")] public double StartSec { get; set; }
+    [JsonPropertyName("e")] public double EndSec { get; set; }
+}
+
+/// <summary>
+/// Client -&gt; server: the transmitting client's own local speech-to-text result for one completed
+/// PTT session, run on the raw pre-effects mic buffer (see OpenFreqService.RecordProcedure) once
+/// StopTransmissionAsync fires -- necessarily arrives some time (typically a second or more) after
+/// the transmission itself ended, since transcription isn't real-time. TransmissionId correlates
+/// this back to the AudioTransmissionMessage that started the session; the server drops this
+/// silently if that transmission is no longer in its pending registry (expired, or never carried an
+/// id at all -- see AudioTransmissionMessage.TransmissionId). Only sent when the local client has
+/// opted into sharing transcripts -- see AuthenticateMessage.WantsTranscripts's own doc comment for
+/// why sending this is the transmitter's choice, not the listener's. Word-level timing (not just a
+/// flat string) is what lets the server redact a stepped-on portion per bot at delivery time instead
+/// of either the transmitting client trying to guess which bots stepped it, or every bot receiving
+/// an artificially clean transcript of audio that would have actually been unintelligible garble.
+/// </summary>
+public class TransmissionTranscriptMessage
+{
+    [JsonPropertyName("transmissionId")] public string TransmissionId { get; set; } = string.Empty;
+    [JsonPropertyName("words")] public List<TranscriptWordDto> Words { get; set; } = [];
+    [JsonPropertyName("language")] public string? Language { get; set; }
+}
+
+/// <summary>
+/// Server -&gt; one client: relays a transcript this client is allowed to see, as plain already-
+/// finalized text -- a bot developer never needs to deal with word timing or stepping mechanics,
+/// only a plausible transcript of what that bot could actually have heard. Only sent to peers that
+/// declared AuthenticateMessage.WantsTranscripts=true, are currently joined to FrequencyKhz, and --
+/// when both this listener's declared position (JoinChannelMessage.Lat/Lon/Alt) and the
+/// transmitter's position (AudioTransmissionMessage.Lat/Lon/Alt) are known -- pass a real terrain
+/// line-of-sight check via the same oracle mechanism SRS-bridged legs already use (see
+/// LosOracleService). When either position is unknown, gating can't be evaluated and the transcript
+/// is delivered anyway; when both are known but LOS can't be confirmed within a bounded wait, it is
+/// NOT delivered (fail-closed) -- "should not be sent if there is no LOS" is treated as the safer
+/// default over risking a false positive.
+///
+/// Stepping: if another transmission was active on the same frequency during any part of this one,
+/// AND this specific bot's own audibility (the same LOS check above) reaches that other transmitter
+/// too, the words falling inside the time window both transmissions were active get dropped before
+/// Text is built -- a bot that could only actually hear one of the two callers isn't handed a clean
+/// transcript of both. A transcript reduced to nothing by this is not delivered at all, same as a
+/// fully LOS-blocked one. This redaction is evaluated independently per bot (two bots with different
+/// audibility to the same pair of transmitters can legitimately receive different Text for the same
+/// TransmissionId) and never reaches the transmitting client -- it has no idea whether, or for whom,
+/// any of this happened.
+/// </summary>
+public class TranscriptDeliveryMessage
+{
+    [JsonPropertyName("transmissionId")] public string TransmissionId { get; set; } = string.Empty;
+    [JsonPropertyName("fromPeerId")] public string FromPeerId { get; set; } = string.Empty;
+    [JsonPropertyName("fromDisplayName")] public string FromDisplayName { get; set; } = string.Empty;
+    [JsonPropertyName("frequency")] public int FrequencyKhz { get; set; }
+    [JsonPropertyName("text")] public string Text { get; set; } = string.Empty;
+    [JsonPropertyName("language")] public string? Language { get; set; }
+
+    [JsonPropertyName("fromLat")] public double? FromLatitudeDeg { get; set; }
+    [JsonPropertyName("fromLon")] public double? FromLongitudeDeg { get; set; }
+    [JsonPropertyName("fromAlt")] public double? FromAltitudeMeters { get; set; }
 }

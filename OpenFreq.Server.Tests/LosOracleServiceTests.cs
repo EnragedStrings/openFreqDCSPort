@@ -2,18 +2,19 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenFreqServer;
-using OpenFreqServer.SrsBridge;
 
-namespace OpenFreq.Server.Tests.SrsBridge;
+namespace OpenFreq.Server.Tests;
 
 /// <summary>
-/// Covers SrsLosOracleService's non-blocking cache behavior -- TryGetLineOfSight must never block
+/// Covers LosOracleService's non-blocking cache behavior -- TryGetLineOfSight must never block
 /// on a network round trip, so with no real SignalingServer to answer requests, every call here
 /// stays "unknown" (null) rather than throwing or hanging. Selection logic itself (direct/sticky/
 /// fallback) is exercised indirectly: these tests confirm the cold-cache path is safe to call even
 /// when SelectOracle would pick a candidate, since the fire-and-forget refresh's failure is swallowed.
+/// Shared by the SRS bridge and native transcript-delivery gating -- see the service's own doc
+/// comment.
 /// </summary>
-public class SrsLosOracleServiceTests
+public class LosOracleServiceTests
 {
     private static ClientSession CreateSession(string id, bool presenceFresh)
     {
@@ -34,7 +35,7 @@ public class SrsLosOracleServiceTests
     public void ColdPair_NoConnectedClients_ReturnsNullWithoutThrowing()
     {
         var clients = new ConcurrentDictionary<string, ClientSession>();
-        var service = new SrsLosOracleService(null!, clients, NullLogger.Instance);
+        var service = new LosOracleService(null!, clients, NullLogger.Instance);
 
         var result = service.TryGetLineOfSight("pair-1", otherEndClientId: null,
             45.0, 45.0, 3000, 45.1, 45.1, 3000);
@@ -47,7 +48,7 @@ public class SrsLosOracleServiceTests
     {
         var clients = new ConcurrentDictionary<string, ClientSession>();
         clients["peer-1"] = CreateSession("peer-1", presenceFresh: false);
-        var service = new SrsLosOracleService(null!, clients, NullLogger.Instance);
+        var service = new LosOracleService(null!, clients, NullLogger.Instance);
 
         var result = service.TryGetLineOfSight("pair-1", "peer-1", 45.0, 45.0, 3000, 45.1, 45.1, 3000);
 
@@ -59,7 +60,7 @@ public class SrsLosOracleServiceTests
     {
         var clients = new ConcurrentDictionary<string, ClientSession>();
         clients["peer-1"] = CreateSession("peer-1", presenceFresh: true);
-        var service = new SrsLosOracleService(null!, clients, NullLogger.Instance);
+        var service = new LosOracleService(null!, clients, NullLogger.Instance);
 
         // Repeated calls exercise the "already refreshing" branch too -- must stay non-blocking
         // and non-throwing even though the fire-and-forget RequestRemoteLineOfSightAsync call

@@ -5,24 +5,33 @@ namespace OpenFreq.Common.Signaling;
 
 public static class SignalingMessageFactory
 {
-    public static SignalingMessage CreateAuthenticate(string password, string? displayName, string? version = null)
+    public static SignalingMessage CreateAuthenticate(string password, string? displayName, string? version = null,
+        bool wantsTranscripts = false)
     {
         return new SignalingMessage
         {
             Type = SignalingMessageTypes.Authenticate,
             Payload = JsonSerializer.SerializeToElement(
-                new AuthenticateMessage { Password = password, DisplayName = displayName, Version = version },
+                new AuthenticateMessage
+                {
+                    Password = password, DisplayName = displayName, Version = version,
+                    WantsTranscripts = wantsTranscripts
+                },
                 OpenFreqJsonContext.Default.AuthenticateMessage)
         };
     }
 
-    public static SignalingMessage CreateJoin(int frequencyKhz)
+    public static SignalingMessage CreateJoin(int frequencyKhz, double? lat = null, double? lon = null,
+        double? alt = null)
     {
         return new SignalingMessage
         {
             Type = SignalingMessageTypes.Join,
             Payload = JsonSerializer.SerializeToElement(
-                new JoinChannelMessage { FrequencyKhz = frequencyKhz },
+                new JoinChannelMessage
+                {
+                    FrequencyKhz = frequencyKhz, LatitudeDeg = lat, LongitudeDeg = lon, AltitudeMeters = alt
+                },
                 OpenFreqJsonContext.Default.JoinChannelMessage)
         };
     }
@@ -38,7 +47,8 @@ public static class SignalingMessageFactory
         };
     }
 
-    public static SignalingMessage CreateTransmission(int frequencyKhz, bool transmitting, bool is3d)
+    public static SignalingMessage CreateTransmission(int frequencyKhz, bool transmitting, bool is3d,
+        Guid? transmissionId = null, double? lat = null, double? lon = null, double? alt = null)
     {
         return new SignalingMessage
         {
@@ -48,7 +58,11 @@ public static class SignalingMessageFactory
                 {
                     FrequencyKhz = frequencyKhz,
                     Transmitting = transmitting,
-                    Is3d = is3d
+                    Is3d = is3d,
+                    TransmissionId = transmissionId?.ToString("N"),
+                    LatitudeDeg = lat,
+                    LongitudeDeg = lon,
+                    AltitudeMeters = alt
                 },
                 OpenFreqJsonContext.Default.AudioTransmissionMessage)
         };
@@ -254,6 +268,32 @@ public static class SignalingMessageFactory
         {
             Type = SignalingMessageTypes.SatcomLinkState,
             Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.SatcomLinkStateMessage)
+        };
+    }
+
+    public static SignalingMessage CreateTransmissionTranscript(Guid transmissionId, List<TranscriptWordDto> words,
+        string? language = null)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.TransmissionTranscript,
+            Payload = JsonSerializer.SerializeToElement(
+                new TransmissionTranscriptMessage
+                {
+                    TransmissionId = transmissionId.ToString("N"),
+                    Words = words,
+                    Language = language
+                },
+                OpenFreqJsonContext.Default.TransmissionTranscriptMessage)
+        };
+    }
+
+    public static SignalingMessage CreateTranscriptDelivery(TranscriptDeliveryMessage message)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.TranscriptDelivery,
+            Payload = JsonSerializer.SerializeToElement(message, OpenFreqJsonContext.Default.TranscriptDeliveryMessage)
         };
     }
 

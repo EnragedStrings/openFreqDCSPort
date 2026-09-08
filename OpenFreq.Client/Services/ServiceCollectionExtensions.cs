@@ -1,3 +1,4 @@
+using System.IO;
 using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,6 +40,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFalconSharedMemoryService, FalconSharedMemoryService>();
         services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
         services.AddSingleton<IIvcMonitorService, IvcMonitorService>();
+        services.AddSingleton<ISpeechTranscriber>(sp => new WhisperSpeechTranscriber(
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WhisperSpeechTranscriber>(),
+            Path.Combine(AppDataPaths.ClientModelDirectory, "ggml-tiny.en.bin")));
 
         // Register ViewModels
         services.AddSingleton<SettingsViewModel>();

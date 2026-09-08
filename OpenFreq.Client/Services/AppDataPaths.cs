@@ -30,6 +30,11 @@ internal static class AppDataPaths
 
     public static string ClientRecordingDirectory => Path.Combine(LocalDirectory, "Recordings");
 
+    /// <summary>Where the local speech-to-text model is cached after its one-time download -- see
+    /// WhisperSpeechTranscriber. Large (tens of MB), so it lives under LocalDirectory like
+    /// recordings, not the small roaming settings/config files.</summary>
+    public static string ClientModelDirectory => Path.Combine(LocalDirectory, "Models");
+
     private static string GetSpecialFolderPath(Environment.SpecialFolder folder, string fallback)
     {
         var root = Environment.GetFolderPath(folder);

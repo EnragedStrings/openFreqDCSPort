@@ -50,6 +50,12 @@ public class SignalingServer
     private readonly ConcurrentDictionary<string, TaskCompletionSource<DcsLosOracleResponseMessage>>
         _pendingLosOracleRequests = new();
 
+    /// <summary>Shared with the SRS bridge (SrsBridgeServer.LosOracle just forwards to this same
+    /// instance) so both consumers see one consistent cache/sticky-oracle state.</summary>
+    public LosOracleService LosOracle { get; }
+
+    private readonly TranscriptDeliveryService _transcriptDelivery;
+
     // High-performance logging delegates
     private static readonly Action<ILogger, int, Exception?> LogServerStarted =
         LoggerMessage.Define<int>(
@@ -138,6 +144,9 @@ public class SignalingServer
         _watchdogInterval = watchdogInterval ?? TimeSpan.FromSeconds(30);
         _audioServer = audioServer ?? new AudioStreamServer(_channelManager, _clients, loggerFactory, config.AudioPort);
         _satcom = config.SatcomEnabled ? new SatcomServerCoordinator(config.Satcom, loggerFactory) : null;
+        LosOracle = new LosOracleService(this, _clients, loggerFactory.CreateLogger<LosOracleService>());
+        _transcriptDelivery = new TranscriptDeliveryService(this, _clients, _channelManager, LosOracle,
+            loggerFactory.CreateLogger<TranscriptDeliveryService>());
 
         // Build Kestrel application
         var builder = WebApplication.CreateBuilder();
@@ -253,6 +262,8 @@ public class SignalingServer
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(_watchdogInterval, ct);
+
+                _transcriptDelivery.PruneExpired();
 
                 var now = DateTime.UtcNow;
                 foreach (var (clientId, session) in _clients)
@@ -401,6 +412,9 @@ public class SignalingServer
                 case SignalingMessageTypes.DcsLosOracleResponse:
                     HandleDcsLosOracleResponse(message);
                     break;
+                case SignalingMessageTypes.TransmissionTranscript:
+                    await HandleTransmissionTranscript(session, message);
+                    break;
 
                 default:
                     if (_logger.IsEnabled(LogLevel.Warning))
@@ -432,6 +446,7 @@ public class SignalingServer
         }
 
         session.DisplayName = authMsg.DisplayName;
+        session.WantsTranscripts = authMsg.WantsTranscripts;
 
         // Reject clients whose version is incompatible with the server build (patch-level semver differences are allowed)
         var serverVersion = OpenFreqVersion.Current;
@@ -497,6 +512,15 @@ public class SignalingServer
             await SendError(session, "Invalid join message");
             return;
         }
+
+        // Declared listening position for transcript-delivery gating -- see
+        // JoinChannelMessage.Lat/Lon/Alt's own doc comment. Updated even on an idempotent rejoin
+        // below, so a bot re-declaring/changing its position takes effect immediately.
+        if (joinMsg.LatitudeDeg is { } joinLat && joinMsg.LongitudeDeg is { } joinLon &&
+            joinMsg.AltitudeMeters is { } joinAlt)
+            session.FrequencyListenerPositions[joinMsg.FrequencyKhz] = (joinLat, joinLon, joinAlt);
+        else
+            session.FrequencyListenerPositions.TryRemove(joinMsg.FrequencyKhz, out _);
 
         var channelCount = _channelManager.GetChannelCount(joinMsg.FrequencyKhz);
 
@@ -571,6 +595,7 @@ public class SignalingServer
             SignalingMessageFactory.CreatePeerLeft(session.Id, frequencyKhz));
 
         session.CurrentFrequencies.TryRemove(frequencyKhz, out _);
+        session.FrequencyListenerPositions.TryRemove(frequencyKhz, out _);
         LogClientLeftFrequency(_logger, GetDisplayName(session), session.Id, frequencyKhz / 1000d, null);
 
         if (_config.BroadcastPeerUpdates)
@@ -591,6 +616,7 @@ public class SignalingServer
                 SignalingMessageFactory.CreatePeerLeft(session.Id, frequency));
 
             session.CurrentFrequencies.TryRemove(frequency, out _);
+            session.FrequencyListenerPositions.TryRemove(frequency, out _);
             LogClientLeftFrequency(_logger, GetDisplayName(session), session.Id, frequency / 1000d, null);
         }
 
@@ -619,6 +645,16 @@ public class SignalingServer
         _channelManager.UpdateIs3d(transmissionMsg.FrequencyKhz, session.Id, transmissionMsg.Is3d);
 
         if (!session.CurrentFrequencies.ContainsKey(transmissionMsg.FrequencyKhz)) return;
+
+        if (transmissionMsg.TransmissionId is { Length: > 0 } transmissionId)
+        {
+            if (transmissionMsg.Transmitting)
+                _transcriptDelivery.RecordTransmissionStart(transmissionId, session.Id,
+                    transmissionMsg.FrequencyKhz, transmissionMsg.LatitudeDeg, transmissionMsg.LongitudeDeg,
+                    transmissionMsg.AltitudeMeters);
+            else
+                _transcriptDelivery.RecordTransmissionEnd(transmissionId);
+        }
 
         var peersInChannel = _channelManager.GetClientsInChannel(transmissionMsg.FrequencyKhz)
             .Where(id => id != session.Id)
@@ -697,6 +733,24 @@ public class SignalingServer
 
         if (_pendingLosOracleRequests.TryRemove(responseMsg.RequestId, out var tcs))
             tcs.TrySetResult(responseMsg);
+    }
+
+    private async Task HandleTransmissionTranscript(ClientSession session, SignalingMessage message)
+    {
+        if (!session.IsAuthenticated) return;
+
+        var transcriptMsg = SignalingMessageFactory.DeserializePayload<TransmissionTranscriptMessage>(message.Payload);
+        if (transcriptMsg == null) return;
+
+        await _transcriptDelivery.HandleTranscriptAsync(session, transcriptMsg);
+    }
+
+    /// <summary>Relays one transcript to one bot-capable client -- see TranscriptDeliveryService,
+    /// which is the sole caller and has already decided this listener should receive exactly this
+    /// (possibly trimmed) text.</summary>
+    public async Task SendTranscriptDeliveryAsync(ClientSession session, TranscriptDeliveryMessage message)
+    {
+        await SendToClient(session, SignalingMessageFactory.CreateTranscriptDelivery(message));
     }
 
     /// <summary>Asks <paramref name="oracleSession"/> to referee terrain LOS between two arbitrary

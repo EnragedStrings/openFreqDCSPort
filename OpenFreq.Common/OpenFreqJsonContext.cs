@@ -32,6 +32,9 @@ namespace OpenFreq.Common;
 [JsonSerializable(typeof(SatelliteEphemerisUpdateMessage))]
 [JsonSerializable(typeof(SatcomFrameDispositionDto))]
 [JsonSerializable(typeof(SatcomLinkStateMessage))]
+[JsonSerializable(typeof(TranscriptWordDto))]
+[JsonSerializable(typeof(TransmissionTranscriptMessage))]
+[JsonSerializable(typeof(TranscriptDeliveryMessage))]
 
 public partial class OpenFreqJsonContext : JsonSerializerContext
 {

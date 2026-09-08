@@ -26,10 +26,12 @@ public sealed class SrsBridgeServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, ClientSession> _openFreqClients;
 
     /// <summary>Picks a connected OpenFreq client to referee terrain LOS for a leg involving an
-    /// SRS-bridged peer -- see SrsLosOracleService's own doc comment. Public so SrsClientAdapter
-    /// (via _bridge) can consult it from the OpenFreq-&gt;SRS leg's signal-quality computation.
+    /// SRS-bridged peer -- see LosOracleService's own doc comment. Public so SrsClientAdapter (via
+    /// _bridge) can consult it from the OpenFreq-&gt;SRS leg's signal-quality computation. Shared with
+    /// (not owned by) the passed-in SignalingServer -- native transcript-delivery gating is the
+    /// other consumer of the same instance, so both see one consistent cache/sticky-oracle state.
     /// </summary>
-    public SrsLosOracleService LosOracle { get; }
+    public LosOracleService LosOracle { get; }
 
     // Shadow clients (SRS players bridged onto the real OpenFreq server) are themselves entries
     // in _openFreqClients -- excluded here so a bridged SRS player doesn't get reflected back to
@@ -57,8 +59,14 @@ public sealed class SrsBridgeServer : IAsyncDisposable
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<SrsBridgeServer>();
         _openFreqClients = openFreqClients;
-        LosOracle = new SrsLosOracleService(signalingServer, openFreqClients,
-            loggerFactory.CreateLogger<SrsLosOracleService>());
+
+        // Real usage always passes a live SignalingServer -- share its LosOracle instance so both
+        // consumers see one consistent cache/sticky-oracle state. Test-only construction (roster-
+        // snapshot tests that don't exercise LOS at all) may pass null here, same as it could
+        // before this was shared; falls back to a standalone instance with the same null-tolerant
+        // behavior LosOracleService has always had (see its own tests).
+        LosOracle = signalingServer?.LosOracle ??
+                    new LosOracleService(signalingServer!, openFreqClients, loggerFactory.CreateLogger<LosOracleService>());
     }
 
     public void Start()

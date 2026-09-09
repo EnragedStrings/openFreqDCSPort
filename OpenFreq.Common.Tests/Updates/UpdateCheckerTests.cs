@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenFreq.Common.Updates;
@@ -10,7 +11,14 @@ namespace OpenFreq.Common.Tests.Updates;
 /// </summary>
 public class UpdateCheckerTests
 {
-    private const string AssetWin = "OpenFreq-Client-v1.2.0-win-x64-portable.zip";
+    // Matches whatever RID UpdateChecker itself resolves for the CI/dev machine actually running
+    // this test (win-x64 or linux-x64) -- hardcoding one would pass on a Windows dev box and fail
+    // on the Linux CI runner (or vice versa), since the real code under test does runtime OS
+    // detection rather than being told which platform it's on.
+    private static readonly string Rid =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win-x64" : "linux-x64";
+
+    private static readonly string AssetForThisPlatform = $"OpenFreq-Client-v1.2.0-{Rid}-portable.zip";
 
     private static UpdateChecker MakeChecker(string? responseBody, HttpStatusCode status = HttpStatusCode.OK)
     {
@@ -29,20 +37,20 @@ public class UpdateCheckerTests
     [Fact]
     public async Task NewerVersionAvailable_ReturnsUpdateInfo()
     {
-        var checker = MakeChecker(ReleaseJson("v1.2.0", "notes", AssetWin));
+        var checker = MakeChecker(ReleaseJson("v1.2.0", "notes", AssetForThisPlatform));
 
         var result = await checker.CheckForUpdateAsync("Client", "1.1.0");
 
         Assert.NotNull(result);
         Assert.Equal("1.2.0", result.Version);
         Assert.Equal("notes", result.ReleaseNotes);
-        Assert.Equal(AssetWin, result.AssetFileName);
+        Assert.Equal(AssetForThisPlatform, result.AssetFileName);
     }
 
     [Fact]
     public async Task SameVersion_ReturnsNull()
     {
-        var checker = MakeChecker(ReleaseJson("v1.1.0", "notes", AssetWin));
+        var checker = MakeChecker(ReleaseJson("v1.1.0", "notes", AssetForThisPlatform));
 
         var result = await checker.CheckForUpdateAsync("Client", "1.1.0");
 
@@ -52,7 +60,7 @@ public class UpdateCheckerTests
     [Fact]
     public async Task OlderReleaseThanCurrent_ReturnsNull()
     {
-        var checker = MakeChecker(ReleaseJson("v1.0.0", "notes", AssetWin));
+        var checker = MakeChecker(ReleaseJson("v1.0.0", "notes", AssetForThisPlatform));
 
         var result = await checker.CheckForUpdateAsync("Client", "1.1.0");
 

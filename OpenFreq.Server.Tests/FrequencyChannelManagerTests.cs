@@ -389,4 +389,128 @@ public class FrequencyChannelManagerTests
 
         Assert.False(mgr.LeaveChannel(251000, "client-1"));
     }
+
+    // --- Observer (GCI "monitor all" scanner) joins ---
+
+    [Fact]
+    public void JoinChannel_AsObserver_StillReceivesAudioRouting()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        // GetClientsInChannel is what AudioStreamServer routes audio through -- must still
+        // include the observer, or a scanner would never actually receive audio.
+        Assert.Contains("scanner-1", mgr.GetClientsInChannel(251000));
+    }
+
+    [Fact]
+    public void JoinChannel_AsObserver_ExcludedFromGetPeersInChannel()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "client-1", "Viper");
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        var peers = mgr.GetPeersInChannel(251000);
+
+        Assert.Single(peers);
+        Assert.Equal("client-1", peers[0].Id);
+    }
+
+    [Fact]
+    public void JoinChannel_AsObserver_ExcludedFromGetAllChannelStates()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "client-1", "Viper");
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        var peers = mgr.GetAllChannelStates()[251000];
+
+        Assert.Single(peers);
+        Assert.Equal("client-1", peers[0].Id);
+    }
+
+    [Fact]
+    public void GetAllChannelStates_OnlyObserverOnChannel_ReportsEmptyNotOmitted()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        var states = mgr.GetAllChannelStates();
+
+        Assert.True(states.ContainsKey(251000));
+        Assert.Empty(states[251000]);
+    }
+
+    [Fact]
+    public void JoinChannel_AsObserver_ExcludedFromGetChannelCount()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "client-1", "Viper");
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+        mgr.JoinChannel(251000, "scanner-2", "Scanner2", isObserver: true);
+
+        Assert.Equal(1, mgr.GetChannelCount(251000));
+    }
+
+    [Fact]
+    public void GetChannelCount_OnlyObservers_ReturnsZero()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        Assert.Equal(0, mgr.GetChannelCount(251000));
+    }
+
+    [Fact]
+    public void IsObserver_ObserverJoin_ReturnsTrue()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+
+        Assert.True(mgr.IsObserver(251000, "scanner-1"));
+    }
+
+    [Fact]
+    public void IsObserver_NormalJoin_ReturnsFalse()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "client-1", "Viper");
+
+        Assert.False(mgr.IsObserver(251000, "client-1"));
+    }
+
+    [Fact]
+    public void IsObserver_NotJoined_ReturnsFalse()
+    {
+        var mgr = Create();
+        Assert.False(mgr.IsObserver(251000, "ghost"));
+    }
+
+    [Fact]
+    public void LeaveChannel_Observer_ClearsObserverState()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+        mgr.LeaveChannel(251000, "scanner-1");
+
+        Assert.False(mgr.IsObserver(251000, "scanner-1"));
+
+        // Rejoining without the observer flag should behave as a normal (non-observer) peer.
+        mgr.JoinChannel(251000, "scanner-1", "Scanner");
+        Assert.False(mgr.IsObserver(251000, "scanner-1"));
+        Assert.Single(mgr.GetPeersInChannel(251000));
+    }
+
+    [Fact]
+    public void LeaveAllChannels_Observer_ClearsObserverStateAcrossFrequencies()
+    {
+        var mgr = Create();
+        mgr.JoinChannel(251000, "scanner-1", "Scanner", isObserver: true);
+        mgr.JoinChannel(135100, "scanner-1", "Scanner", isObserver: true);
+
+        mgr.LeaveAllChannels("scanner-1");
+
+        Assert.False(mgr.IsObserver(251000, "scanner-1"));
+        Assert.False(mgr.IsObserver(135100, "scanner-1"));
+    }
 }

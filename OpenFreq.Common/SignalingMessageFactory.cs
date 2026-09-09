@@ -22,7 +22,7 @@ public static class SignalingMessageFactory
     }
 
     public static SignalingMessage CreateJoin(int frequencyKhz, double? lat = null, double? lon = null,
-        double? alt = null)
+        double? alt = null, bool isObserver = false)
     {
         return new SignalingMessage
         {
@@ -30,7 +30,8 @@ public static class SignalingMessageFactory
             Payload = JsonSerializer.SerializeToElement(
                 new JoinChannelMessage
                 {
-                    FrequencyKhz = frequencyKhz, LatitudeDeg = lat, LongitudeDeg = lon, AltitudeMeters = alt
+                    FrequencyKhz = frequencyKhz, LatitudeDeg = lat, LongitudeDeg = lon, AltitudeMeters = alt,
+                    IsObserver = isObserver
                 },
                 OpenFreqJsonContext.Default.JoinChannelMessage)
         };

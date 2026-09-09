@@ -10,14 +10,29 @@ public class FrequencyChannelManager
 {
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<string, PeerData>> _channels = new();
 
+    /// <summary>Client IDs that joined a given frequency as a silent observer (see
+    /// JoinChannelMessage.IsObserver) -- kept separate from PeerData itself, which is the wire type
+    /// sent to other clients, so an observer can never leak into anyone else's peer list just by
+    /// being present in _channels (which it must be, to receive routed audio).</summary>
+    private readonly ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> _observerIds = new();
+
     /// <summary>
     /// Join a channel with initial peer data
     /// </summary>
-    public bool JoinChannel(int frequencyKhz, string clientId, string displayName, bool is3d = false)
+    public bool JoinChannel(int frequencyKhz, string clientId, string displayName, bool is3d = false,
+        bool isObserver = false)
     {
         var channelPeers = _channels.GetOrAdd(frequencyKhz, _ => new ConcurrentDictionary<string, PeerData>());
         var peerData = new PeerData(clientId, displayName, PeerData.PeerStatus.Receiving, is3d);
-        return channelPeers.TryAdd(clientId, peerData);
+        var added = channelPeers.TryAdd(clientId, peerData);
+
+        if (isObserver)
+        {
+            var observers = _observerIds.GetOrAdd(frequencyKhz, _ => new ConcurrentDictionary<string, byte>());
+            observers[clientId] = 0;
+        }
+
+        return added;
     }
 
     /// <summary>
@@ -33,6 +48,13 @@ public class FrequencyChannelManager
             if (peers.IsEmpty)
             {
                 _channels.TryRemove(frequencyKhz, out _);
+            }
+
+            if (_observerIds.TryGetValue(frequencyKhz, out var observers))
+            {
+                observers.TryRemove(clientId, out _);
+                if (observers.IsEmpty)
+                    _observerIds.TryRemove(frequencyKhz, out _);
             }
 
             return removed;
@@ -62,8 +84,19 @@ public class FrequencyChannelManager
                     }
                 }
             }
+
+            if (_observerIds.TryGetValue(frequency, out var observers))
+            {
+                observers.TryRemove(clientId, out _);
+                if (observers.IsEmpty)
+                    _observerIds.TryRemove(frequency, out _);
+            }
         }
     }
+
+    /// <summary>True if this client joined this frequency as a silent observer.</summary>
+    public bool IsObserver(int frequencyKhz, string clientId) =>
+        _observerIds.TryGetValue(frequencyKhz, out var observers) && observers.ContainsKey(clientId);
 
     /// <summary>
     /// Update the display name for a peer across all channels they're in
@@ -112,20 +145,23 @@ public class FrequencyChannelManager
     }
 
     /// <summary>
-    /// Get all peer data in a specific channel
+    /// Get all peer data in a specific channel, excluding silent observers -- this is the view
+    /// shown to other clients (and to an observer itself, so a scanner can see who's really
+    /// talking), never revealing that an observer is present.
     /// </summary>
     public List<PeerData> GetPeersInChannel(int frequencyKhz)
     {
-        if (_channels.TryGetValue(frequencyKhz, out var peers))
-        {
-            return peers.Values.ToList();
-        }
+        if (!_channels.TryGetValue(frequencyKhz, out var peers))
+            return new List<PeerData>();
 
-        return new List<PeerData>();
+        _observerIds.TryGetValue(frequencyKhz, out var observers);
+        return peers.Values.Where(p => observers == null || !observers.ContainsKey(p.Id)).ToList();
     }
 
     /// <summary>
-    /// Get the complete channel state across all frequencies
+    /// Get the complete channel state across all frequencies, excluding silent observers (see
+    /// GetPeersInChannel). A frequency with only observers on it reports as empty rather than
+    /// being omitted, so callers that key off "is anyone real here" see it consistently.
     /// </summary>
     public SortedDictionary<int, List<PeerData>> GetAllChannelStates()
     {
@@ -133,7 +169,9 @@ public class FrequencyChannelManager
 
         foreach (var (frequency, peers) in _channels)
         {
+            _observerIds.TryGetValue(frequency, out var observers);
             result[frequency] = peers.Values
+                .Where(p => observers == null || !observers.ContainsKey(p.Id))
                 .OrderBy(p => p.Name)
                 .ToList();
         }
@@ -176,15 +214,18 @@ public class FrequencyChannelManager
     }
 
     /// <summary>
-    /// Get the number of peers in a channel
+    /// Get the number of real (non-observer) peers in a channel -- used both for capacity
+    /// enforcement (MaxClientsPerChannel) and operator-facing stats, neither of which should count
+    /// a silent scanner as an occupant.
     /// </summary>
     public int GetChannelCount(int frequencyKhz)
     {
-        if (_channels.TryGetValue(frequencyKhz, out var peers))
-        {
-            return peers.Count;
-        }
+        if (!_channels.TryGetValue(frequencyKhz, out var peers))
+            return 0;
 
-        return 0;
+        if (!_observerIds.TryGetValue(frequencyKhz, out var observers) || observers.IsEmpty)
+            return peers.Count;
+
+        return peers.Keys.Count(id => !observers.ContainsKey(id));
     }
 }

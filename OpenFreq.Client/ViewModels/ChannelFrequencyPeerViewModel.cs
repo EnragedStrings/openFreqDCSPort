@@ -12,6 +12,10 @@ public partial class ChannelFrequencyPeerViewModel : ViewModelBase
     [ObservableProperty] public partial ObservableCollection<ChannelPeerViewModel> Peers { get; set; }
     [ObservableProperty] public partial bool CanJoin { get; set; }
 
+    /// <summary>True while the GCI "monitor all frequencies" scanner is silently listening to this
+    /// frequency on this client's behalf -- see IOpenFreqService.ScannedTransmissionsChanged.</summary>
+    [ObservableProperty] public partial bool IsBeingScanned { get; set; }
+
     public IRelayCommand JoinCommand { get; }
 
     public ChannelFrequencyPeerViewModel(int frequencyKhz, ObservableCollection<ChannelPeerViewModel> peers, Action<int> joinFrequency, bool canJoin)

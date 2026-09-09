@@ -702,6 +702,24 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </controls:Card>
+
+                                <!-- GCI-only: monitor all frequencies scanner -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="RadioTower"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Scanner" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Monitor all frequencies"
+                                                  IsChecked="{Binding Settings.MonitorAllFrequenciesEnabled}" />
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   Text="Silently listens to every frequency with real activity server-wide, even ones you haven't joined -- like a police scanner. Plays exactly like a normal listener with no key would: clear if unencrypted, KY-58 noise if you don't hold the key. Currently-scanned frequencies are marked in the Peers panel. Off by default."
+                                                   FontStyle="Italic" />
+                                    </StackPanel>
+                                </controls:Card>
                             </StackPanel>
 
                             <!-- GCI Mode Settings -->
@@ -1358,10 +1376,18 @@
                                                                 Opacity="0.7">
                                                             <Grid ColumnDefinitions="*,Auto" Margin="10,0">
                                                                 <StackPanel Grid.Column="0">
-                                                                    <TextBlock
-                                                                        Text="{Binding FrequencyMhzString, StringFormat='{}{0:F3} MHz'}"
-                                                                        FontSize="13"
-                                                                        FontWeight="Medium" />
+                                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                                        <TextBlock
+                                                                            Text="{Binding FrequencyMhzString, StringFormat='{}{0:F3} MHz'}"
+                                                                            FontSize="13"
+                                                                            FontWeight="Medium" />
+                                                                        <avalonia:MaterialIcon Kind="RadioTower"
+                                                                            Width="12" Height="12"
+                                                                            VerticalAlignment="Center"
+                                                                            Opacity="0.7"
+                                                                            IsVisible="{Binding IsBeingScanned}"
+                                                                            ToolTip.Tip="Silently monitored by the frequency scanner" />
+                                                                    </StackPanel>
                                                                     <TextBlock FontSize="10"
                                                                                Opacity="0.6"
                                                                                Margin="0,1,0,0">

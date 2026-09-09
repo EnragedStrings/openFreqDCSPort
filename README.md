@@ -13,6 +13,7 @@ Real-time network voice radio with real-time physics simulation for [Falcon BMS]
 - [Realistic AM simulation including squelch](https://bitbashing.io/am-radio.html)
 - Hot-swappable audio devices
 - Dedicated GCI (Ground Controlled Intercept) client mode with unlimited positions & channels
+- GCI-only frequency scanner: silently monitor every active frequency server-wide, encrypted or not, without joining each one by hand
 - DCS A-10C II mode with DCS Export.lua radio/PTT/position integration
 - Optional DCS terrain heightmap generation through `land.getHeight`
 - Full 3D audio effects enabled in GCI mode — identical physics simulation as BMS mode
@@ -203,6 +204,22 @@ own TTS) against the wire protocol alone, without touching this codebase.
   the C# source: the WebSocket message catalog, the UDP/RTP audio format, and a full connect →
   join → PTT → transcript sequence walkthrough, so someone can implement a bot client in any
   language without reverse-engineering this repo.
+
+## GCI Frequency Scanner
+
+GCI mode has a "Monitor all frequencies" toggle (Settings → Scanner) that turns your client into a
+police-scanner-style listener: every frequency with real activity anywhere on the server — one you
+never manually joined, and regardless of whether it's encrypted — is silently picked up and played.
+It plays through the exact same encryption simulation as a normal listener with no key: clear if
+the traffic isn't encrypted, KY-58 noise/beeps if it is and you don't hold the key. This is not a
+decryption cheat — it's a way to hear everything happening on the server the way a normal listener
+on each of those frequencies would, without having to know or add every frequency by hand.
+
+Frequencies the scanner is currently monitoring are marked with a small tower icon next to their
+entry in the Peers panel. Scanning never interferes with real players: a scanned frequency's own
+join is silent (no "peer joined" notice to anyone actually on it, no roster entry, no join/leave
+spam as the scanner sweeps across the server), and it never counts against — or is blocked by — a
+channel's `MaxClientsPerChannel` capacity. Off by default.
 
 ## Known Gaps
 

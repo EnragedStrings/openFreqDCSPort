@@ -66,6 +66,12 @@ public class OpenFreqSettings
     /// prompting on every launch -- see IUpdateService. Off by default, matching "the normal
     /// experience is a per-launch prompt unless you turn this on."</summary>
     public bool AutoUpdateEnabled { get; set; } = false;
+
+    /// <summary>GCI-only "monitor all frequencies" scanner: silently joins every frequency with
+    /// real activity server-wide that isn't already manually tuned, and plays it through the
+    /// normal encryption simulation (KY-58 noise for anything encrypted, clear otherwise) -- like a
+    /// police scanner. Off by default. See IOpenFreqService.MonitorAllFrequenciesEnabled.</summary>
+    public bool MonitorAllFrequenciesEnabled { get; set; } = false;
     public double InputGain { get; set; } = 1.0;
     public double SidetoneVolume { get; set; } = 0.4;
     public double MasterVolume { get; set; } = 1.0;

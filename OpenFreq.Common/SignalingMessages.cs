@@ -46,6 +46,14 @@ public class JoinChannelMessage
     [JsonPropertyName("lat")] public double? LatitudeDeg { get; set; }
     [JsonPropertyName("lon")] public double? LongitudeDeg { get; set; }
     [JsonPropertyName("alt")] public double? AltitudeMeters { get; set; }
+
+    /// <summary>Join silently: received for audio-routing purposes exactly like a normal join, but
+    /// never broadcast as a PeerJoined to others already on the channel, never shown in anyone
+    /// else's peer list/roster, and never counted against MaxClientsPerChannel. Used by a GCI
+    /// "monitor all frequencies" scanner that sweeps across every active frequency on the server --
+    /// without this, that sweep would spam every pilot with join/leave noise. Defaults false so
+    /// every existing client/bot is unaffected.</summary>
+    [JsonPropertyName("observer")] public bool IsObserver { get; set; }
 }
 
 /// <summary>

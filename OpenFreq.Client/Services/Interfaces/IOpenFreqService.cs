@@ -91,6 +91,12 @@ public interface IOpenFreqService : IDisposable
     public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusChanged;
     event EventHandler<PeerActivityEventArgs>? PeerActivityReceived;
 
+    /// <summary>Fires whenever the set of frequencies (and who's really on them) the GCI "monitor
+    /// all" scanner is currently silently observing changes -- see MonitorAllFrequenciesEnabled and
+    /// StartScanningFrequencyAsync. Always a subset of what AllPeersStatusChanged reports, scoped to
+    /// just the scanner's own ephemeral joins.</summary>
+    event EventHandler<AllPeersStatusEventArgs>? ScannedTransmissionsChanged;
+
     /// <summary>Server-authoritative SATCOM link state for one (channel, net) session --
     /// satellite assignment, quality, DAMA state, and a precomputed frame-disposition batch. See
     /// docs/SATCOM_SIMULATION.md.</summary>
@@ -107,6 +113,19 @@ public interface IOpenFreqService : IDisposable
     bool IsFrequencyJoined(int frequencyKhz, Guid slotId);
     Task JoinFrequencyAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData);
     Task LeaveFrequencyAsync(int frequencyKhz, Guid slotId);
+
+    /// <summary>GCI-only "monitor all frequencies" scanner: when true, every frequency with real
+    /// (non-observer) activity server-wide that the caller hasn't manually joined itself is
+    /// automatically, silently joined and played (through the normal encryption simulation --
+    /// KY-58 noise for anything encrypted, clear otherwise) as a scanner feed. See
+    /// ScannedTransmissionsChanged.</summary>
+    bool MonitorAllFrequenciesEnabled { get; set; }
+
+    /// <summary>Silently (observer) joins one frequency for the scanner. Returns Guid.Empty if
+    /// already tuned via any slot. Exposed mainly for tests -- normal use is via
+    /// MonitorAllFrequenciesEnabled's automatic reconciliation.</summary>
+    Task<Guid> StartScanningFrequencyAsync(int frequencyKhz);
+    Task StopScanningFrequencyAsync(int frequencyKhz);
     Task StartTransmissionAsync(int frequencyKhz, Guid slotId, List<int> mutedFrequencies);
     Task StopTransmissionAsync(int frequencyKhz);
 

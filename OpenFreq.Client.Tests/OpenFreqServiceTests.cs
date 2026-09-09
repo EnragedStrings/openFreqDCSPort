@@ -278,4 +278,95 @@ public class OpenFreqServiceTests
         h.Playback.Received(1).PushAudioData(Arg.Any<string>(), Arg.Any<Memory<short>>(),
             Arg.Any<AmbientNoiseType>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>());
     }
+
+    // --- GCI "monitor all frequencies" scanner ---
+
+    private static SortedDictionary<int, List<PeerData>> PeersOn(int frequencyKhz, params string[] peerIds) =>
+        new() { [frequencyKhz] = peerIds.Select(id => new PeerData(id, id, PeerData.PeerStatus.Receiving)).ToList() };
+
+    [Fact]
+    public async Task MonitorAllFrequenciesDisabled_AllPeersStatus_NeverJoinsAsScanner()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+
+        await h.Client.DidNotReceive().JoinFrequencyAsync(Freq, isObserver: true);
+    }
+
+    [Fact]
+    public async Task MonitorAllFrequenciesEnabled_NewActiveFrequency_JoinsAsObserver()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        h.Service.MonitorAllFrequenciesEnabled = true;
+
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+
+        await h.Client.Received(1).JoinFrequencyAsync(Freq, isObserver: true);
+    }
+
+    [Fact]
+    public async Task MonitorAllFrequenciesEnabled_ReportsScannedTransmissions()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        h.Service.MonitorAllFrequenciesEnabled = true;
+
+        AllPeersStatusEventArgs? seen = null;
+        h.Service.ScannedTransmissionsChanged += (_, e) => seen = e;
+
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+
+        Assert.NotNull(seen);
+        Assert.True(seen!.AllPeers.ContainsKey(Freq));
+    }
+
+    [Fact]
+    public async Task MonitorAllFrequenciesEnabled_FrequencyAlreadyManuallyJoined_NeverScanned()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        var slot = Guid.NewGuid();
+        await h.Service.JoinFrequencyAsync(Freq, slot, ServiceHarness.NewRadioStation());
+        h.Client.ClearReceivedCalls();
+
+        h.Service.MonitorAllFrequenciesEnabled = true;
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+
+        await h.Client.DidNotReceive().JoinFrequencyAsync(Freq, isObserver: true);
+    }
+
+    [Fact]
+    public async Task MonitorAllFrequenciesEnabled_FrequencyGoesQuiet_LeavesScannerSlot()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        h.Service.MonitorAllFrequenciesEnabled = true;
+
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+        await h.Client.Received(1).JoinFrequencyAsync(Freq, isObserver: true);
+
+        // pilot1 leaves -- the frequency is empty in the next status update.
+        h.Client.AllPeersStatusUpdateReceived +=
+            Raise.EventWith(new AllPeersStatusEventArgs(new SortedDictionary<int, List<PeerData>>()));
+
+        await h.Client.Received(1).LeaveFrequencyAsync(Freq);
+    }
+
+    [Fact]
+    public async Task DisablingMonitorAllFrequencies_LeavesAllCurrentlyScannedSlots()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        h.Service.MonitorAllFrequenciesEnabled = true;
+
+        h.Client.AllPeersStatusUpdateReceived += Raise.EventWith(new AllPeersStatusEventArgs(PeersOn(Freq, "pilot1")));
+        await h.Client.Received(1).JoinFrequencyAsync(Freq, isObserver: true);
+
+        h.Service.MonitorAllFrequenciesEnabled = false;
+
+        await h.Client.Received(1).LeaveFrequencyAsync(Freq);
+    }
 }

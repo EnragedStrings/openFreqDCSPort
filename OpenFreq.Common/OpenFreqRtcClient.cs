@@ -309,14 +309,15 @@ public class OpenFreqRtcClient : IRtcClient
     /// <summary>
     /// Join a frequency channel
     /// </summary>
-    public async Task JoinFrequencyAsync(int frequencyKhz, double? lat = null, double? lon = null, double? alt = null)
+    public async Task JoinFrequencyAsync(int frequencyKhz, double? lat = null, double? lon = null, double? alt = null,
+        bool isObserver = false)
     {
         if (!IsAuthenticated)
         {
             throw new InvalidOperationException("Not authenticated");
         }
 
-        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz, lat, lon, alt));
+        await SendMessageAsync(SignalingMessageFactory.CreateJoin(frequencyKhz, lat, lon, alt, isObserver));
 
         if (!_frequencyPeers.ContainsKey(frequencyKhz))
         {

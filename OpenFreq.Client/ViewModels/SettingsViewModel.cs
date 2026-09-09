@@ -122,6 +122,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     /// <summary>See OpenFreqSettings.AutoUpdateEnabled's own doc comment.</summary>
     [ObservableProperty] public partial bool AutoUpdateEnabled { get; set; } = false;
 
+    /// <summary>See OpenFreqSettings.MonitorAllFrequenciesEnabled's own doc comment. GCI-only.</summary>
+    [ObservableProperty] public partial bool MonitorAllFrequenciesEnabled { get; set; } = false;
+
     /// <summary>When true, per-channel Volume/Squelch controls in the UI override the
     /// cockpit-driven values for DCS/BMS channels. When false (default), cockpit controls win
     /// and manual per-channel controls are disabled for those channels.</summary>
@@ -534,6 +537,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnShareTranscriptsChanged(bool value) => _openFreqService.ShareTranscripts = value;
 
+    partial void OnMonitorAllFrequenciesEnabledChanged(bool value) => _openFreqService.MonitorAllFrequenciesEnabled = value;
+
     partial void OnInputMeterEnabledChanged(bool value) => _openFreqService.InputMeterEnabled = value;
 
     partial void OnInputGainChanged(double value) => _openFreqService.InputGain = value;
@@ -644,6 +649,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
         ShareTranscripts = settings.ShareTranscripts;
         AutoUpdateEnabled = settings.AutoUpdateEnabled;
+        MonitorAllFrequenciesEnabled = settings.MonitorAllFrequenciesEnabled;
         InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
         MinimizeOnConnect = settings.MinimizeOnConnect;
@@ -849,6 +855,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MicNormalizationEnabled = MicNormalizationEnabled,
             ShareTranscripts = ShareTranscripts,
             AutoUpdateEnabled = AutoUpdateEnabled,
+            MonitorAllFrequenciesEnabled = MonitorAllFrequenciesEnabled,
             InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
             MinimizeOnConnect = MinimizeOnConnect,

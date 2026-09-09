@@ -355,6 +355,21 @@ public class OpenFreqService : IOpenFreqService
     public event EventHandler<PeerEventArgs>? PeerLeft;
     public event EventHandler<PeerActivityEventArgs>? PeerActivityReceived;
     public event EventHandler<AllPeersStatusEventArgs>? AllPeersStatusChanged;
+    public event EventHandler<AllPeersStatusEventArgs>? ScannedTransmissionsChanged;
+
+    private bool _monitorAllFrequenciesEnabled;
+
+    public bool MonitorAllFrequenciesEnabled
+    {
+        get => _monitorAllFrequenciesEnabled;
+        set
+        {
+            if (_monitorAllFrequenciesEnabled == value) return;
+            _monitorAllFrequenciesEnabled = value;
+            if (!value)
+                _ = StopAllScanningAsync();
+        }
+    }
 
     public bool IsConnected => _client?.IsConnected ?? false;
     public bool IsAuthenticated => _client?.IsAuthenticated ?? false;
@@ -691,12 +706,62 @@ public class OpenFreqService : IOpenFreqService
         return _tunedSlots.ContainsKey((frequencyKhz, slotId));
     }
 
+    /// <summary>Frequency -> ephemeral slot id for a GCI "monitor all" scanner's silent-observer
+    /// joins (see StartScanningFrequencyAsync). Kept separate from the caller's own real slots so a
+    /// manual real join for a frequency the scanner is currently observing can hand off cleanly
+    /// (see the hand-off check at the top of JoinFrequencyAsync below) instead of leaving the
+    /// session registered as an observer forever.</summary>
+    private readonly ConcurrentDictionary<int, Guid> _scannerSlots = new();
+
     /// <summary>
     /// Join a frequency channel for a specific radio slot.
     /// The signalling server is joined only on the first slot; subsequent slots on the same
     /// frequency reuse the existing server connection.
     /// </summary>
     public async Task JoinFrequencyAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData)
+    {
+        // If the scanner is silently observing this frequency, hand it off to a real join instead
+        // of leaving two slots (one observer, one real) or leaving the session mis-registered as
+        // observer-only once the scanner later stops tracking it.
+        if (_scannerSlots.TryRemove(frequencyKhz, out var scannerSlotId))
+            await LeaveFrequencyAsync(frequencyKhz, scannerSlotId);
+
+        await JoinFrequencyInternalAsync(frequencyKhz, slotId, radioStationData, isObserver: false);
+    }
+
+    /// <summary>Silently joins a frequency for the GCI "monitor all" scanner -- see
+    /// JoinChannelMessage.IsObserver's own doc comment. Returns Guid.Empty (and does nothing) if
+    /// already tuned via any slot, real or scanner; callers should check IsFrequencyJoined/an
+    /// existing scanner entry themselves first, this is just a defensive backstop.</summary>
+    public async Task<Guid> StartScanningFrequencyAsync(int frequencyKhz)
+    {
+        if (_client == null || !_client.IsAuthenticated || IsAnySlotTuned(frequencyKhz))
+            return Guid.Empty;
+
+        var slotId = Guid.NewGuid();
+        _scannerSlots[frequencyKhz] = slotId;
+
+        var radioStationData = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.STATIONARY,
+            Preset = RadioStationPresets.GCI_LowTower,
+            Ppm = RadioStationPresets.GCI_LowTower.GetRandomPpm()
+        };
+
+        await JoinFrequencyInternalAsync(frequencyKhz, slotId, radioStationData, isObserver: true);
+        return slotId;
+    }
+
+    /// <summary>Stops silently scanning a frequency previously started via
+    /// StartScanningFrequencyAsync. No-op if the scanner isn't currently tracking it.</summary>
+    public async Task StopScanningFrequencyAsync(int frequencyKhz)
+    {
+        if (_scannerSlots.TryRemove(frequencyKhz, out var slotId))
+            await LeaveFrequencyAsync(frequencyKhz, slotId);
+    }
+
+    private async Task JoinFrequencyInternalAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData,
+        bool isObserver)
     {
         if (_client == null || !_client.IsAuthenticated)
         {
@@ -725,15 +790,17 @@ public class OpenFreqService : IOpenFreqService
 
         if (isFirstSlot)
         {
-            await _client.JoinFrequencyAsync(frequencyKhz);
-            OnStatusMessage($"Joined frequency {frequencyKhz / 1000.0:F3} MHz");
+            await _client.JoinFrequencyAsync(frequencyKhz, isObserver: isObserver);
+            if (!isObserver)
+                OnStatusMessage($"Joined frequency {frequencyKhz / 1000.0:F3} MHz");
         }
 
         if (!isFirstSlot)
         {
             // Frequency already active on server — synthesise the connected event for this slot only.
             OnFrequencyConnectionStatusChanged(frequencyKhz, Channel.ChannelConnectionStatus.Connected, [], slotId);
-            OnStatusMessage($"Tuned frequency {frequencyKhz / 1000.0:F3} MHz (additional slot)");
+            if (!isObserver)
+                OnStatusMessage($"Tuned frequency {frequencyKhz / 1000.0:F3} MHz (additional slot)");
         }
     }
 
@@ -2204,8 +2271,51 @@ public class OpenFreqService : IOpenFreqService
     private void OnPeerActivity(object? sender, PeerActivityEventArgs args) =>
         PeerActivityReceived?.Invoke(this, args);
 
-    private void OnAllPeersStatusUpdateReceived(object? sender, AllPeersStatusEventArgs args) =>
+    private void OnAllPeersStatusUpdateReceived(object? sender, AllPeersStatusEventArgs args)
+    {
         AllPeersStatusChanged?.Invoke(this, args);
+        if (MonitorAllFrequenciesEnabled)
+            _ = ReconcileScannerAsync(args.AllPeers);
+    }
+
+    /// <summary>Joins newly-active frequencies (real peers, not already manually tuned by this
+    /// client) as silent observers, leaves ones that have gone quiet, and republishes the current
+    /// scanner-only view via ScannedTransmissionsChanged. Driven by every AllPeersStatus update
+    /// while MonitorAllFrequenciesEnabled is on.</summary>
+    private async Task ReconcileScannerAsync(SortedDictionary<int, List<PeerData>> allPeers)
+    {
+        var activeFrequencies = allPeers.Where(kv => kv.Value.Count > 0).Select(kv => kv.Key).ToHashSet();
+
+        foreach (var frequencyKhz in _scannerSlots.Keys.ToList())
+        {
+            if (!activeFrequencies.Contains(frequencyKhz))
+                await StopScanningFrequencyAsync(frequencyKhz);
+        }
+
+        foreach (var frequencyKhz in activeFrequencies)
+        {
+            if (_scannerSlots.ContainsKey(frequencyKhz)) continue;
+            if (IsAnySlotTuned(frequencyKhz)) continue; // already manually joined by this client
+            await StartScanningFrequencyAsync(frequencyKhz);
+        }
+
+        var scanned = new SortedDictionary<int, List<PeerData>>();
+        foreach (var frequencyKhz in _scannerSlots.Keys)
+        {
+            if (allPeers.TryGetValue(frequencyKhz, out var peers))
+                scanned[frequencyKhz] = peers;
+        }
+
+        ScannedTransmissionsChanged?.Invoke(this, new AllPeersStatusEventArgs(scanned));
+    }
+
+    private async Task StopAllScanningAsync()
+    {
+        foreach (var frequencyKhz in _scannerSlots.Keys.ToList())
+            await StopScanningFrequencyAsync(frequencyKhz);
+
+        ScannedTransmissionsChanged?.Invoke(this, new AllPeersStatusEventArgs(new SortedDictionary<int, List<PeerData>>()));
+    }
 
     private void OnClientServerSettingsChanged(object? sender, ServerSettingsEventArgs args)
     {

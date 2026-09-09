@@ -68,8 +68,11 @@ public interface IRtcClient : IDisposable
 
     /// <summary>Joins a frequency channel. <paramref name="lat"/>/<paramref name="lon"/>/
     /// <paramref name="alt"/> are optional -- see JoinChannelMessage's own doc comment; only
-    /// meaningful to a client that also wants position-gated transcript delivery.</summary>
-    Task JoinFrequencyAsync(int frequencyKhz, double? lat = null, double? lon = null, double? alt = null);
+    /// meaningful to a client that also wants position-gated transcript delivery.
+    /// <paramref name="isObserver"/> joins silently -- see JoinChannelMessage.IsObserver's own doc
+    /// comment; used by a GCI "monitor all frequencies" scanner, never by a normal pilot join.</summary>
+    Task JoinFrequencyAsync(int frequencyKhz, double? lat = null, double? lon = null, double? alt = null,
+        bool isObserver = false);
     Task LeaveFrequencyAsync(int frequencyKhz);
 
     /// <summary>Starts transmitting on a frequency, minting and returning a new TransmissionId for

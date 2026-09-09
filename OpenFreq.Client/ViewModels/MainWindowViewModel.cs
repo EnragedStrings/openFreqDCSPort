@@ -159,6 +159,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.StatusMessageReceived += OnStatusMessageReceived;
         _openFreqService.PeerActivityReceived += OnPeerActivityReceived;
         _openFreqService.AllPeersStatusChanged += OnAllPeersChanged;
+        _openFreqService.ScannedTransmissionsChanged += OnScannedTransmissionsChanged;
         _openFreqService.FrequencyTransmissionStatusChanged += OnFrequencyTransmissionStatusChanged;
         _openFreqService.AudioPlaybackErrorOccurred += OnAudioErrorOccurred;
         _openFreqService.RecordingStateChanged += OnRecordingStateChanged;
@@ -216,6 +217,24 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         Dispatcher.UIThread.Post(RebuildPeerLists);
     }
 
+    private HashSet<int> _latestScannedFrequencies = [];
+
+    private void OnScannedTransmissionsChanged(object? sender, AllPeersStatusEventArgs e)
+    {
+        _latestScannedFrequencies = e.AllPeers.Keys.ToHashSet();
+        Dispatcher.UIThread.Post(ApplyScannedFlags);
+    }
+
+    /// <summary>Marks which entries already in PeerList are currently being silently monitored by
+    /// the GCI "monitor all frequencies" scanner -- see ChannelFrequencyPeerViewModel.IsBeingScanned.
+    /// Called both when the scanned set itself changes and after every PeerList rebuild, since
+    /// RebuildPeerLists replaces the view-model instances the flag lives on.</summary>
+    private void ApplyScannedFlags()
+    {
+        foreach (var entry in PeerList)
+            entry.IsBeingScanned = _latestScannedFrequencies.Contains(entry.FrequencyKhz);
+    }
+
     private void RebuildPeerLists()
     {
         var newPeerList = new List<ChannelFrequencyPeerViewModel>();
@@ -235,7 +254,10 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
             if (peers.Count > 0)
             {
                 newPeerList.Add(new ChannelFrequencyPeerViewModel(frequency, peers, JoinFrequencyFromPeerList,
-                    Settings.ModeIsGci && !IsFrequencyAlreadyConnected(frequency)));
+                    Settings.ModeIsGci && !IsFrequencyAlreadyConnected(frequency))
+                {
+                    IsBeingScanned = _latestScannedFrequencies.Contains(frequency)
+                });
             }
         }
 
@@ -1250,6 +1272,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.StatusMessageReceived -= OnStatusMessageReceived;
         _openFreqService.PeerActivityReceived -= OnPeerActivityReceived;
         _openFreqService.AllPeersStatusChanged -= OnAllPeersChanged;
+        _openFreqService.ScannedTransmissionsChanged -= OnScannedTransmissionsChanged;
         _openFreqService.FrequencyTransmissionStatusChanged -= OnFrequencyTransmissionStatusChanged;
         _openFreqService.AudioPlaybackErrorOccurred -= OnAudioErrorOccurred;
         _openFreqService.RecordingStateChanged -= OnRecordingStateChanged;

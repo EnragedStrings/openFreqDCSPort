@@ -10,9 +10,11 @@ namespace OpenFreq.Client.Tests;
 /// "-- OpenFreqDCS BEGIN/END" marker block rather than ever overwriting the file wholesale, so
 /// other tools that also hook Export.lua (most notably SRS -- DCS-SimpleRadioStandalone, which a
 /// lot of users run alongside OpenFreq) keep their own hook intact regardless of install order.
-/// EnsureExportHook is private, but the method itself has no OS dependency beyond File I/O (the
-/// #if WINDOWS guard is one level up, on the caller), so it's exercised directly via reflection
-/// rather than needing a full DcsExportInstaller/EnsureInstalled pass.
+/// EnsureExportHook is private, so it's exercised directly via reflection rather than needing a
+/// full DcsExportInstaller/EnsureInstalled pass. The whole method is compiled only under
+/// #if WINDOWS (DCS itself is Windows-only), so it doesn't exist in a Linux build's assembly at
+/// all -- these tests early-return on non-Windows hosts (e.g. the Linux CI runner) instead of
+/// failing a reflection lookup for a method that was never compiled in.
 /// </summary>
 public class DcsExportInstallerTests
 {
@@ -24,6 +26,8 @@ public class DcsExportInstallerTests
         method!.Invoke(null, [exportLuaPath]);
     }
 
+    private static bool SkipOnNonWindows() => !OperatingSystem.IsWindows();
+
     // Not SRS's real, exact hook text (that's a separate MIT-licensed project we don't vendor) --
     // just plausible foreign content in the same "a dofile call plus maybe a comment" shape any
     // other Export.lua-hooking tool would leave, enough to prove we never touch content we didn't
@@ -34,6 +38,8 @@ public class DcsExportInstallerTests
     [Fact]
     public void NoExistingFile_CreatesFileWithJustOurHook()
     {
+        if (SkipOnNonWindows()) return;
+
         var path = Path.GetTempFileName();
         File.Delete(path);
         try
@@ -53,6 +59,8 @@ public class DcsExportInstallerTests
     [Fact]
     public void ExistingForeignHook_IsPreservedVerbatim()
     {
+        if (SkipOnNonWindows()) return;
+
         var path = Path.GetTempFileName();
         try
         {
@@ -77,6 +85,8 @@ public class DcsExportInstallerTests
     [Fact]
     public void RunningTwice_DoesNotDuplicateOurHook_AndStillPreservesForeignContent()
     {
+        if (SkipOnNonWindows()) return;
+
         var path = Path.GetTempFileName();
         try
         {
@@ -101,6 +111,8 @@ public class DcsExportInstallerTests
     [Fact]
     public void ReinstallingOverAnOlderOwnHook_ReplacesOnlyOurOwnBlock()
     {
+        if (SkipOnNonWindows()) return;
+
         var path = Path.GetTempFileName();
         try
         {

@@ -1,0 +1,23 @@
+{
+  "serverAddress": "127.0.0.1:9987",
+  "password": "changeMe123",
+  "displayName": "OpenFreq Bot",
+  "positions": [
+    {
+      "name": "Nellis Tower",
+      "frequencyKhz": 334000,
+      "lat": 36.236,
+      "lon": -115.034,
+      "alt": 1553,
+      "responseWavPath": null
+    },
+    {
+      "name": "Luke Tower",
+      "frequencyKhz": 307300,
+      "lat": 33.535,
+      "lon": -112.383,
+      "alt": 340,
+      "responseWavPath": null
+    }
+  ]
+}

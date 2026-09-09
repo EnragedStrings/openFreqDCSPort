@@ -188,14 +188,17 @@ own TTS) against the wire protocol alone, without touching this codebase.
 - **Channel-card fix**: the "someone is transmitting" indicator on a channel card now reflects
   actual audibility (LOS/range), not just the raw PTT signal — you no longer see a peer light up as
   transmitting when you couldn't actually hear them.
+- **`OpenFreq.BotClient`**: a runnable, config-driven console reference implementation. Point it at
+  a `botclient.json` (a starter one is written for you on first run, modeled on
+  `botclient.example.json`) listing a server, and one or more named/positioned frequencies to join
+  at once — e.g. "Nellis Tower" and "Luke Tower" over a single connection. It sets
+  `wantsTranscripts`, logs every transcript it receives, and demonstrates the "respond" half of the
+  loop by transmitting a short audio clip back on whichever frequency/position received the
+  transcript (a configured WAV file if you supply one, otherwise a synthesized acknowledgment tone
+  — the demo runs end to end with zero audio assets required). This is the actual thing to read
+  before wiring up your own LLM + TTS bot against the wire protocol.
 
 **Next steps:**
-- A demo `OpenFreq.BotClient` reference project — a config-driven console app that connects, joins
-  one or more named/positioned frequencies at once, prints incoming transcripts, and demonstrates
-  the "respond with an audio file" half of the loop (`IRtcClient.SendAudio`/
-  `StartTransmissionAsync`/`StopTransmissionAsync` already support this; the demo just needs to
-  read a WAV file and pace it out in real time). This is the actual runnable proof-of-concept for
-  third-party developers to build against.
 - Protocol reference documentation (`docs/protocol.md`) written for developers who'll never read
   the C# source: the WebSocket message catalog, the UDP/RTP audio format, and a full connect →
   join → PTT → transcript sequence walkthrough, so someone can implement a bot client in any

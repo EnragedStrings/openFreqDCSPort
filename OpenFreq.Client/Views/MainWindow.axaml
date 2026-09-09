@@ -702,24 +702,6 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </controls:Card>
-
-                                <!-- GCI-only: monitor all frequencies scanner -->
-                                <controls:Card>
-                                    <StackPanel Margin="16">
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                            <avalonia:MaterialIcon Kind="RadioTower"
-                                                                   Width="16" Height="16"
-                                                                   Margin="0,0,8,0"
-                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
-                                            <TextBlock Text="Scanner" Classes="SectionHeader" Margin="0" />
-                                        </StackPanel>
-                                        <CheckBox Content="Monitor all frequencies"
-                                                  IsChecked="{Binding Settings.MonitorAllFrequenciesEnabled}" />
-                                        <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
-                                                   Text="Silently listens to every frequency with real activity server-wide, even ones you haven't joined -- like a police scanner. Plays exactly like a normal listener with no key would: clear if unencrypted, KY-58 noise if you don't hold the key. Currently-scanned frequencies are marked in the Peers panel. Off by default."
-                                                   FontStyle="Italic" />
-                                    </StackPanel>
-                                </controls:Card>
                             </StackPanel>
 
                             <!-- GCI Mode Settings -->
@@ -997,6 +979,24 @@
                                             <TextBlock Classes="InputLabel" Margin="0, 8, 0, 4" TextWrapping="Wrap" Text="Experimental feature:
                                             Sidetone with software will always have higher latency than real hardware solutions." FontStyle="Italic" />
                                         </StackPanel>
+                                    </StackPanel>
+                                </controls:Card>
+
+                                <!-- GCI-only: monitor all frequencies scanner -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="RadioTower"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="Scanner" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Monitor all frequencies"
+                                                  IsChecked="{Binding Settings.MonitorAllFrequenciesEnabled}" />
+                                        <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   Text="Silently listens to every frequency with real activity server-wide, even ones you haven't joined -- like a police scanner. Plays exactly like a normal listener with no key would: clear if unencrypted, KY-58 noise if you don't hold the key. Currently-scanned frequencies are marked in the Peers panel. Off by default."
+                                                   FontStyle="Italic" />
                                     </StackPanel>
                                 </controls:Card>
                             </StackPanel>

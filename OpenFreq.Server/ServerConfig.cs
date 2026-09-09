@@ -51,6 +51,20 @@ public class ServerConfig
 
     [JsonPropertyName("srsBridge")]
     public SrsBridgeConfig SrsBridge { get; set; } = SrsBridgeConfig.Default;
+
+    /// <summary>Opt-in: silently download and stage new releases in the background, applying them
+    /// (and restarting the server process) only once zero clients are connected -- never
+    /// disconnects anyone unexpectedly. Off by default, same as SrsBridgeEnabled -- an existing
+    /// deployment shouldn't restart itself without the operator asking for that. See
+    /// ServerUpdateCoordinator.</summary>
+    [JsonPropertyName("autoUpdateEnabled")]
+    public bool AutoUpdateEnabled { get; set; } = false;
+
+    /// <summary>How often ServerUpdateCoordinator re-checks GitHub for a newer release (an
+    /// immediate check always happens once at startup regardless). Clamped to a 1-minute floor.
+    /// </summary>
+    [JsonPropertyName("updateCheckIntervalMinutes")]
+    public int UpdateCheckIntervalMinutes { get; set; } = 60;
 }
 
 /// <summary>

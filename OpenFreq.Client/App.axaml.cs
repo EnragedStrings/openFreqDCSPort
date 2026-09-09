@@ -71,6 +71,18 @@ public partial class App : Application
                 DataContext = mainViewModel,
             };
 
+            // Auto-update: after the window is actually up, never blocking/delaying it from
+            // appearing. Order matters -- show "what changed" for an update THIS launch just
+            // applied before kicking off a check for the NEXT one, so they can't race into a
+            // confusing double-popup.
+            var updateService = serviceProvider.GetRequiredService<IUpdateService>();
+            var settingsViewModel = serviceProvider.GetRequiredService<SettingsViewModel>();
+            desktop.MainWindow.Opened += async (_, _) =>
+            {
+                await updateService.ShowWhatsNewIfPendingAsync();
+                await updateService.RunStartupCheckAsync(settingsViewModel.AutoUpdateEnabled);
+            };
+
 #if WINDOWS
             // HotkeyService.Start() (above) runs before this window exists, so it has to fall
             // back to a placeholder window for DirectInput's cooperative-level handle. Rebind it

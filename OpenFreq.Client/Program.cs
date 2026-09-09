@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
+using OpenFreq.Common.Updates;
 using OpenFreqClient.Services;
 using Serilog;
 using Serilog.Events;
@@ -97,6 +98,14 @@ sealed class Program
             ?.InformationalVersion ?? "unknown";
         Log.Information("OpenFreq Client {Version} starting", Version);
 
+        // A previous session may have silently downloaded a newer version in the background (see
+        // IUpdateService/OpenFreqSettings.AutoUpdateEnabled) and staged it here, ready to apply.
+        // Checked before anything else (DI, window) so this only adds a brief relaunch on the one
+        // startup where an update is waiting -- it never interrupts a session already in progress,
+        // since nothing is running yet at this exact moment except this just-started process.
+        if (TryApplyStagedUpdate(args))
+            return;
+
         // Set up dependency injection
         var services = new ServiceCollection();
         services.AddOpenFreqServices();
@@ -104,6 +113,31 @@ sealed class Program
 
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
+    }
+
+    /// <summary>Returns true (and has already armed a relaunch + exited nothing itself -- the
+    /// caller must return immediately) if a background-staged update was found and applied.
+    /// See SelfUpdateStager/SelfUpdateLauncher (OpenFreq.Common.Updates).</summary>
+    private static bool TryApplyStagedUpdate(string[] args)
+    {
+        var stagingDir = AppDataPaths.ClientUpdateStagingDirectory;
+        var marker = SelfUpdateStager.TakeStagedMarker(stagingDir);
+        if (marker == null || !File.Exists(marker.ExePath))
+            return false;
+
+        var currentExePath = Environment.ProcessPath;
+        if (currentExePath == null)
+        {
+            Log.Warning("Staged update {Version} found but current executable path is unknown -- skipping",
+                marker.Version);
+            return false;
+        }
+
+        Log.Information("Applying background-staged update to {Version}", marker.Version);
+        SelfUpdateStager.WriteAppliedMarker(stagingDir, marker.Version, marker.ReleaseNotes);
+        SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, marker.ExePath, Environment.ProcessId, args);
+        Log.CloseAndFlush();
+        return true;
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.

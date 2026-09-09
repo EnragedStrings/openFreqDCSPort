@@ -119,6 +119,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     /// <summary>See OpenFreqSettings.ShareTranscripts's own doc comment.</summary>
     [ObservableProperty] public partial bool ShareTranscripts { get; set; } = false;
 
+    /// <summary>See OpenFreqSettings.AutoUpdateEnabled's own doc comment.</summary>
+    [ObservableProperty] public partial bool AutoUpdateEnabled { get; set; } = false;
+
     /// <summary>When true, per-channel Volume/Squelch controls in the UI override the
     /// cockpit-driven values for DCS/BMS channels. When false (default), cockpit controls win
     /// and manual per-channel controls are disabled for those channels.</summary>
@@ -640,6 +643,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         SidetoneEnabled = settings.SidetoneEnabled;
         MicNormalizationEnabled = settings.MicNormalizationEnabled;
         ShareTranscripts = settings.ShareTranscripts;
+        AutoUpdateEnabled = settings.AutoUpdateEnabled;
         InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
         MinimizeOnConnect = settings.MinimizeOnConnect;
@@ -844,6 +848,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             SidetoneEnabled = SidetoneEnabled,
             MicNormalizationEnabled = MicNormalizationEnabled,
             ShareTranscripts = ShareTranscripts,
+            AutoUpdateEnabled = AutoUpdateEnabled,
             InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
             MinimizeOnConnect = MinimizeOnConnect,

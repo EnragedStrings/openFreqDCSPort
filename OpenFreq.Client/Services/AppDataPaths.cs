@@ -35,6 +35,10 @@ internal static class AppDataPaths
     /// recordings, not the small roaming settings/config files.</summary>
     public static string ClientModelDirectory => Path.Combine(LocalDirectory, "Models");
 
+    /// <summary>Where a downloaded-but-not-yet-applied update is staged -- see
+    /// OpenFreq.Common.Updates.SelfUpdateStager/SelfUpdateLauncher and IUpdateService.</summary>
+    public static string ClientUpdateStagingDirectory => Path.Combine(LocalDirectory, "Updates");
+
     private static string GetSpecialFolderPath(Environment.SpecialFolder folder, string fallback)
     {
         var root = Environment.GetFolderPath(folder);

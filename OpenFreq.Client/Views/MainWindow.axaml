@@ -1034,6 +1034,24 @@
                                 </StackPanel>
                             </controls:Card>
 
+                            <!-- Auto-update (all modes: BMS, GCI, DCS) -->
+                            <controls:Card>
+                                <StackPanel Margin="16">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <avalonia:MaterialIcon Kind="Update"
+                                                               Width="16" Height="16"
+                                                               Margin="0,0,8,0"
+                                                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                        <TextBlock Text="Updates" Classes="SectionHeader" Margin="0" />
+                                    </StackPanel>
+                                    <CheckBox Content="Automatically download and apply updates in the background"
+                                              IsChecked="{Binding Settings.AutoUpdateEnabled}" />
+                                    <TextBlock Classes="InputLabel" Margin="0,4,0,0" TextWrapping="Wrap"
+                                               Text="Off (default): you'll be asked to update whenever a new version is available at launch. On: new versions download silently in the background and are applied automatically the next time you start the app, with a summary of what changed shown afterward -- never interrupts a session already in progress."
+                                               FontStyle="Italic" />
+                                </StackPanel>
+                            </controls:Card>
+
                             <!-- Debug Mode Card -->
                             <controls:Card>
                                 <StackPanel Margin="16">

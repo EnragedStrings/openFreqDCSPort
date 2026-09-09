@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
+using OpenFreq.Common.Updates;
 using OpenFreqServer.SrsBridge;
 using Serilog;
 using Serilog.Events;
@@ -76,6 +77,14 @@ static class Program
             Log.Information("OpenFreq Server {Version} starting", version);
             Log.Information("Server starting with configuration: Port={Port}, MaxClients={MaxClients}",
                 config.WebSocketPort, config.MaxClientsPerChannel);
+
+            var updateStagingDir = Path.Combine(baseDirectory, "Updates");
+            var appliedUpdate = SelfUpdateStager.TakeAppliedMarker(updateStagingDir);
+            if (appliedUpdate != null)
+            {
+                Log.Information("Updated to {Version}. Release notes:{NewLine}{ReleaseNotes}",
+                    appliedUpdate.Version, Environment.NewLine, appliedUpdate.ReleaseNotes);
+            }
 
             // Setup logging infrastructure
             var logMessages = new ConcurrentQueue<TuiLogMessage>();
@@ -169,6 +178,10 @@ static class Program
                 }
             }
 
+            var updateCoordinator = new ServerUpdateCoordinator(config, server.Clients, shutdownCts,
+                loggerFactory.CreateLogger<ServerUpdateCoordinator>(), updateStagingDir);
+            _ = updateCoordinator.RunAsync();
+
             if (tui != null)
             {
                 // Start TUI (blocks until quit or shutdown requested)
@@ -189,6 +202,27 @@ static class Program
                 await srsBridge.DisposeAsync();
             await server.StopAsync();
             tui?.Stop();
+
+            // If ServerUpdateCoordinator is the reason we're shutting down (auto-update, idle,
+            // zero clients connected -- never mid-session), arm the swap-and-relaunch now that
+            // teardown above has already completed cleanly.
+            if (updateCoordinator.StagedExePathReadyToApply is { } stagedExePath)
+            {
+                var currentExePath = Environment.ProcessPath;
+                if (currentExePath != null)
+                {
+                    Log.Information("Restarting to apply update {Version}", updateCoordinator.AppliedVersion);
+                    SelfUpdateStager.WriteAppliedMarker(updateStagingDir, updateCoordinator.AppliedVersion!,
+                        updateCoordinator.AppliedReleaseNotes ?? string.Empty);
+                    SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, stagedExePath, Environment.ProcessId,
+                        Environment.GetCommandLineArgs().Skip(1).ToArray());
+                }
+                else
+                {
+                    Log.Warning("Update {Version} was staged but the current executable path is unknown -- skipping",
+                        updateCoordinator.AppliedVersion);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -253,7 +287,9 @@ static class Program
                     EnableOpusCompression = true,
                     DcsLineOfSightEnabled = true,
                     BroadcastPeerUpdates = true,
-                    SrsBridgeEnabled = false
+                    SrsBridgeEnabled = false,
+                    AutoUpdateEnabled = false,
+                    UpdateCheckIntervalMinutes = 60
                 };
 
                 var json = Json.Json.Instance.Serialize(defaultConfig);

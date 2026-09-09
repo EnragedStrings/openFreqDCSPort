@@ -125,6 +125,34 @@ Useful switches:
 The script reuses `installer/windows/Install-DcsExport.ps1` so Lua export changes
 get copied into `Saved Games\DCS...\Mods\Services\OpenFreqDCS` before launch.
 
+## Auto-Update
+
+Both the Client and Server check the project's [GitHub Releases](https://github.com/EnragedStrings/openFreqDCSPort/releases)
+for a newer version and can update themselves — no manual download/reinstall required.
+
+**Default behavior (no setting changed):** on launch, if a newer release exists you're asked
+"Update now?" — accept and it downloads, swaps itself in, and relaunches; decline and it asks
+again next launch. The server's default equivalent: it logs that an update is available (visible
+in the TUI's log pane and in `logs/`) but never applies it on its own — an operator updates it by
+hand when convenient.
+
+**Background updates (opt-in, off by default):**
+- **Client** — enable "Automatically download and apply updates in the background" under
+  Settings. New versions download silently while you're using the app; the swap-and-relaunch
+  itself happens at the *start* of your next launch (before the window shows), so a background
+  update never interrupts a session already in progress. Once relaunched, a "here's what changed"
+  popup shows the new release's notes.
+- **Server** — set `"autoUpdateEnabled": true` in `OpenFreq.Server.json`. A found update downloads
+  in the background immediately, then the server waits until **zero clients are connected** before
+  restarting itself to apply it — it will never disconnect anyone mid-session to update. The
+  applied version and release notes are logged right after the restart.
+
+Both sides always fetch the self-contained "portable" build regardless of which flavor
+(portable/framework-dependent) is currently installed, and only ever run against this repo's own
+public releases over HTTPS — there's no code-signing/checksum verification pass beyond that today,
+worth knowing if you're auditing the trust model. Local/dev builds (version `0.0.0-local`) never
+attempt to update.
+
 ## Bot Clients & Speech-to-Text Transcripts
 
 OpenFreq is gaining a second, opt-in way to consume a transmission besides hearing it: a **text

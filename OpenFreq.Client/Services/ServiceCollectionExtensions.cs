@@ -40,6 +40,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFalconSharedMemoryService, FalconSharedMemoryService>();
         services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
         services.AddSingleton<IIvcMonitorService, IvcMonitorService>();
+        services.AddSingleton<IUpdateService, UpdateService>();
         services.AddSingleton<ISpeechTranscriber>(sp => new WhisperSpeechTranscriber(
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WhisperSpeechTranscriber>(),
             Path.Combine(AppDataPaths.ClientModelDirectory, "ggml-tiny.en.bin")));

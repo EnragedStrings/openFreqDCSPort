@@ -61,6 +61,11 @@ public class OpenFreqSettings
     /// DisplayName/OpenFreqPassword above); toggling it mid-session takes effect on the next
     /// (re)connect, not live.</summary>
     public bool ShareTranscripts { get; set; } = false;
+
+    /// <summary>Opt-in: silently download and stage new releases in the background instead of
+    /// prompting on every launch -- see IUpdateService. Off by default, matching "the normal
+    /// experience is a per-launch prompt unless you turn this on."</summary>
+    public bool AutoUpdateEnabled { get; set; } = false;
     public double InputGain { get; set; } = 1.0;
     public double SidetoneVolume { get; set; } = 0.4;
     public double MasterVolume { get; set; } = 1.0;

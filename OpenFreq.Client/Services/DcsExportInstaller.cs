@@ -123,9 +123,41 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
         }
     }
 
+    /// <summary>"Saved Games" (FOLDERID_SavedGames) -- not one of the values in .NET's
+    /// Environment.SpecialFolder enum, so unlike Documents/AppData it isn't resolvable via
+    /// Environment.GetFolderPath at all. It's still a real, independently relocatable Windows
+    /// known folder: a user can move it off the profile root entirely (right-click -> Properties
+    /// -> Location -> Move), which many PC gamers do to keep game saves on a separate drive.
+    /// DCS itself resolves the real (possibly relocated) location via the proper Windows API, so
+    /// assuming it's always "%USERPROFILE%\Saved Games" silently installs into a folder DCS never
+    /// reads from whenever a user has relocated it -- exactly the failure mode reported by a user
+    /// whose DCS log showed it loading from "D:\Users\...\Saved Games" while this user's profile
+    /// itself was elsewhere. SHGetKnownFolderPath is the correct, direct way to ask Windows for
+    /// this folder's real location.</summary>
+    private static readonly Guid FolderIdSavedGames = new("4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4");
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetKnownFolderPath(ref Guid rfid, uint dwFlags, IntPtr hToken, out IntPtr ppszPath);
+
+    private static string? TryGetRealSavedGamesPath()
+    {
+        var folderId = FolderIdSavedGames;
+        if (SHGetKnownFolderPath(ref folderId, 0, IntPtr.Zero, out var pathPtr) != 0 || pathPtr == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            return Marshal.PtrToStringUni(pathPtr);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(pathPtr);
+        }
+    }
+
     private static IEnumerable<string> GetDcsSavedGamesDirectories()
     {
-        var savedGamesRoot = Path.Combine(
+        var savedGamesRoot = TryGetRealSavedGamesPath() ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Saved Games");
 

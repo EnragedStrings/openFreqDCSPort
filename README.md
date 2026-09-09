@@ -148,11 +148,11 @@ hand when convenient.
   restarting itself to apply it — it will never disconnect anyone mid-session to update. The
   applied version and release notes are logged right after the restart.
 
-Both sides always fetch the self-contained "portable" build regardless of which flavor
-(portable/framework-dependent) is currently installed, and only ever run against this repo's own
-public releases over HTTPS — there's no code-signing/checksum verification pass beyond that today,
-worth knowing if you're auditing the trust model. Local/dev builds (version `0.0.0-local`) never
-attempt to update.
+Both sides always fetch the self-contained "portable" build — the only flavor this project
+publishes; there's no separate .NET-runtime-required download to keep in sync — and only ever run
+against this repo's own public releases over HTTPS. There's no code-signing/checksum verification
+pass beyond that today, worth knowing if you're auditing the trust model. Local/dev builds (version
+`0.0.0-local`) never attempt to update.
 
 ## Bot Clients & Speech-to-Text Transcripts
 

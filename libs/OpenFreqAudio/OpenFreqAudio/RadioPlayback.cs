@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using ManagedBass;
-using ManagedBass.Enc;
 using ManagedBass.Mix;
 using Microsoft.Extensions.Logging;
 using NWaves.Filters.Butterworth;
@@ -19,7 +18,18 @@ namespace OpenFreqAudio;
 public class RadioPlayback : IDisposable
 {
     public const double AgcAttack = 0.003f / 3;
-    public const double AgcDecay = 0.01f / 3;
+    // Published AM radio figures put AGC decay at 0.1-0.3s; a third of that keeps the "quickly
+    // attenuate as someone starts talking, hold level constant-ish through pauses" behavior
+    // without the near-instant snap-back a much faster decay gave. BackgroundNoiseGenerator's
+    // own noise-floor calibration (its unit-power doc comment) is written against this exact
+    // 33ms value -- changing it independently would throw that calibration off.
+    public const double AgcDecay = 0.1f / 3;
+
+    // Squelch gates on this slower, dedicated power detector rather than on the fast AGC gain
+    // itself -- impulsive VHF noise (see BackgroundNoiseGenerator) can swing the AGC across the
+    // threshold for a sample or two between real transmissions, which used to be enough to pop
+    // the gate open. Shared with OwnVoiceRadioRenderer so both squelch gates behave the same way.
+    public const double SquelchTau = 0.010;
 
     private class RadioStream
     {
@@ -175,6 +185,11 @@ public class RadioPlayback : IDisposable
         // AGC gain; varies as a low-pass of the received signal
         // according to attack and decay params below.
         public AttackDecayFilter Agc = AttackDecayFilter.MakeAttackDecayFilter(AgcAttack, AgcDecay, SampleRate);
+
+        // Slow power-tracking detector the squelch gate actually reads (see SquelchTau) --
+        // separate from Agc, which still does its normal job normalizing output level.
+        public FirstOrderFilter SquelchDetector =
+            FirstOrderFilter.MakeFirstOrderFilter(SquelchTau, SampleRate, 1.0);
 
         // AGC attack and decay are exponential functions -
         // for a time constant tau, if Fs is our sample rate,
@@ -362,12 +377,11 @@ public class RadioPlayback : IDisposable
     }
 
     // --- Session capture (one combined stereo mix: incoming as heard with pan + own voice centered,
-    //     rendered as if heard from same position). The mix can be written to an Ogg/Vorbis file
+    //     rendered as if heard from same position). The mix can be written to an Ogg Opus file
     //     OR streamed to a separate playback device (e.g. a virtual cable). Exclusive in practice,
     //     but both sinks are supported independently here. ---
     private bool _recording;        // file sink active
-    private int _recordStream;      // dummy decode stream that sets the encoder format
-    private int _recordEncoder;     // BassEnc_Ogg handle
+    private OggOpusRecorder? _recorder;
     private bool _monitoring;       // device sink active
     private int _monitorStream;     // push stream on the monitor output device
     private OwnVoiceRadioRenderer? _ownVoiceRenderer;
@@ -450,9 +464,6 @@ public class RadioPlayback : IDisposable
                 // Use explicit path on non-Windows to avoid strange .NET lib*.so wrangling issues
                 // We don't need to free it explicitly, this is covered by BASS
                 NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, "libbassmix.so"));
-                // Session recording encoder. bassenc_ogg depends on bassenc, so load bassenc first.
-                NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, "libbassenc.so"));
-                NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, "libbassenc_ogg.so"));
             }
         }
     }
@@ -826,10 +837,10 @@ public class RadioPlayback : IDisposable
     }
 
     /// <summary>
-    /// Start recording the session to a combined stereo Ogg/Vorbis file at <paramref name="filePath"/>.
+    /// Start recording the session to a combined stereo Ogg Opus file at <paramref name="filePath"/>.
     /// Captures incoming audio (as heard, post-FX, with pan) plus our own voice rendered as if heard
-    /// from the same position, panned centre. No-op if already recording. Encoding runs on BASSenc's
-    /// own thread.
+    /// from the same position, panned centre. No-op if already recording. Encoding runs on the
+    /// recorder's own thread.
     /// </summary>
     public void StartRecording(string filePath)
     {
@@ -837,26 +848,17 @@ public class RadioPlayback : IDisposable
         {
             if (_recording) return;
 
-            // Dummy decode stream only sets the encoder format (48k stereo float); never played.
-            int stream = Bass.CreateStream(SampleRate, 2, BassFlags.Float | BassFlags.Decode,
-                StreamProcedureType.Dummy);
-            if (stream == 0)
+            try
             {
-                RaiseUserFacingError($"Recording: failed to create encoder stream: {Bass.LastError}");
+                _recorder = new OggOpusRecorder(filePath, _logger);
+            }
+            catch (Exception ex)
+            {
+                _recorder = null;
+                RaiseUserFacingError($"Recording: failed to start Opus encoder: {ex.Message}");
                 return;
             }
 
-            // EncodeFlags.Queue → EncodeWrite copies to a queue and BASSenc encodes off the audio thread.
-            int enc = BassEnc_Ogg.Start(stream, "--quality=3", EncodeFlags.Queue, filePath);
-            if (enc == 0)
-            {
-                Bass.StreamFree(stream);
-                RaiseUserFacingError($"Recording: failed to start Ogg encoder: {Bass.LastError}");
-                return;
-            }
-
-            _recordStream = stream;
-            _recordEncoder = enc;
             EnsureCaptureRenderer();
             _recording = true;
             _logger.LogInformation("Recording started: {Path}", filePath);
@@ -866,21 +868,18 @@ public class RadioPlayback : IDisposable
     /// <summary>Stop and finalize the session recording. No-op if not recording.</summary>
     public void StopRecording()
     {
-        int enc, stream;
+        OggOpusRecorder? recorder;
         lock (_lock)
         {
             if (!_recording) return;
             _recording = false;
-            enc = _recordEncoder;
-            stream = _recordStream;
-            _recordEncoder = 0;
-            _recordStream = 0;
+            recorder = _recorder;
+            _recorder = null;
             ClearCaptureRendererIfIdle();
         }
 
-        // Free outside the lock — EncodeStop flushes the queue.
-        if (enc != 0) BassEnc.EncodeStop(enc);
-        if (stream != 0) Bass.StreamFree(stream);
+        // Dispose outside the lock — it drains the queue and joins the encode thread.
+        recorder?.Dispose();
         _logger.LogInformation("Recording stopped");
     }
 
@@ -971,7 +970,7 @@ public class RadioPlayback : IDisposable
 
             if (slot.NoiseGenerator == null)
             {
-                slot.NoiseGenerator = new BackgroundNoiseGenerator(SampleRate, frequencyKHz, slot.Modulation);
+                slot.NoiseGenerator = new BackgroundNoiseGenerator(SampleRate, frequencyKHz);
                 _logger.LogInformation("TuneFrequency {Frequency:F3} MHz", frequencyKHz / 1000.0);
             }
 
@@ -1323,7 +1322,7 @@ public class RadioPlayback : IDisposable
             HashSet<int> transmittingFrequencies;
             // Capture state snapshot (encoder / monitor handles stay valid for this callback).
             bool capturing;
-            int recordEncoder;
+            OggOpusRecorder? recorder;
             int monitorStream;
             OwnVoiceRadioRenderer? ownVoiceRenderer;
             lock (_lock)
@@ -1332,7 +1331,7 @@ public class RadioPlayback : IDisposable
                 streams = _streams.Values.ToList();
 
                 capturing = Capturing;
-                recordEncoder = _recordEncoder;
+                recorder = _recorder;
                 monitorStream = _monitorStream;
                 ownVoiceRenderer = _ownVoiceRenderer;
 
@@ -1366,54 +1365,40 @@ public class RadioPlayback : IDisposable
                 list.Add(stream);
             }
 
-            // If anyone has anything to play,
-            // limit this round to the shortest length.
-            // If all is quiet, just use the provided length.
-            int? maxReady = null;
-            foreach (var stream in streams)
-            {
-                var avail = stream.Buffer.Available;
-                if (avail > 0)
-                {
-                    if (!maxReady.HasValue) maxReady = avail;
-                    else maxReady = Math.Min(maxReady.Value, avail);
-                    // No matter how much we have ready,
-                    // we can only handle `samples` at most.
-                    maxReady = Math.Min(samples, maxReady.Value);
-                }
-            }
-            // TODO: If we have nothing to play (maxReady is null)
-            // we could limit the number of samples returned to a small duration
-            // so that we're more responsive as soon as new ones arrive.
-            samples = maxReady ?? samples;
-            stereoOutputSamples = samples * 2;
             Array.Clear(_stereoBuffer, 0, stereoOutputSamples);
 
-            // No matter what else we do, keep the samples moving.
+            // Drain each stream independently, up to `samples` or however much it has ready --
+            // never less than that for every OTHER stream too. This used to instead take the
+            // minimum availability across every stream in the whole system (not just this
+            // frequency) and shrink the entire callback's `samples` to match, so one transmitter
+            // whose jitter buffer ran momentarily thin throttled every frequency, every slot, for
+            // that whole callback -- the output fell behind by that shortfall every time it
+            // happened, ratcheting latency up over a session. A stream that comes up short now
+            // just holds its carrier with no voice modulation for the remainder of this callback
+            // (see the bounds check on Samples.Span below) instead of shrinking everyone's buffer.
             foreach (var stream in streams)
             {
-                if (maxReady.HasValue)
-                {
-                    var mr = maxReady.Value;
-                    if (stream.Scratch.Length < mr)
-                    {
-                        stream.Scratch = new float[mr];
-                    }
-                    int drained = stream.Buffer.DrainTo(stream.Scratch.AsSpan()[..mr])!.Value;
-                    if (drained > 0 && drained != mr)
-                    {
-                        throw new Exception($"Expected {mr} samples, got {drained}");
-                    }
-
-                    // Apply radio effects
-                    stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
-
-                    stream.Samples = stream.Scratch.AsMemory()[..drained];
-                }
-                else
+                int take = Math.Min(samples, stream.Buffer.Available);
+                if (take <= 0)
                 {
                     stream.Samples = new Memory<float>();
+                    continue;
                 }
+
+                if (stream.Scratch.Length < take)
+                {
+                    stream.Scratch = new float[take];
+                }
+                int drained = stream.Buffer.DrainTo(stream.Scratch.AsSpan()[..take])!.Value;
+                if (drained > 0 && drained != take)
+                {
+                    throw new Exception($"Expected {take} samples, got {drained}");
+                }
+
+                // Apply radio effects
+                stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
+
+                stream.Samples = stream.Scratch.AsMemory()[..drained];
             }
 
             // 2: Process each tuned slot (noise + envelope + AGC + squelch + band-pass + mix).
@@ -1433,14 +1418,11 @@ public class RadioPlayback : IDisposable
 
                 // Mix transmitting streams
                 {
+                    // Streams are drained independently now (see above), so two transmitters on
+                    // the same frequency can legitimately have different amounts of audio ready
+                    // this callback -- the per-sample mixing loop below bounds-checks each
+                    // stream's Samples.Span itself rather than assuming they're all `samples` long.
                     var transmittingStreamsAll = freqStreams.Where(s => s.Samples.Length > 0).ToList();
-                    // Sanity check:
-                    // By our maxReady logic above, any streams _with_ samples should be the same length,
-                    // and that lengh should be `samples`.
-                    if (!transmittingStreamsAll.Select(s => s.Samples.Length).All(l => l == samples))
-                    {
-                        throw new Exception("Active streams have different lengths");
-                    }
 
                     // TODO: Factor this out into a function.
 
@@ -1615,6 +1597,8 @@ public class RadioPlayback : IDisposable
                         {
                             // Typical squelch is at +6 dB, which is a factor of 2x.
                             float squelchThreshold = slot.SquelchLevel * 2.0f;
+                            // The squelch detector tracks mean power, so gate on the square.
+                            float squelchPowerThreshold = squelchThreshold * squelchThreshold;
 
                             // Noise is always there!
                             // The question is just "how loud compared to the signal?"
@@ -1657,8 +1641,11 @@ public class RadioPlayback : IDisposable
                                 for (int n = 0; n < samples; ++n)
                                 {
                                     // Start with our noise.
-                                    double i = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
-                                    double q = (noiseGen?.NextSample() ?? 0.0) * fmNoiseScale;
+                                    // I and Q must come from independent draws; see BackgroundNoiseGenerator.
+                                    float ni0 = 0f, nq0 = 0f;
+                                    noiseGen?.Next(out ni0, out nq0);
+                                    double i = ni0 * fmNoiseScale;
+                                    double q = nq0 * fmNoiseScale;
                                     // Real aircraft radios don't have 100% modulation.
                                     // A bunch of the standards are paywalled, but those I've found
                                     // suggest minimum specs are 85% modulation, with 90-95% being common.
@@ -1672,7 +1659,12 @@ public class RadioPlayback : IDisposable
                                             (double)(n + _sampleNum) / (double)SampleRate;
                                         // Sum IQ components _before_ taking the length of the vector,
                                         // as that's a nonlinear operation.
-                                        float samp = sampleOverride?.Invoke(n) ?? transmittingStreams[k].Samples.Span[n];
+                                        // A stream can now be shorter than `samples` if it came up
+                                        // short on buffered audio this callback (see the drain loop
+                                        // above) -- hold its carrier with no voice modulation for
+                                        // the remainder rather than indexing past its samples.
+                                        var txSpan = transmittingStreams[k].Samples.Span;
+                                        float samp = sampleOverride?.Invoke(n) ?? (n < txSpan.Length ? txSpan[n] : 0f);
                                         i += relativePowers[k] * (1 + samp * modIndex) * Math.Cos(theta);
                                         q += relativePowers[k] * (1 + samp * modIndex) * Math.Sin(theta);
                                     }
@@ -1682,12 +1674,14 @@ public class RadioPlayback : IDisposable
 
                                     // Update the AGC:
                                     slot.Agc.Apply(_dspScratch[n]);
+                                    // Squelch reads its own slow power detector, not the AGC gain --
+                                    // see SquelchTau: impulsive noise can swing the AGC across
+                                    // threshold for a sample or two between real transmissions.
+                                    slot.SquelchDetector.Apply(_dspScratch[n] * _dspScratch[n]);
 
-                                    // Squelch is driven by the AGC gain.
-                                    // When it starts attenuating, we know we hear something.
                                     // NB: Handle squelch per sample, before the band-pass smooths the edges!
-                                    // We don't want to gate the whole buffer (or not!) based on a single AGC value.
-                                    if (slot.Agc.D1 >= squelchThreshold)
+                                    // We don't want to gate the whole buffer (or not!) based on a single value.
+                                    if (slot.SquelchDetector.D1 >= squelchPowerThreshold)
                                     {
                                         _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
                                         // SIM_VINSON: successfully-decrypted secure voice gets a CVSD-like
@@ -1707,13 +1701,16 @@ public class RadioPlayback : IDisposable
                             {
                                 for (int n = 0; n < samples; ++n)
                                 {
-                                    double i = noiseGen?.NextSample() ?? 0.0;
-                                    double q = noiseGen?.NextSample() ?? 0.0;
+                                    float ni1 = 0f, nq1 = 0f;
+                                    noiseGen?.Next(out ni1, out nq1);
+                                    double i = ni1;
+                                    double q = nq1;
                                     _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
                                     slot.Agc.Apply(_dspScratch[n]);
+                                    slot.SquelchDetector.Apply(_dspScratch[n] * _dspScratch[n]);
 
                                     // See above.
-                                    if (slot.Agc.D1 >= squelchThreshold)
+                                    if (slot.SquelchDetector.D1 >= squelchPowerThreshold)
                                     {
                                         _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
                                         squelchOpened = true;
@@ -1762,7 +1759,7 @@ public class RadioPlayback : IDisposable
             // incoming side is "as heard" minus our own raw mic loopback. Our own voice
             // is added back rendered through the radio FX (CaptureRecordingFrame).
             if (capturing)
-                CaptureRecordingFrame(samples, recordEncoder, monitorStream, ownVoiceRenderer);
+                CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer);
 
             // Sidetone: mix own voice (mono) into stereo output
             // No AGC/ALC
@@ -1840,9 +1837,9 @@ public class RadioPlayback : IDisposable
     /// <summary>
     /// Build one stereo recording frame (incoming as heard, with pan, + own voice rendered as
     /// if heard from the same position and panned centre) and feed it to the encoder. Runs on
-    /// the DSP thread; the encode itself happens on BASSenc's thread (EncodeFlags.Queue).
+    /// the DSP thread; the Opus encode itself happens on the recorder's own thread.
     /// </summary>
-    private void CaptureRecordingFrame(int samples, int encoder, int monitorStream,
+    private void CaptureRecordingFrame(int samples, OggOpusRecorder? recorder, int monitorStream,
         OwnVoiceRadioRenderer? renderer)
     {
         int stereo = samples * 2;
@@ -1877,11 +1874,11 @@ public class RadioPlayback : IDisposable
             }
         }
 
-        int bytes = stereo * sizeof(float);
-        // File sink: queued to BASSenc's own thread.
-        if (encoder != 0) BassEnc.EncodeWrite(encoder, _recordStereo, bytes);
+        // File sink: queued to the recorder's own encode thread.
+        recorder?.Write(_recordStereo.AsSpan(0, stereo));
         // Device sink: push to the monitor output stream (its device pulls at its own rate).
-        if (monitorStream != 0) Bass.StreamPutData(monitorStream, _recordStereo, bytes);
+        if (monitorStream != 0)
+            Bass.StreamPutData(monitorStream, _recordStereo, stereo * sizeof(float));
     }
 
     public async Task StopAll()

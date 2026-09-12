@@ -1430,13 +1430,25 @@ function OpenFreqDCS.processLosRequests()
 
         local ok, request = pcall(function() return json:decode(received) end)
         if ok and type(request) == "table" and request.schema == "openfreq.dcs.los.request" then
-            local response = buildLosResponse(request)
-            local payload = encodeJson(response)
-            pcall(function() OpenFreqDCS.udp:send(payload) end)
+            -- pcall-wrapped like every other request/response path in this file: this runs
+            -- inside LuaExportAfterNextFrame, a hook chained onto whatever another export mod
+            -- (e.g. SRS) already hooked there -- see the chaining note above LuaExportStart. An
+            -- uncaught error anywhere in this call chain doesn't just fail this one LOS response,
+            -- it escapes the wrapper DCS calls into, and DCS engines commonly stop calling a hook
+            -- that ever threw -- taking every OTHER mod chained through the same hook down with
+            -- it for the rest of the session. A malformed request (bad request.unitName, missing
+            -- terrain data, whatever) must never be allowed to become that.
+            pcall(function()
+                local response = buildLosResponse(request)
+                local payload = encodeJson(response)
+                OpenFreqDCS.udp:send(payload)
+            end)
         elseif ok and type(request) == "table" and request.schema == "openfreq.dcs.los.remote_request" then
-            local response = buildRemoteLosResponse(request)
-            local payload = encodeJson(response)
-            pcall(function() OpenFreqDCS.udp:send(payload) end)
+            pcall(function()
+                local response = buildRemoteLosResponse(request)
+                local payload = encodeJson(response)
+                OpenFreqDCS.udp:send(payload)
+            end)
         end
     end
 end
@@ -1662,17 +1674,35 @@ end
 local previousStart = LuaExportStart
 local previousStop = LuaExportStop
 local previousAfterNextFrame = LuaExportAfterNextFrame
-local previousActivityNextEvent = LuaExportActivityNextEvent
 
+-- Every OpenFreqDCS.* call below is pcall-wrapped, even ones (like .start()/.stop()) that look
+-- unlikely to throw. These three functions are shared, chained hooks -- see the "previousXxx =
+-- LuaExportXxx" captures above -- so whatever export mod (SRS, in practice) was already hooked
+-- here before OpenFreqDCS loaded gets called from inside these same wrappers. DCS commonly stops
+-- calling a hook that ever throws an uncaught error, which would silently take that other mod's
+-- chained code down right along with OpenFreqDCS's own -- a bug in OpenFreqDCS's own code must
+-- never be able to do that to another mod sharing the same hook.
+--
+-- LuaExportActivityNextEvent is deliberately NOT touched here (it used to be, chained the same
+-- way as these three). Diagnostics (2026-09-12, "CHAIN DIAG" log lines) showed that once
+-- OpenFreqDCS's wrapper was in that particular chain, DCS called it exactly once at mission
+-- start and never again for the rest of the session -- no error, clean success, it just stopped
+-- being scheduled. Since SRS's actual outbound UDP export (SR.exporter()) only runs from inside
+-- that one hook, that single call is all SRS ever got, which is why its "Game" indicator never
+-- went green with OpenFreqDCS's export installed. OpenFreqDCS.export() and scanArgumentsOnce()
+-- already run every single frame via LuaExportAfterNextFrame below (each self-throttled
+-- internally, see OpenFreqDCS.export's own nextExportTime check) -- chaining
+-- LuaExportActivityNextEvent too was pure redundancy on OpenFreqDCS's side, so the fix is simply
+-- to stop touching it: leave whatever SRS (or anything else) installed there completely alone.
 function LuaExportStart()
     if type(previousStart) == "function" then
         pcall(previousStart)
     end
-    OpenFreqDCS.start()
+    pcall(OpenFreqDCS.start)
 end
 
 function LuaExportStop()
-    OpenFreqDCS.stop()
+    pcall(OpenFreqDCS.stop)
     if type(previousStop) == "function" then
         pcall(previousStop)
     end
@@ -1682,22 +1712,6 @@ function LuaExportAfterNextFrame()
     if type(previousAfterNextFrame) == "function" then
         pcall(previousAfterNextFrame)
     end
-    scanArgumentsOnce()
-    OpenFreqDCS.export()
-end
-
-function LuaExportActivityNextEvent(t)
-    local previousNext = nil
-    if type(previousActivityNextEvent) == "function" then
-        local ok, result = pcall(previousActivityNextEvent, t)
-        if ok and type(result) == "number" then
-            previousNext = result
-        end
-    end
-
-    local ourNext = OpenFreqDCS.export(t)
-    if type(previousNext) == "number" and previousNext < ourNext then
-        return previousNext
-    end
-    return ourNext
+    pcall(scanArgumentsOnce)
+    pcall(OpenFreqDCS.export)
 end

@@ -20,12 +20,13 @@
     <ItemGroup>
         <PackageReference Include="ManagedBass" Version="4.0.2" />
         <PackageReference Include="ManagedBass.Mix" Version="4.0.2" />
-        <PackageReference Include="ManagedBass.Enc" Version="4.0.2" />
+        <PackageReference Include="Concentus" Version="2.2.2" />
+        <PackageReference Include="Concentus.Oggfile" Version="1.0.7" />
         <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
         <PackageReference Include="NWaves" Version="0.9.6" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' OR '$(RuntimeIdentifier)' == 'win-x86' OR '$(RuntimeIdentifier)' == 'win-arm64'">
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ($([MSBuild]::IsOSPlatform('Windows')) And '$(RuntimeIdentifier)' == '')">
         <Content Include="../OpenFreqAudio/Assets/windows/**/*">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
@@ -34,7 +35,7 @@
         </Content>
     </ItemGroup>
 
-    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' OR '$(RuntimeIdentifier)' == 'linux-arm64'">
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ($([MSBuild]::IsOSPlatform('Linux')) And '$(RuntimeIdentifier)' == '')">
         <Content Include="../OpenFreqAudio/Assets/linux/**/*">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>

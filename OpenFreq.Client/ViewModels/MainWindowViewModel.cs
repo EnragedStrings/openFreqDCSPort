@@ -958,6 +958,30 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     [RelayCommand]
     private void ClearGlobalPttHotkey() => Settings.GlobalPttHotkey = null;
 
+    [ObservableProperty] public partial bool IsRescanningInputDevices { get; set; }
+    [ObservableProperty] public partial string? InputDeviceRescanResult { get; set; }
+
+    [RelayCommand]
+    private async Task RescanInputDevicesAsync()
+    {
+        IsRescanningInputDevices = true;
+        InputDeviceRescanResult = null;
+        try
+        {
+            var count = await Task.Run(() => _hotkeyService.RescanInputDevices());
+            InputDeviceRescanResult = count switch
+            {
+                0 => "No controllers found",
+                1 => "1 controller found",
+                _ => $"{count} controllers found"
+            };
+        }
+        finally
+        {
+            IsRescanningInputDevices = false;
+        }
+    }
+
     private async Task CaptureSettingsHotkeyAsync(Action<HotkeyBinding?> assign)
     {
         IsCapturingHotkey = true;

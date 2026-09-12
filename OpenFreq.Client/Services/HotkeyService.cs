@@ -27,7 +27,16 @@ public class HotkeyService : IHotkeyService
     private readonly Dictionary<KeyCode, HotkeyBinding> _activeKeyBindings = new();
     private bool _isCapturing;
 
-    // Unified binding storage with custom comparer
+    // Unified binding storage with custom comparer. Read from the keyboard hook's callback
+    // thread and (on Windows) the joystick polling thread, and written from whatever thread
+    // calls RegisterHotkey/UnregisterHotkey/CaptureNextHotkeyAsync (normally the UI thread) --
+    // plain Dictionary isn't safe for that, so every access goes through _bindingsLock. This
+    // used to be unsynchronized: CaptureNextHotkeyAsync rewrites _pttBindings with one entry per
+    // joystick button (30+ for a HOTAS stick) in a tight loop while the polling thread is
+    // concurrently calling TryGetValue on it 50x/sec, which can silently corrupt lookups on a
+    // plain Dictionary -- a very plausible reason a real button press sometimes just isn't seen
+    // during capture, with no exception or log line to show for it.
+    private readonly object _bindingsLock = new();
     private readonly Dictionary<HotkeyBinding, List<Guid>> _pttBindings = new(new HotkeyBindingComparer());
     private readonly Dictionary<HotkeyBinding, List<Guid>> _squelchToggleBindings = new(new HotkeyBindingComparer());
     private readonly Dictionary<HotkeyBinding, List<Guid>> _toggleOverlayBindings = new(new HotkeyBindingComparer());
@@ -42,7 +51,18 @@ public class HotkeyService : IHotkeyService
     private readonly Dictionary<Guid, JoystickState> _previousJoystickStates = [];
     private readonly Dictionary<Guid, string> _deviceNames = [];
     private Thread? _pollingThread;
+    private Thread? _enumerationThread;
     private IntPtr _windowHandle;
+
+    /// <summary>Handoff for a pending RescanInputDevices() request. The polling thread is the
+    /// sole owner of _directInput/_joystickDevices while it's alive (see PollJoysticks) -- a
+    /// rescan must be carried out BY that thread, not by whoever called RescanInputDevices(),
+    /// which used to dispose devices out from under the still-running polling thread and race
+    /// its own native Poll()/Acquire() calls (that's what made rescans -- and Stop() -- take up
+    /// to tens of seconds and could leave a device silently stuck returning stale state until
+    /// the whole process was restarted). Set via Interlocked.CompareExchange by the requester,
+    /// consumed via Interlocked.Exchange by the polling thread.</summary>
+    private TaskCompletionSource<int>? _pendingRescan;
 #endif
 
     public event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed;
@@ -156,7 +176,46 @@ public class HotkeyService : IHotkeyService
         // Create DirectInput instance
         _directInput = DInput.DirectInput8Create();
 
-        // Enumerate and acquire joystick devices
+        AcquireAttachedDevices();
+
+        if (_joystickDevices.Count > 0)
+        {
+            // Start polling thread
+            _pollingThread = new Thread(PollJoysticks)
+            {
+                IsBackground = true,
+                Name = "DirectInput Polling Thread"
+            };
+            _pollingThread.Start();
+
+            // Separate thread for periodic re-enumeration (see EnumerateNewDevicesLoop) so a
+            // slow GetDevices()/Acquire() call never blocks reading button/POV state from
+            // devices already acquired.
+            _enumerationThread = new Thread(EnumerateNewDevicesLoop)
+            {
+                IsBackground = true,
+                Name = "DirectInput Enumeration Thread"
+            };
+            _enumerationThread.Start();
+
+            _logger.LogInformation("Started joystick polling thread for {Count} device(s)", _joystickDevices.Count);
+        }
+        else
+        {
+            _logger.LogWarning("No joystick devices found or acquired");
+        }
+    }
+
+    /// <summary>Enumerates attached GameControl devices and acquires each one not already held,
+    /// adding it to _joystickDevices/_previousJoystickStates/_deviceNames. Assumes _directInput
+    /// is already set. Only ever safe to call from InitializeDirectInput() (before any polling
+    /// thread exists) or from the polling thread itself (see PerformFullReacquire) -- never from
+    /// an external caller while the polling thread is alive, since IDirectInputDevice8 objects
+    /// aren't safe to touch from two threads at once.</summary>
+    private void AcquireAttachedDevices()
+    {
+        if (_directInput == null) return;
+
         var devices = _directInput.GetDevices(DeviceClass.GameControl, DeviceEnumerationFlags.AttachedOnly);
 
         foreach (var deviceInstance in devices)
@@ -185,8 +244,10 @@ public class HotkeyService : IHotkeyService
                         _deviceNames[deviceInstance.InstanceGuid] = deviceInstance.ProductName;
                     }
 
-                    _logger.LogInformation("Acquired joystick: {DeviceName} (GUID: {Guid})",
-                        deviceInstance.ProductName, deviceInstance.InstanceGuid);
+                    _logger.LogInformation(
+                        "Acquired joystick: {DeviceName} (GUID: {Guid}, Buttons: {ButtonCount}, POVs: {PovCount}, Axes: {AxeCount})",
+                        deviceInstance.ProductName, deviceInstance.InstanceGuid,
+                        device.Capabilities.ButtonCount, device.Capabilities.PovCount, device.Capabilities.AxeCount);
                 }
                 else
                 {
@@ -200,42 +261,66 @@ public class HotkeyService : IHotkeyService
                 _logger.LogError(ex, "Error acquiring joystick: {DeviceName}", deviceInstance.ProductName);
             }
         }
+    }
 
-        if (_joystickDevices.Count > 0)
+    /// <summary>Runs TryAcquireNewDevices() on its own schedule, on its own thread, completely
+    /// independent of PollJoysticks. This used to be a periodic check inline in PollJoysticks'
+    /// own loop -- but DirectInput's device enumeration (GetDevices/CreateDevice/Acquire) can
+    /// itself block for many seconds on this hardware (measured at ~30s more than once), and
+    /// with enumeration and button/POV polling sharing one thread, every such stall froze ALL
+    /// input reading, not just the enumeration -- silently swallowing any quick press-and-release
+    /// that happened to land entirely inside the stall (currentState and previousState both read
+    /// "not pressed" once the loop finally resumed, so no transition was ever seen). Splitting
+    /// enumeration onto its own thread means a slow GetDevices() call only delays discovering new
+    /// devices, and never blocks reading state from devices already acquired.</summary>
+    private void EnumerateNewDevicesLoop()
+    {
+        _logger.LogDebug("Joystick enumeration thread started");
+
+        var lastEnumeration = DateTime.UtcNow;
+
+        while (_cts is { Token.IsCancellationRequested: false })
         {
-            // Start polling thread
-            _pollingThread = new Thread(PollJoysticks)
+            try
             {
-                IsBackground = true,
-                Name = "DirectInput Polling Thread"
-            };
-            _pollingThread.Start();
+                var pendingRescan = Interlocked.Exchange(ref _pendingRescan, null);
+                if (pendingRescan != null)
+                {
+                    _logger.LogInformation("Rescanning input devices...");
+                    TryAcquireNewDevices();
+                    lastEnumeration = DateTime.UtcNow;
 
-            _logger.LogInformation("Started joystick polling thread for {Count} device(s)", _joystickDevices.Count);
+                    int rescanCount;
+                    lock (_joystickLock) { rescanCount = _joystickDevices.Count; }
+
+                    _logger.LogInformation("Input device rescan complete - {Count} joystick(s) found", rescanCount);
+                    pendingRescan.TrySetResult(rescanCount);
+                }
+                else if ((DateTime.UtcNow - lastEnumeration).TotalSeconds >= 5)
+                {
+                    lastEnumeration = DateTime.UtcNow;
+                    TryAcquireNewDevices();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error during periodic device enumeration");
+            }
+
+            Thread.Sleep(200);
         }
-        else
-        {
-            _logger.LogWarning("No joystick devices found or acquired");
-        }
+
+        _logger.LogDebug("Joystick enumeration thread stopped");
     }
 
     private void PollJoysticks()
     {
         _logger.LogDebug("Joystick polling thread started");
 
-        var lastRescan = DateTime.UtcNow;
-
         while (_cts is { Token.IsCancellationRequested: false })
         {
             try
             {
-                // Re-enumerate every 5s to pick up replugged devices
-                if ((DateTime.UtcNow - lastRescan).TotalSeconds >= 5)
-                {
-                    lastRescan = DateTime.UtcNow;
-                    TryAcquireNewDevices();
-                }
-
                 List<IDirectInputDevice8> devicesSnapshot;
                 lock (_joystickLock) { devicesSnapshot = _joystickDevices.ToList(); }
 
@@ -277,6 +362,20 @@ public class HotkeyService : IHotkeyService
                                 case false when previousPressed:
                                     OnJoystickButtonReleased(deviceGuid, i);
                                     break;
+                            }
+                        }
+
+                        // Log POV/hat-switch changes too -- not wired into any binding yet, but
+                        // if a "button" a user is pressing is actually a POV/hat direction (some
+                        // HOTAS coolie/castle switches report as a POV rather than a Buttons[]
+                        // entry) the button-only comparison above would never see it at all, so
+                        // this is here purely to make that visible in the log.
+                        for (var p = 0; p < currentState.PointOfViewControllers.Length && p < previousState.PointOfViewControllers.Length; p++)
+                        {
+                            if (currentState.PointOfViewControllers[p] != previousState.PointOfViewControllers[p])
+                            {
+                                _logger.LogDebug("Joystick POV {Index} changed: {DeviceName} - {Previous} -> {Current}",
+                                    p, GetDeviceName(deviceGuid), previousState.PointOfViewControllers[p], currentState.PointOfViewControllers[p]);
                             }
                         }
 
@@ -331,6 +430,31 @@ public class HotkeyService : IHotkeyService
             }
         }
 
+        // This thread is the sole owner of _directInput/_joystickDevices while it's alive (see
+        // PerformFullReacquire/AcquireAttachedDevices) -- release everything here, on the way
+        // out, instead of letting StopDirectInput reach in from the calling thread while this
+        // thread might still be mid-Poll()/mid-Acquire(). That cross-thread teardown used to be
+        // exactly what corrupted device state until the whole process was restarted.
+        lock (_joystickLock)
+        {
+            foreach (var device in _joystickDevices)
+            {
+                try { device.Unacquire(); device.Dispose(); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Error releasing joystick device"); }
+            }
+
+            _joystickDevices.Clear();
+            _previousJoystickStates.Clear();
+            _deviceNames.Clear();
+        }
+
+        _directInput?.Dispose();
+        _directInput = null;
+
+        // Fail any rescan that snuck in right as we were cancelled, rather than leaving its
+        // caller blocked until its own timeout.
+        Interlocked.Exchange(ref _pendingRescan, null)?.TrySetResult(0);
+
         _logger.LogDebug("Joystick polling thread stopped");
     }
 
@@ -365,7 +489,7 @@ public class HotkeyService : IHotkeyService
         _logger.LogDebug("Joystick button pressed: {Binding}", binding.DisplayName);
 
         // Check PTT bindings
-        if (_pttBindings.TryGetValue(binding, out var pttChannels))
+        if (TryGetChannels(_pttBindings, binding) is { } pttChannels)
         {
             if (!PttKeysPaused)
             {
@@ -375,7 +499,7 @@ public class HotkeyService : IHotkeyService
         }
 
         // Check squelch toggle bindings
-        if (_squelchToggleBindings.TryGetValue(binding, out var squelchChannels))
+        if (TryGetChannels(_squelchToggleBindings, binding) is { } squelchChannels)
         {
             HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(
                 IHotkeyService.HotkeyType.SquelchToggle, squelchChannels));
@@ -391,7 +515,7 @@ public class HotkeyService : IHotkeyService
         _logger.LogDebug("Joystick button released: {Binding}", binding.DisplayName);
 
         // Check PTT bindings
-        if (_pttBindings.TryGetValue(binding, out var pttChannels))
+        if (TryGetChannels(_pttBindings, binding) is { } pttChannels)
         {
             if (!PttKeysPaused)
             {
@@ -401,7 +525,7 @@ public class HotkeyService : IHotkeyService
         }
 
         // Check squelch toggle bindings
-        if (_squelchToggleBindings.TryGetValue(binding, out var squelchChannels))
+        if (TryGetChannels(_squelchToggleBindings, binding) is { } squelchChannels)
         {
             HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(
                 IHotkeyService.HotkeyType.SquelchToggle, squelchChannels));
@@ -455,34 +579,45 @@ public class HotkeyService : IHotkeyService
 
     private void StopDirectInput()
     {
-        // Stop polling thread
-        _pollingThread?.Join(1000);
-        _pollingThread = null;
-
-        lock (_joystickLock)
+        // The enumeration thread also touches _directInput (GetDevices/CreateDevice/Acquire) --
+        // wait for it to notice cancellation before disposing anything out from under it. It
+        // owns no state to release itself (only PollJoysticks does, see below), so a timeout
+        // here just means proceeding with a background thread still possibly mid-call; log it
+        // and continue rather than blocking shutdown indefinitely on it.
+        if (_enumerationThread != null)
         {
-            // Release and dispose devices
-            foreach (var device in _joystickDevices)
+            if (!_enumerationThread.Join(TimeSpan.FromSeconds(10)))
             {
-                try
-                {
-                    device.Unacquire();
-                    device.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Error releasing joystick device");
-                }
+                _logger.LogWarning("Joystick enumeration thread did not stop within 10s");
             }
 
-            _joystickDevices.Clear();
-            _previousJoystickStates.Clear();
-            _deviceNames.Clear();
+            _enumerationThread = null;
         }
 
-        // Dispose DirectInput
-        _directInput?.Dispose();
-        _directInput = null;
+        if (_pollingThread != null)
+        {
+            // The polling thread releases _joystickDevices/_directInput itself right before it
+            // returns (see the end of PollJoysticks) -- wait for that instead of disposing them
+            // from here, which used to race the thread's own native Poll()/Acquire() calls (this
+            // is the same class of bug RescanInputDevices had). Callers cancel _cts before
+            // calling this, so the thread should notice quickly; 10s is a generous ceiling for a
+            // slow native call to unwind, not the expected case.
+            if (!_pollingThread.Join(TimeSpan.FromSeconds(10)))
+            {
+                _logger.LogWarning(
+                    "Joystick polling thread did not stop within 10s -- leaving DirectInput state alone rather than risk disposing it out from under a still-running thread");
+                return;
+            }
+
+            _pollingThread = null;
+        }
+        else if (_directInput != null)
+        {
+            // No polling thread was ever started (0 devices were acquired), so nothing else can
+            // be touching DirectInput concurrently -- safe to release it directly.
+            _directInput.Dispose();
+            _directInput = null;
+        }
 
         _logger.LogDebug("DirectInput stopped and cleaned up");
     }
@@ -594,48 +729,58 @@ public class HotkeyService : IHotkeyService
     // NEW: Unified binding registration
     public void RegisterHotkey(IHotkeyService.HotkeyType type, HotkeyBinding binding, Guid channelId)
     {
-        var bindings = GetBindingsDictionary(type);
+        lock (_bindingsLock)
+        {
+            var bindings = GetBindingsDictionary(type);
 
-        if (bindings.TryGetValue(binding, out var channelList))
-        {
-            if (!channelList.Contains(channelId))
+            if (bindings.TryGetValue(binding, out var channelList))
             {
-                channelList.Add(channelId);
-                _logger.LogDebug("Added channel {ChannelId} to existing {Type} binding: {Binding}",
-                    channelId, type, binding.DisplayName);
+                if (!channelList.Contains(channelId))
+                {
+                    channelList.Add(channelId);
+                    _logger.LogDebug("Added channel {ChannelId} to existing {Type} binding: {Binding}",
+                        channelId, type, binding.DisplayName);
+                }
             }
-        }
-        else
-        {
-            bindings[binding] = [channelId];
-            _logger.LogInformation("Registered {Type} hotkey: {Binding} for channel {ChannelId}",
-                type, binding.DisplayName, channelId);
+            else
+            {
+                bindings[binding] = [channelId];
+                _logger.LogInformation("Registered {Type} hotkey: {Binding} for channel {ChannelId}",
+                    type, binding.DisplayName, channelId);
+            }
         }
     }
 
     public void UnregisterHotkey(IHotkeyService.HotkeyType type, HotkeyBinding binding, Guid channelId)
     {
-        var bindings = GetBindingsDictionary(type);
-
-        if (bindings.TryGetValue(binding, out var channelList))
+        lock (_bindingsLock)
         {
-            channelList.Remove(channelId);
+            var bindings = GetBindingsDictionary(type);
 
-            if (channelList.Count == 0)
+            if (bindings.TryGetValue(binding, out var channelList))
             {
-                bindings.Remove(binding);
-            }
+                channelList.Remove(channelId);
 
-            _logger.LogDebug("Unregistered {Type} hotkey: {Binding} for channel {ChannelId}",
-                type, binding.DisplayName, channelId);
+                if (channelList.Count == 0)
+                {
+                    bindings.Remove(binding);
+                }
+
+                _logger.LogDebug("Unregistered {Type} hotkey: {Binding} for channel {ChannelId}",
+                    type, binding.DisplayName, channelId);
+            }
         }
     }
 
     public void UnregisterHotkeys(IHotkeyService.HotkeyType type)
     {
-        var bindings = GetBindingsDictionary(type);
-        var count = bindings.Count;
-        bindings.Clear();
+        int count;
+        lock (_bindingsLock)
+        {
+            var bindings = GetBindingsDictionary(type);
+            count = bindings.Count;
+            bindings.Clear();
+        }
 
         _logger.LogInformation("Unregistered all {Count} {Type} hotkeys", count, type);
     }
@@ -691,29 +836,37 @@ public class HotkeyService : IHotkeyService
         }
 
 #if WINDOWS
-        // Save original bindings
-        var originalPttBindings = new Dictionary<HotkeyBinding, List<Guid>>(_pttBindings, new HotkeyBindingComparer());
-        var originalSquelchBindings =
-            new Dictionary<HotkeyBinding, List<Guid>>(_squelchToggleBindings, new HotkeyBindingComparer());
-
         // Create a mapping of unique capture IDs to bindings
         var captureIdToBinding = new Dictionary<Guid, JoystickButtonBinding>();
 
         List<IDirectInputDevice8> captureDevicesSnapshot;
         lock (_joystickLock) { captureDevicesSnapshot = _joystickDevices.ToList(); }
 
-        foreach (var device in captureDevicesSnapshot)
+        // Save the original bindings and temporarily hijack _pttBindings so every joystick
+        // button (not just ones already bound to something) reports as a PTT press while we're
+        // capturing -- all under one lock, so the polling thread's concurrent TryGetValue calls
+        // (see TryGetChannels) never see this dictionary half-written.
+        Dictionary<HotkeyBinding, List<Guid>> originalPttBindings;
+        Dictionary<HotkeyBinding, List<Guid>> originalSquelchBindings;
+        lock (_bindingsLock)
         {
-            var deviceGuid = device.DeviceInfo.InstanceGuid;
-            var deviceName = GetDeviceName(deviceGuid);
-            var buttonCount = device.Capabilities.ButtonCount;
+            originalPttBindings = new Dictionary<HotkeyBinding, List<Guid>>(_pttBindings, new HotkeyBindingComparer());
+            originalSquelchBindings =
+                new Dictionary<HotkeyBinding, List<Guid>>(_squelchToggleBindings, new HotkeyBindingComparer());
 
-            for (int i = 0; i < buttonCount; i++)
+            foreach (var device in captureDevicesSnapshot)
             {
-                var binding = new JoystickButtonBinding(deviceGuid, deviceName, i);
-                var uniqueCaptureId = Guid.NewGuid(); // UNIQUE ID per button
-                _pttBindings[binding] = [uniqueCaptureId];
-                captureIdToBinding[uniqueCaptureId] = binding; // Map ID -> binding
+                var deviceGuid = device.DeviceInfo.InstanceGuid;
+                var deviceName = GetDeviceName(deviceGuid);
+                var buttonCount = device.Capabilities.ButtonCount;
+
+                for (int i = 0; i < buttonCount; i++)
+                {
+                    var binding = new JoystickButtonBinding(deviceGuid, deviceName, i);
+                    var uniqueCaptureId = Guid.NewGuid(); // UNIQUE ID per button
+                    _pttBindings[binding] = [uniqueCaptureId];
+                    captureIdToBinding[uniqueCaptureId] = binding; // Map ID -> binding
+                }
             }
         }
 
@@ -764,19 +917,92 @@ public class HotkeyService : IHotkeyService
 #if WINDOWS
             // Restore original bindings
             HotkeyPressed -= OnJoystickCaptured;
-            _pttBindings.Clear();
-            _squelchToggleBindings.Clear();
-
-            foreach (var kvp in originalPttBindings)
+            lock (_bindingsLock)
             {
-                _pttBindings[kvp.Key] = kvp.Value;
-            }
+                _pttBindings.Clear();
+                _squelchToggleBindings.Clear();
 
-            foreach (var kvp in originalSquelchBindings)
-            {
-                _squelchToggleBindings[kvp.Key] = kvp.Value;
+                foreach (var kvp in originalPttBindings)
+                {
+                    _pttBindings[kvp.Key] = kvp.Value;
+                }
+
+                foreach (var kvp in originalSquelchBindings)
+                {
+                    _squelchToggleBindings[kvp.Key] = kvp.Value;
+                }
             }
 #endif
+        }
+    }
+
+    public int RescanInputDevices()
+    {
+#if WINDOWS
+        if (_hook == null)
+        {
+            _logger.LogDebug("Ignoring input device rescan request - hotkey service not started");
+            return 0;
+        }
+
+        if (_pollingThread == null)
+        {
+            // No polling thread is running (e.g. 0 joysticks were ever found at startup), so
+            // nothing else can be touching DirectInput concurrently -- safe to reinitialize
+            // directly from this thread. StopDirectInput() is a no-op beyond releasing any
+            // existing _directInput handle in this state (there are no devices to release).
+            _logger.LogInformation("Rescanning input devices...");
+            try
+            {
+                StopDirectInput();
+                InitializeDirectInput();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to rescan input devices");
+                return 0;
+            }
+
+            int directCount;
+            lock (_joystickLock) { directCount = _joystickDevices.Count; }
+            _logger.LogInformation("Input device rescan complete - {Count} joystick(s) found", directCount);
+            return directCount;
+        }
+
+        // A polling thread already owns _directInput/_joystickDevices (see PollJoysticks) --
+        // hand the rescan to IT via _pendingRescan instead of tearing objects down from this
+        // thread, which used to race that thread's own native Poll()/Acquire() calls. That race
+        // is what made a rescan (or the ordinary Stop() shutdown path) intermittently take tens
+        // of seconds and could leave a device silently returning stale state until the whole
+        // process was restarted -- see PollJoysticks/StopDirectInput for the full story.
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (Interlocked.CompareExchange(ref _pendingRescan, tcs, null) != null)
+        {
+            _logger.LogDebug("Ignoring input device rescan request - one is already in progress");
+            return 0;
+        }
+
+        if (!tcs.Task.Wait(TimeSpan.FromSeconds(10)))
+        {
+            _logger.LogWarning("Input device rescan timed out after 10s");
+            return 0;
+        }
+
+        return tcs.Task.Result;
+#else
+        return 0;
+#endif
+    }
+
+    /// <summary>Thread-safe lookup into one of the binding dictionaries -- returns a snapshot
+    /// copy of the channel list (never the live list) so callers can invoke events after
+    /// releasing _bindingsLock without racing a concurrent Register/Unregister/capture. Used by
+    /// the keyboard hook callback (cross-platform) and, on Windows, the joystick poll loop.</summary>
+    private List<Guid>? TryGetChannels(Dictionary<HotkeyBinding, List<Guid>> bindings, HotkeyBinding binding)
+    {
+        lock (_bindingsLock)
+        {
+            return bindings.TryGetValue(binding, out var channels) ? new List<Guid>(channels) : null;
         }
     }
 
@@ -796,7 +1022,7 @@ public class HotkeyService : IHotkeyService
             alt: (mask & EventMask.Alt) != EventMask.None && key is not (KeyCode.VcLeftAlt or KeyCode.VcRightAlt));
 
         // Check PTT bindings
-        if (_pttBindings.TryGetValue(binding, out var pttChannels))
+        if (TryGetChannels(_pttBindings, binding) is { } pttChannels)
         {
             if (!PttKeysPaused)
             {
@@ -807,7 +1033,7 @@ public class HotkeyService : IHotkeyService
         }
 
         // Check squelch toggle bindings
-        if (_squelchToggleBindings.TryGetValue(binding, out var squelchChannels))
+        if (TryGetChannels(_squelchToggleBindings, binding) is { } squelchChannels)
         {
             _activeKeyBindings[e.Data.KeyCode] = binding;
             HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(
@@ -815,7 +1041,7 @@ public class HotkeyService : IHotkeyService
         }
 
         // Check overlay toggle bindings
-        if (_toggleOverlayBindings.TryGetValue(binding, out var overlayChannels))
+        if (TryGetChannels(_toggleOverlayBindings, binding) is { } overlayChannels)
         {
             _activeKeyBindings[e.Data.KeyCode] = binding;
             HotkeyPressed?.Invoke(this, new HotkeyPressedEventArgs(
@@ -833,7 +1059,7 @@ public class HotkeyService : IHotkeyService
             return;
 
         // Check PTT bindings
-        if (_pttBindings.TryGetValue(binding, out var pttChannels))
+        if (TryGetChannels(_pttBindings, binding) is { } pttChannels)
         {
             if (!PttKeysPaused)
             {
@@ -843,7 +1069,7 @@ public class HotkeyService : IHotkeyService
         }
 
         // Check squelch toggle bindings
-        if (_squelchToggleBindings.TryGetValue(binding, out var squelchChannels))
+        if (TryGetChannels(_squelchToggleBindings, binding) is { } squelchChannels)
         {
             HotkeyReleased?.Invoke(this, new HotkeyReleasedEventArgs(
                 IHotkeyService.HotkeyType.SquelchToggle, squelchChannels));

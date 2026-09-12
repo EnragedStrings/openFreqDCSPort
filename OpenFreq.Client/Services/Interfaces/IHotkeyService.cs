@@ -33,6 +33,13 @@ public interface IHotkeyService : IDisposable, ILifecycleService
 
     Task<HotkeyBinding?> CaptureNextHotkeyAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Forces an immediate, full re-enumeration of joystick/HOTAS devices instead of
+    /// waiting on the background poll (see HotkeyService.PollJoysticks' 5s TryAcquireNewDevices
+    /// cadence) -- a manual escape hatch for when a device doesn't get picked back up on its own
+    /// (e.g. after being unplugged/replugged, or acquired by another app and released), the same
+    /// role SRS's device refresh serves. No-op returning 0 on non-Windows, where there's no
+    /// joystick support at all. Returns the number of joysticks acquired after the rescan.</summary>
+    int RescanInputDevices();
 
 #if WINDOWS
     // Joystick-specific methods (Windows only)

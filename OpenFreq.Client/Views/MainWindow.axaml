@@ -1034,6 +1034,36 @@
                                 </StackPanel>
                             </controls:Card>
 
+                            <!-- Input devices (all modes: BMS, GCI, DCS) -->
+                            <controls:Card IsVisible="{Binding Settings.IsWindowsPlatform}">
+                                <StackPanel Margin="16">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <avalonia:MaterialIcon Kind="Gamepad"
+                                                               Width="16" Height="16"
+                                                               Margin="0,0,8,0"
+                                                               Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                        <TextBlock Text="Input Devices" Classes="SectionHeader" Margin="0" />
+                                    </StackPanel>
+                                    <TextBlock Classes="InputLabel" Margin="0,0,0,8" TextWrapping="Wrap"
+                                               Text="Joysticks and HOTAS controllers are detected automatically, but a device replugged or freed up by another app can occasionally get stuck. Rescan to force it to be picked back up without restarting OpenFreq." />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <Button Grid.Column="0"
+                                                Content="Rescan Input Devices"
+                                                Command="{Binding RescanInputDevicesCommand}"
+                                                IsEnabled="{Binding !IsRescanningInputDevices}"
+                                                Padding="8,4" Classes="Flat" />
+                                        <TextBlock Grid.Column="1" Text="Rescanning..."
+                                                   IsVisible="{Binding IsRescanningInputDevices}"
+                                                   VerticalAlignment="Center" Margin="12,0,0,0"
+                                                   Classes="InputLabel" FontStyle="Italic" />
+                                        <TextBlock Grid.Column="1" Text="{Binding InputDeviceRescanResult}"
+                                                   IsVisible="{Binding !IsRescanningInputDevices}"
+                                                   VerticalAlignment="Center" Margin="12,0,0,0"
+                                                   Classes="InputLabel" FontStyle="Italic" />
+                                    </Grid>
+                                </StackPanel>
+                            </controls:Card>
+
                             <!-- Speech-to-text transcript sharing (all modes: BMS, GCI, DCS) -->
                             <controls:Card>
                                 <StackPanel Margin="16">

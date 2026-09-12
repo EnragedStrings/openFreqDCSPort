@@ -53,34 +53,27 @@ var
   DetectMemo: TNewMemo;
   ReleaseNotesLink: TNewStaticText;
 
-function CLSIDFromString(lpsz: WideString; var pclsid: TGUID): LongInt;
-  external 'CLSIDFromString@ole32.dll stdcall';
-
-function SHGetKnownFolderPath(const rfid: TGUID; dwFlags: DWORD; hToken: THandle;
-  var ppszPath: PWideChar): LongInt;
-  external 'SHGetKnownFolderPath@shell32.dll stdcall';
-
-procedure CoTaskMemFree(pv: Pointer);
-  external 'CoTaskMemFree@ole32.dll stdcall';
-
 // Mirrors DcsExportInstaller.TryGetRealSavedGamesPath (OpenFreq.Client/Services/DcsExportInstaller.cs):
 // "Saved Games" is its own relocatable Windows known folder, not derivable from the profile path by
-// string concatenation alone. This copy is read-only/best-effort -- it only drives what the wizard
-// *shows* the user; the actual install/uninstall always goes through the exe itself (see [Run] /
-// [UninstallRun] above), so a wrong guess here can't corrupt anything, only misinform the preview.
+// string concatenation alone. Pascal Script has no usable pointer type to call SHGetKnownFolderPath
+// directly (it doesn't know PWideChar), so this reads the same registry value Windows itself writes
+// there when a user relocates the folder, instead. This copy is read-only/best-effort -- it only
+// drives what the wizard *shows* the user; the actual install/uninstall always goes through the exe
+// itself (see [Run]/[UninstallRun] above), so a wrong guess here can't corrupt anything, only
+// misinform the preview.
 function GetSavedGamesPath(): String;
 var
-  Guid: TGUID;
-  PathPtr: PWideChar;
+  RawValue, UserProfile: String;
 begin
   Result := '';
-  if CLSIDFromString(FolderIdSavedGamesString, Guid) = 0 then
+  if RegQueryStringValue(HKEY_CURRENT_USER,
+    'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders',
+    FolderIdSavedGamesString, RawValue) then
   begin
-    if SHGetKnownFolderPath(Guid, 0, 0, PathPtr) = 0 then
-    begin
-      Result := PathPtr;
-      CoTaskMemFree(PathPtr);
-    end;
+    UserProfile := GetEnv('USERPROFILE');
+    if (UserProfile <> '') and (Pos('%USERPROFILE%', RawValue) > 0) then
+      StringChangeEx(RawValue, '%USERPROFILE%', UserProfile, True);
+    Result := RawValue;
   end;
   if Result = '' then
     Result := ExpandConstant('{%USERPROFILE}\Saved Games');

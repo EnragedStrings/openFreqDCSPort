@@ -65,6 +65,74 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
 #endif
     }
 
+    /// <summary>Read-only detection, for the installer wizard's "here's what will be touched" page
+    /// and the "--dcs-export list" CLI mode -- does not create or modify anything (unlike
+    /// GetDcsSavedGamesDirectories, which creates a default "DCS" folder when none exist yet, since
+    /// EnsureInstalled needs *somewhere* to install to). Returns empty on non-Windows or if nothing
+    /// is found.</summary>
+    public IReadOnlyList<string> DetectSavedGamesDirectories()
+    {
+#if WINDOWS
+        if (!OperatingSystem.IsWindows())
+            return [];
+
+        try
+        {
+            var savedGamesRoot = TryGetRealSavedGamesPath() ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Saved Games");
+
+            if (!Directory.Exists(savedGamesRoot))
+                return [];
+
+            return Directory.EnumerateDirectories(savedGamesRoot, "DCS*")
+                .Where(path => Path.GetFileName(path).StartsWith("DCS", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to detect DCS Saved Games directories");
+            return [];
+        }
+#else
+        return [];
+#endif
+    }
+
+    /// <summary>Reverses EnsureInstalled: strips the OpenFreqDCS hook block out of each detected
+    /// Export.lua and deletes the Mods/Services/OpenFreqDCS folder it points at. Called from the
+    /// installer's [UninstallRun] step while the exe (and thus this code) is still present on disk
+    /// -- leaving the hook behind would otherwise mean DCS keeps trying (and failing) to dofile a
+    /// script that no longer exists, forever.</summary>
+    public void Uninstall()
+    {
+#if WINDOWS
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            // DetectSavedGamesDirectories, not GetDcsSavedGamesDirectories -- uninstall must never
+            // create a fresh "DCS" folder just to immediately have nothing to clean up in it.
+            foreach (var savedGamesDirectory in DetectSavedGamesDirectories())
+            {
+                RemoveExportHook(Path.Combine(savedGamesDirectory, "Scripts", "Export.lua"));
+
+                var serviceRoot = Path.Combine(savedGamesDirectory, "Mods", "Services", "OpenFreqDCS");
+                if (Directory.Exists(serviceRoot))
+                    Directory.Delete(serviceRoot, recursive: true);
+
+                logger.LogInformation("OpenFreq DCS export removed from {SavedGamesDirectory}", savedGamesDirectory);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to uninstall OpenFreq DCS export");
+        }
+#endif
+    }
+
 #if WINDOWS
     private void EnsureDcsExportInstalled(string savedGamesDirectory)
     {
@@ -209,6 +277,28 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
             content += "\r\n\r\n";
 
         File.WriteAllText(exportLuaPath, content + hook, utf8NoBom);
+    }
+
+    private static void RemoveExportHook(string exportLuaPath)
+    {
+        if (!File.Exists(exportLuaPath))
+            return;
+
+        var utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        var content = File.ReadAllText(exportLuaPath);
+        var stripped = OpenFreqHookBlockRegex().Replace(content, string.Empty);
+
+        if (stripped.Contains(ExportToken, StringComparison.OrdinalIgnoreCase))
+        {
+            var lines = stripped.Split(["\r\n", "\n"], StringSplitOptions.None)
+                .Where(line => !line.Contains(ExportToken, StringComparison.OrdinalIgnoreCase));
+            stripped = string.Join("\r\n", lines);
+        }
+
+        if (stripped == content)
+            return;
+
+        File.WriteAllText(exportLuaPath, stripped, utf8NoBom);
     }
 
     [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]

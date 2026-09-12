@@ -4,9 +4,12 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using DialogHostAvalonia;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
 using OpenFreq.Common.Updates;
+using OpenFreqClient.ViewModels;
+using OpenFreqClient.Views;
 using OpenFreqClient.Views.Util;
 
 namespace OpenFreqClient.Services;
@@ -45,12 +48,27 @@ public sealed class UpdateService : IUpdateService
                 return;
             }
 
-            var accepted = await ConfirmationDialogService.ShowAsync("Update available",
-                $"OpenFreq {info.Version} is available. Update now?", "Later", "Update");
-            if (!accepted) return;
+            // One dialog instance carries the whole flow: changelog + Later/Update, then (without
+            // closing) a live progress bar for the download -- see UpdateDialogViewModel's own doc
+            // comment for why this needs a TaskCompletionSource instead of the simple
+            // ConfirmationDialogService await-a-bool pattern used everywhere else.
+            var dialogViewModel = new UpdateDialogViewModel(info.Version, info.ReleaseNotes);
+            var dialogTask = DialogHost.Show(new UpdateDialog { DataContext = dialogViewModel }, "MainDialogHost");
 
+            var wantsUpdate = await dialogViewModel.WaitForDecisionAsync();
+            if (!wantsUpdate)
+            {
+                await dialogTask;
+                return;
+            }
+
+            var progress = new Progress<double>(dialogViewModel.ReportProgress);
             var stagedExePath = await _stager.DownloadAndStageAsync(info, AppDataPaths.ClientUpdateStagingDirectory,
-                ExeFileName);
+                ExeFileName, progress);
+
+            DialogHost.Close("MainDialogHost", stagedExePath != null);
+            await dialogTask;
+
             if (stagedExePath == null)
             {
                 await ConfirmationDialogService.ShowMessageAsync("Update failed",

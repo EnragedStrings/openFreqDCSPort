@@ -35,9 +35,12 @@ public sealed class SelfUpdateStager
     /// <paramref name="stagingDir"/>, returning the path to the extracted executable
     /// (<paramref name="exeFileName"/>, e.g. "OpenFreq.Client.exe" / "OpenFreq.Server"). Returns
     /// null (logs a warning) on any failure -- a failed background download should never crash
-    /// the app it's silently helping to update.</summary>
+    /// the app it's silently helping to update. <paramref name="progress"/> (0-1) is reported as
+    /// bytes download; left null by callers with nothing to show it to (background/silent updates,
+    /// the headless server) -- when the response has no Content-Length, it's simply never invoked,
+    /// which callers treat as "stay indeterminate".</summary>
     public async Task<string?> DownloadAndStageAsync(UpdateInfo info, string stagingDir, string exeFileName,
-        CancellationToken ct = default)
+        IProgress<double>? progress = null, CancellationToken ct = default)
     {
         try
         {
@@ -45,10 +48,24 @@ public sealed class SelfUpdateStager
             Directory.CreateDirectory(versionDir);
 
             var zipPath = Path.Combine(stagingDir, info.AssetFileName);
-            await using (var stream = await _http.GetStreamAsync(info.DownloadUrl, ct))
-            await using (var file = File.Create(zipPath))
+            using (var response = await _http.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
             {
-                await stream.CopyToAsync(file, ct);
+                response.EnsureSuccessStatusCode();
+                var totalBytes = response.Content.Headers.ContentLength;
+
+                await using var httpStream = await response.Content.ReadAsStreamAsync(ct);
+                await using var file = File.Create(zipPath);
+
+                var buffer = new byte[81920];
+                long totalRead = 0;
+                int read;
+                while ((read = await httpStream.ReadAsync(buffer, ct)) > 0)
+                {
+                    await file.WriteAsync(buffer.AsMemory(0, read), ct);
+                    totalRead += read;
+                    if (totalBytes is > 0)
+                        progress?.Report((double)totalRead / totalBytes.Value);
+                }
             }
 
             ZipFile.ExtractToDirectory(zipPath, versionDir, overwriteFiles: true);

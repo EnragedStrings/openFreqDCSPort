@@ -101,7 +101,7 @@ public sealed class ServerUpdateCoordinator
 
         if (!_config.AutoUpdateEnabled) return;
 
-        var exePath = await _stager.DownloadAndStageAsync(info, _stagingDir, ExeFileName, _shutdownCts.Token);
+        var exePath = await _stager.DownloadAndStageAsync(info, _stagingDir, ExeFileName, ct: _shutdownCts.Token);
         if (exePath == null) return;
 
         await WaitForIdleThenArmRestartAsync(exePath, info.Version, info.ReleaseNotes);

@@ -1,7 +1,5 @@
 [CmdletBinding()]
 param(
-    [string]$SourceRoot = "",
-    [string[]]$SavedGamesNames = @("DCS", "DCS.openbeta"),
     [switch]$Watch,
     [switch]$SkipSync,
     [switch]$SkipServer,
@@ -26,9 +24,10 @@ if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
 }
 
 if (!$SkipSync) {
-    & (Join-Path $repoRoot "installer\windows\Install-DcsExport.ps1") `
-        -SourceRoot $SourceRoot `
-        -SavedGamesNames $SavedGamesNames
+    # Same code path production uses (DcsExportInstaller, via the client's own headless CLI mode) --
+    # dotnet run rebuilds against whatever's currently in DCS/OpenFreqDCS, so this always syncs the
+    # export scripts you're actively editing, not a stale copy.
+    & dotnet run --project $clientProject -- --dcs-export install
 }
 
 $runner = if ($Watch) { "watch run" } else { "run" }

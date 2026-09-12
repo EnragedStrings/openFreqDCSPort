@@ -44,9 +44,11 @@ Real-time network voice radio with real-time physics simulation for [Falcon BMS]
 ### DCS Mode
 *Note: the first DCS pass targets the A-10C II module.*
 
-1. Install the OpenFreq DCS client package, or run:
+1. Run the Windows installer (recommended — detects your DCS Saved Games folder(s) and installs the
+   export automatically), or launch `OpenFreq.Client.exe` directly: it installs/repairs the export
+   on every startup regardless. To (re)install the export without launching the app, run:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File installer/windows/Install-DcsExport.ps1
+   OpenFreq.Client.exe --dcs-export install
    ```
 2. Launch OpenFreq Client and set it to DCS mode.
 3. Enter the OpenFreq server address, password, and display name, then connect.
@@ -76,8 +78,7 @@ See the [Handbook](docs/handbook.md "Handbook") for in-depth usage and configura
 
 ## Requirements
 
-- **Self-contained builds** — no dependencies, runs as-is
-- **Framework-dependent builds** — requires [.NET 10.0 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+- **Windows installer / portable builds** — self-contained, no dependencies, runs as-is
 - **Building from source** — requires [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ## Architecture
@@ -120,22 +121,23 @@ powershell -ExecutionPolicy Bypass -File build/Run-DcsDev.ps1
 Useful switches:
 
 - `-Watch` uses `dotnet watch run` for server and client
-- `-SkipSync` skips copying `DCS/OpenFreqDCS` into `Saved Games`
+- `-SkipSync` skips installing `DCS/OpenFreqDCS` into `Saved Games`
 - `-SkipServer` or `-SkipClient` launches only one side
 
-The script reuses `installer/windows/Install-DcsExport.ps1` so Lua export changes
-get copied into `Saved Games\DCS...\Mods\Services\OpenFreqDCS` before launch.
+The script runs the client's own `--dcs-export install` (see `DcsExportInstaller`) via `dotnet run`
+before launch, so Lua export changes you're actively editing get synced into
+`Saved Games\DCS...\Mods\Services\OpenFreqDCS` from source, not a stale packaged copy.
 
 ## Auto-Update
 
 Both the Client and Server check the project's [GitHub Releases](https://github.com/EnragedStrings/openFreqDCSPort/releases)
 for a newer version and can update themselves — no manual download/reinstall required.
 
-**Default behavior (no setting changed):** on launch, if a newer release exists you're asked
-"Update now?" — accept and it downloads, swaps itself in, and relaunches; decline and it asks
-again next launch. The server's default equivalent: it logs that an update is available (visible
-in the TUI's log pane and in `logs/`) but never applies it on its own — an operator updates it by
-hand when convenient.
+**Default behavior (no setting changed):** on launch, if a newer release exists the client shows
+its release notes with Later/Update; accepting downloads it with a live progress bar, then swaps
+itself in and relaunches — declining asks again next launch. The server's default equivalent: it
+logs that an update is available (visible in the TUI's log pane and in `logs/`) but never applies
+it on its own — an operator updates it by hand when convenient.
 
 **Background updates (opt-in, off by default):**
 - **Client** — enable "Automatically download and apply updates in the background" under

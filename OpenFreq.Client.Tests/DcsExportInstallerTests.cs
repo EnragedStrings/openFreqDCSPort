@@ -26,6 +26,14 @@ public class DcsExportInstallerTests
         method!.Invoke(null, [exportLuaPath]);
     }
 
+    private static void InvokeRemoveExportHook(string exportLuaPath)
+    {
+        var method = typeof(DcsExportInstaller).GetMethod("RemoveExportHook",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        method!.Invoke(null, [exportLuaPath]);
+    }
+
     private static bool SkipOnNonWindows() => !OperatingSystem.IsWindows();
 
     // Not SRS's real, exact hook text (that's a separate MIT-licensed project we don't vendor) --
@@ -131,4 +139,71 @@ public class DcsExportInstallerTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void RemoveExportHook_StripsOurBlock_PreservesForeignContent()
+    {
+        if (SkipOnNonWindows()) return;
+
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path,
+                ForeignHook + "\r\n\r\n-- OpenFreqDCS BEGIN\r\nour hook content\r\n-- OpenFreqDCS END\r\n");
+
+            InvokeRemoveExportHook(path);
+
+            var content = File.ReadAllText(path);
+            Assert.Contains(ForeignHook, content);
+            Assert.DoesNotContain("-- OpenFreqDCS BEGIN", content);
+            Assert.DoesNotContain("our hook content", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RemoveExportHook_NoExistingFile_DoesNotThrowOrCreateOne()
+    {
+        if (SkipOnNonWindows()) return;
+
+        var path = Path.GetTempFileName();
+        File.Delete(path);
+        try
+        {
+            InvokeRemoveExportHook(path);
+
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RemoveExportHook_OnlyOurHookPresent_LeavesFileEffectivelyEmpty()
+    {
+        if (SkipOnNonWindows()) return;
+
+        var path = Path.GetTempFileName();
+        try
+        {
+            InvokeEnsureExportHook(path);
+
+            InvokeRemoveExportHook(path);
+
+            var content = File.ReadAllText(path);
+            Assert.DoesNotContain("-- OpenFreqDCS BEGIN", content);
+            Assert.DoesNotContain(ExportTokenForTests, content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private const string ExportTokenForTests = "Mods\\Services\\OpenFreqDCS\\Scripts\\OpenFreqDCS.lua";
 }

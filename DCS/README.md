@@ -17,8 +17,9 @@ Then add this line to `Saved Games\...\Scripts\Export.lua`:
 pcall(function() local lfs = require("lfs"); dofile(lfs.writedir() .. [[Mods\Services\OpenFreqDCS\Scripts\OpenFreqDCS.lua]]); end)
 ```
 
-The Windows client installer runs `installer/windows/Install-DcsExport.ps1` to do
-that automatically.
+`OpenFreq.Client.exe --dcs-export install` (via `DcsExportInstaller`) does that automatically —
+run on every client startup, and by both the Windows installer's `[Run]` step and its
+"Repair DCS Export" Start Menu shortcut.
 
 Heightmap sampling is disabled by default in `Scripts/OpenFreqDCSConfig.lua`.
 Enable it only when you want DCS to generate an OpenFreq-compatible raw terrain

@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OpenFreq.Common.Updates;
 using OpenFreqClient.Services;
 using Serilog;
@@ -20,6 +21,15 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // --dcs-export <list|install|uninstall>: headless CLI mode, no window/DI/Serilog -- this is
+        // what the Windows installer's [Run]/[UninstallRun] steps and its detection wizard page
+        // shell out to, so there's exactly one implementation of "find DCS's Saved Games folder and
+        // read/write the export there" (DcsExportInstaller) instead of a second one drifting out of
+        // sync in PowerShell (see git history: that's exactly how a real bug shipped once already).
+        // Checked before everything else so it never touches AppDataPaths/Avalonia at all.
+        if (TryRunDcsExportCli(args))
+            return;
+
         // --profile <name>: isolates settings/logs/recordings under "OpenFreq-<name>" instead of
         // "OpenFreq", so a second instance can run alongside the normal one on the same machine
         // (e.g. `dotnet run --project OpenFreq.Client -- --profile test2`) without both instances
@@ -113,6 +123,50 @@ sealed class Program
 
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
+    }
+
+    /// <summary>Returns true (having already run the requested action and set
+    /// Environment.ExitCode) if argv contained "--dcs-export &lt;list|install|uninstall&gt;". False
+    /// (no-op) otherwise, letting normal startup continue.</summary>
+    private static bool TryRunDcsExportCli(string[] args)
+    {
+        var index = Array.IndexOf(args, "--dcs-export");
+        if (index < 0 || index + 1 >= args.Length)
+            return false;
+
+        var action = args[index + 1].Trim().ToLowerInvariant();
+        if (action is not ("list" or "install" or "uninstall"))
+        {
+            Console.Error.WriteLine($"Unknown --dcs-export action '{action}'. Expected: list, install, uninstall.");
+            Environment.ExitCode = 1;
+            return true;
+        }
+
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        var installer = new DcsExportInstaller(loggerFactory.CreateLogger<DcsExportInstaller>());
+
+        switch (action)
+        {
+            case "list":
+                var detected = installer.DetectSavedGamesDirectories();
+                if (detected.Count == 0)
+                    Console.WriteLine("(none detected)");
+                else
+                    foreach (var directory in detected)
+                        Console.WriteLine(directory);
+                break;
+
+            case "install":
+                installer.EnsureInstalled();
+                break;
+
+            case "uninstall":
+                installer.Uninstall();
+                break;
+        }
+
+        Environment.ExitCode = 0;
+        return true;
     }
 
     /// <summary>Returns true (and has already armed a relaunch + exited nothing itself -- the

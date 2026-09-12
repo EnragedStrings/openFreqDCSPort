@@ -144,6 +144,47 @@ jobs:
           path: OpenFreq-Client-*.zip
           retention-days: 1
 
+  build-installer:
+    needs: [build-client]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Compute version
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-builds
+          path: artifacts-download
+
+      - name: Extract portable client build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "artifacts\publish\client\win-x64" -Force | Out-Null
+          Expand-Archive -Path "artifacts-download\OpenFreq-Client-${{ github.ref_name }}-win-x64-portable.zip" `
+            -DestinationPath "artifacts\publish\client\win-x64" -Force
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          # GitHub-hosted windows-latest runners ship Inno Setup 6 preinstalled.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=$env:VERSION" "installer\windows\OpenFreqDcsClient.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-builds
+          path: artifacts/installers/*.exe
+          retention-days: 1
+
   docker:
     needs: [test, build-server]
     runs-on: ubuntu-latest
@@ -199,9 +240,14 @@ jobs:
           cache-to: type=gha,mode=max
 
   release:
-    needs: [build-server, build-client]
+    needs: [build-server, build-client, build-installer]
     runs-on: ubuntu-latest
     steps:
+      - name: Compute bare version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          echo "BARE_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+
       - uses: actions/download-artifact@v4
         with:
           pattern: '*-builds'
@@ -216,6 +262,13 @@ jobs:
           make_latest: true
           generate_release_notes: true
           body: |
+            ## 🛠 Windows Installer
+
+            Detects your DCS Saved Games folder(s) automatically, installs/repairs the radio export,
+            and cleans up on uninstall. Recommended for Windows.
+
+            [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenFreq-DCS-Client-${{ env.BARE_VERSION }}-win-x64.exe)
+
             ## 📦 Downloads
 
             Portable/self-contained -- no .NET install needed, unzip and run.
@@ -224,6 +277,8 @@ jobs:
             |---|---|---|
             | **Client** | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenFreq-Client-${{ github.ref_name }}-win-x64-portable.zip) | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenFreq-Client-${{ github.ref_name }}-linux-x64-portable.zip) |
             | **Server** | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenFreq-Server-${{ github.ref_name }}-win-x64-portable.zip) | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenFreq-Server-${{ github.ref_name }}-linux-x64-portable.zip) |
-          files: artifacts/*.zip
+          files: |
+            artifacts/*.zip
+            artifacts/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

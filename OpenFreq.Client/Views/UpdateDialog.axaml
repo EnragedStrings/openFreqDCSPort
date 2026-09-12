@@ -1,0 +1,46 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="OpenFreqClient.Views.UpdateDialog"
+    xmlns:viewModels="clr-namespace:OpenFreqClient.ViewModels"
+    x:DataType="viewModels:UpdateDialogViewModel">
+
+    <StackPanel Width="440" Spacing="16">
+
+        <!-- Confirm stage: version + changelog + Later/Update -->
+        <StackPanel IsVisible="{Binding IsConfirmStage}" Spacing="16">
+            <TextBlock Text="{Binding Version, StringFormat='OpenFreq {0} is available'}" Classes="Headline6" />
+
+            <Border
+                Background="{DynamicResource MaterialCardBackgroundBrush}"
+                CornerRadius="4"
+                Padding="12"
+                MaxHeight="260">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <TextBlock Text="{Binding ReleaseNotes}" TextWrapping="Wrap" />
+                </ScrollViewer>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Later" Classes="Flat" IsCancel="True" Command="{Binding LaterCommand}" />
+                <Button
+                    Content="Update"
+                    IsDefault="True"
+                    Classes="Flat"
+                    Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                    Command="{Binding UpdateCommand}" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Downloading stage: same dialog, progress bar, no buttons -->
+        <StackPanel IsVisible="{Binding IsDownloadingStage}" Spacing="16">
+            <TextBlock Text="{Binding Version, StringFormat='Downloading OpenFreq {0}...'}" Classes="Headline6" />
+            <ProgressBar
+                Minimum="0"
+                Maximum="1"
+                Value="{Binding DownloadProgress}"
+                IsIndeterminate="{Binding IsIndeterminate}" />
+        </StackPanel>
+
+    </StackPanel>
+</UserControl>

@@ -67,6 +67,17 @@ public class UpdateCheckerTests
         Assert.Null(result);
     }
 
+    [Fact]
+    public async Task LocalDevBuild_IsNeverOfferedARelease()
+    {
+        // 0.0.0-local parses as semver, so this must be refused on purpose (and not just by a swallowed network error).
+        var checker = MakeChecker(ReleaseJson("v1.2.0", "notes", AssetForThisPlatform));
+
+        var result = await checker.CheckForUpdateAsync("Client", "0.0.0-local");
+
+        Assert.Null(result);
+    }
+
     [Theory]
     [InlineData("0.0.0-local")]
     [InlineData("unknown")]

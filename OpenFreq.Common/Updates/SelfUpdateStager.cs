@@ -20,6 +20,10 @@ public sealed class SelfUpdateStager
     /// </summary>
     public const string AppliedMarkerFileName = "applied.json";
 
+    /// <summary>Written by the SelfUpdateLauncher helper script when it could not replace the
+    /// executable (plain text: the copy error); the relaunched old version reports it once.</summary>
+    public const string FailedMarkerFileName = "failed.txt";
+
     private static readonly HttpClient DefaultHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     private readonly ILogger _logger;
@@ -116,6 +120,26 @@ public sealed class SelfUpdateStager
     /// present -- the "what's new" popup's data source.</summary>
     public static StagedUpdateMarker? TakeAppliedMarker(string stagingDir) =>
         TakeMarker(Path.Combine(stagingDir, AppliedMarkerFileName));
+
+    /// <summary>Reads and clears the helper script's "could not replace the executable" note, if
+    /// present (the copy error text, possibly empty).</summary>
+    public static string? TakeFailedReason(string stagingDir)
+    {
+        var path = Path.Combine(stagingDir, FailedMarkerFileName);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            return File.ReadAllText(path).Trim();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { /* best effort */ }
+        }
+    }
 
     private static StagedUpdateMarker? TakeMarker(string path)
     {

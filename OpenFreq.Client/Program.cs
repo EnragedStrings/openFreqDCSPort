@@ -4,6 +4,7 @@ using System.Reflection;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Common;
 using OpenFreq.Common.Updates;
 using OpenFreqClient.Services;
 using Serilog;
@@ -175,21 +176,43 @@ sealed class Program
     private static bool TryApplyStagedUpdate(string[] args)
     {
         var stagingDir = AppDataPaths.ClientUpdateStagingDirectory;
-        var marker = SelfUpdateStager.TakeStagedMarker(stagingDir);
-        if (marker == null || !File.Exists(marker.ExePath))
+        if (!File.Exists(Path.Combine(stagingDir, SelfUpdateStager.MarkerFileName)))
             return false;
 
         var currentExePath = Environment.ProcessPath;
         if (currentExePath == null)
         {
-            Log.Warning("Staged update {Version} found but current executable path is unknown -- skipping",
-                marker.Version);
+            Log.Warning("Staged update found but current executable path is unknown -- skipping");
+            return false;
+        }
+
+        // Another running copy holds the executable open: the swap would fail. Keep the marker and
+        // apply it on a later launch, when this is the only instance.
+        var others = SelfUpdateLauncher.FindOtherInstances(currentExePath, Environment.ProcessId);
+        if (others.Count > 0)
+        {
+            Log.Information("Staged update left for a later launch: {Count} other instance(s) running", others.Count);
+            return false;
+        }
+
+        var marker = SelfUpdateStager.TakeStagedMarker(stagingDir);
+        if (marker == null || !File.Exists(marker.ExePath))
+            return false;
+
+        // A marker left behind by an update that was already applied (or a downgrade): never re-apply.
+        if (!Semver.SemVersion.TryParse(marker.Version, Semver.SemVersionStyles.Strict, out var staged) ||
+            !Semver.SemVersion.TryParse(OpenFreqVersion.Current, Semver.SemVersionStyles.Strict, out var running) ||
+            staged.ComparePrecedenceTo(running) <= 0)
+        {
+            Log.Information("Ignoring staged update {Version}: not newer than the running {Current}",
+                marker.Version, OpenFreqVersion.Current);
             return false;
         }
 
         Log.Information("Applying background-staged update to {Version}", marker.Version);
         SelfUpdateStager.WriteAppliedMarker(stagingDir, marker.Version, marker.ReleaseNotes);
-        SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, marker.ExePath, Environment.ProcessId, args);
+        SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, marker.ExePath, Environment.ProcessId, args,
+            stagingDir);
         Log.CloseAndFlush();
         return true;
     }

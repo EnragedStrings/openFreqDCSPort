@@ -79,6 +79,10 @@ static class Program
                 config.WebSocketPort, config.MaxClientsPerChannel);
 
             var updateStagingDir = Path.Combine(baseDirectory, "Updates");
+            var failedUpdate = SelfUpdateStager.TakeFailedReason(updateStagingDir);
+            if (failedUpdate != null)
+                Log.Warning("The last update could not replace the executable (still the old version): {Reason}",
+                    failedUpdate);
             var appliedUpdate = SelfUpdateStager.TakeAppliedMarker(updateStagingDir);
             if (appliedUpdate != null)
             {
@@ -215,7 +219,7 @@ static class Program
                     SelfUpdateStager.WriteAppliedMarker(updateStagingDir, updateCoordinator.AppliedVersion!,
                         updateCoordinator.AppliedReleaseNotes ?? string.Empty);
                     SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, stagedExePath, Environment.ProcessId,
-                        Environment.GetCommandLineArgs().Skip(1).ToArray());
+                        Environment.GetCommandLineArgs().Skip(1).ToArray(), updateStagingDir);
                 }
                 else
                 {

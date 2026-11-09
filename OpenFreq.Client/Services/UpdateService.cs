@@ -62,6 +62,25 @@ public sealed class UpdateService : IUpdateService
                 return;
             }
 
+            // Every running copy of this executable holds it open: the swap can only fail while
+            // another one runs, and the old version would come straight back offering the update.
+            var currentExePath = Environment.ProcessPath;
+            var others = currentExePath == null
+                ? []
+                : SelfUpdateLauncher.FindOtherInstances(currentExePath, Environment.ProcessId);
+            if (others.Count > 0)
+            {
+                DialogHost.Close("MainDialogHost", false);
+                await dialogTask;
+                _logger.LogWarning("Update {Version} postponed: {Count} other instance(s) of {Exe} running ({Pids})",
+                    info.Version, others.Count, currentExePath, string.Join(", ", others));
+                await ConfirmationDialogService.ShowMessageAsync("Close other OpenFreq windows",
+                    $"{others.Count} other OpenFreq window(s) are running from this program file, so it can't be " +
+                    "replaced. Close every other OpenFreq window (check the system tray too), then restart OpenFreq " +
+                    "and choose Update again.");
+                return;
+            }
+
             var progress = new Progress<double>(dialogViewModel.ReportProgress);
             var stagedExePath = await _stager.DownloadAndStageAsync(info, AppDataPaths.ClientUpdateStagingDirectory,
                 ExeFileName, progress);
@@ -76,13 +95,15 @@ public sealed class UpdateService : IUpdateService
                 return;
             }
 
-            var currentExePath = Environment.ProcessPath;
             if (currentExePath == null) return;
 
+            // Applied right now: drop the "staged for next launch" marker the download wrote, or the
+            // relaunched new version would apply the same update again (a second restart).
+            SelfUpdateStager.TakeStagedMarker(AppDataPaths.ClientUpdateStagingDirectory);
             SelfUpdateStager.WriteAppliedMarker(AppDataPaths.ClientUpdateStagingDirectory, info.Version,
                 info.ReleaseNotes);
             SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, stagedExePath, Environment.ProcessId,
-                Environment.GetCommandLineArgs().Skip(1).ToArray());
+                Environment.GetCommandLineArgs().Skip(1).ToArray(), AppDataPaths.ClientUpdateStagingDirectory);
 
             // Clean shutdown (flushes settings) instead of a hard kill -- the armed helper script
             // is already waiting on this process's PID and won't touch anything until it exits.
@@ -97,6 +118,18 @@ public sealed class UpdateService : IUpdateService
 
     public async Task ShowWhatsNewIfPendingAsync()
     {
+        var failure = SelfUpdateStager.TakeFailedReason(AppDataPaths.ClientUpdateStagingDirectory);
+        if (failure != null)
+        {
+            _logger.LogWarning("The last update could not replace the executable: {Reason}", failure);
+            await ConfirmationDialogService.ShowMessageAsync("Update not applied",
+                "OpenFreq could not replace its program file, so this is still the old version. This usually " +
+                "means another OpenFreq window was still open. Close every OpenFreq window (check the system " +
+                "tray too), start OpenFreq again and choose Update." +
+                (failure.Length > 0 ? $"\n\nDetails: {failure}" : ""));
+            return;
+        }
+
         var marker = SelfUpdateStager.TakeAppliedMarker(AppDataPaths.ClientUpdateStagingDirectory);
         if (marker == null) return;
 

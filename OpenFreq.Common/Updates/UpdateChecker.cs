@@ -62,6 +62,10 @@ public sealed class UpdateChecker
     {
         if (!SemVersion.TryParse(currentVersion, SemVersionStyles.Strict, out var current))
             return null;
+        // Local dev builds report 0.0.0-local (Directory.Build.props): a valid semver, but never
+        // something to replace with a release.
+        if (current.Major.IsZero && current.Minor.IsZero && current.Patch.IsZero)
+            return null;
 
         GitHubReleaseResponse? release;
         try

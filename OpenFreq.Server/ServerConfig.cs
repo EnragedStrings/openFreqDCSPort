@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using OpenFreq.Common.Jamming;
 using OpenFreq.Common.Satcom;
 using OpenFreqServer.SrsBridge;
 
@@ -40,6 +41,10 @@ public class ServerConfig
     [JsonPropertyName("satcom")]
     public SatcomServerConfig Satcom { get; set; } = SatcomServerConfig.Default;
 
+    /// <summary>Communications jamming (docs/jamming/JAMMING_CONFIG.md). Off by default.</summary>
+    [JsonPropertyName("jamming")]
+    public JammingServerConfig Jamming { get; set; } = new();
+
     [JsonPropertyName("broadcastPeerUpdates")]
     public bool BroadcastPeerUpdates { get; set; } = true;
 
@@ -65,6 +70,24 @@ public class ServerConfig
     /// </summary>
     [JsonPropertyName("updateCheckIntervalMinutes")]
     public int UpdateCheckIntervalMinutes { get; set; } = 60;
+}
+
+/// <summary>
+/// Communications jammers placed by the server admin (docs/jamming/JAMMING_CONFIG.md). Each entry may name a
+/// preset (<see cref="JammerPresets"/>) and override any of its fields. The server broadcasts the resolved catalog
+/// and live state; every client computes the jamming at its own receivers.
+/// </summary>
+public class JammingServerConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    /// <summary>Periodic catalog re-broadcast, seconds (also sent on every change and on authenticate).</summary>
+    [JsonPropertyName("broadcastIntervalSeconds")]
+    public double BroadcastIntervalSeconds { get; set; } = 5.0;
+
+    [JsonPropertyName("jammers")]
+    public List<JammerDefinition> Jammers { get; set; } = [];
 }
 
 /// <summary>

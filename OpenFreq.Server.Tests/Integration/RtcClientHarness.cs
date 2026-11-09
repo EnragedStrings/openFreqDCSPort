@@ -22,6 +22,7 @@ public sealed class RtcClientHarness : IAsyncDisposable
     public AsyncEventStream<ServerSettingsEventArgs> ServerSettings { get; } = new();
     public AsyncEventStream<OpenFreq.Common.ErrorEventArgs> Errors { get; } = new();
     public AsyncEventStream<TranscriptReceivedEventArgs> TranscriptReceived { get; } = new();
+    public AsyncEventStream<JammerCatalogEventArgs> JammerCatalog { get; } = new();
 
     private RtcClientHarness(OpenFreqRtcClient client)
     {
@@ -35,6 +36,7 @@ public sealed class RtcClientHarness : IAsyncDisposable
         client.ServerSettingsChanged += (_, e) => ServerSettings.Publish(e);
         client.ErrorOccurred += (_, e) => Errors.Publish(e);
         client.TranscriptReceived += (_, e) => TranscriptReceived.Publish(e);
+        client.JammerCatalogReceived += (_, e) => JammerCatalog.Publish(e);
     }
 
     public string? PeerId => Client.MyPeerId;

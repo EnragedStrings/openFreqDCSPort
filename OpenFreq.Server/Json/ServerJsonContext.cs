@@ -9,6 +9,7 @@ namespace OpenFreqServer.Json;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ServerConfig))]
+[JsonSerializable(typeof(JammingServerConfig))]
 public partial class ServerJsonContext : JsonSerializerContext
 {
 }

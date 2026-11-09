@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
 using OpenFreq.Common.Signaling;
+using OpenFreqServer.Jamming;
 using OpenFreqServer.Satcom;
 
 namespace OpenFreqServer;
@@ -27,7 +28,11 @@ public class SignalingServer
     private readonly IAudioStreamServer _audioServer;
     private readonly ILogger<SignalingServer> _logger;
     private readonly SatcomServerCoordinator? _satcom;
+    private readonly JammingCoordinator? _jamming;
     private CancellationTokenSource _cts = new();
+
+    // Jammer catalog: checked for changes this often, re-broadcast at least every BroadcastInterval.
+    private static readonly TimeSpan JammingTickInterval = TimeSpan.FromSeconds(1);
 
     private static readonly TimeSpan SatcomTickInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan SatcomEphemerisBroadcastInterval = TimeSpan.FromSeconds(10);
@@ -54,6 +59,9 @@ public class SignalingServer
     /// <summary>Shared with the SRS bridge (SrsBridgeServer.LosOracle just forwards to this same
     /// instance) so both consumers see one consistent cache/sticky-oracle state.</summary>
     public LosOracleService LosOracle { get; }
+
+    /// <summary>The jammer set, or null when jamming is disabled in the config (docs/jamming).</summary>
+    public JammingCoordinator? Jamming => _jamming;
 
     private readonly TranscriptDeliveryService _transcriptDelivery;
 
@@ -145,6 +153,12 @@ public class SignalingServer
         _watchdogInterval = watchdogInterval ?? TimeSpan.FromSeconds(30);
         _audioServer = audioServer ?? new AudioStreamServer(_channelManager, _clients, loggerFactory, config.AudioPort);
         _satcom = config.SatcomEnabled ? new SatcomServerCoordinator(config.Satcom, loggerFactory) : null;
+        _jamming = config.Jamming.Enabled
+            ? new JammingCoordinator(config.Jamming, loggerFactory.CreateLogger<JammingCoordinator>())
+            {
+                BroadcastInterval = TimeSpan.FromSeconds(Math.Max(1.0, config.Jamming.BroadcastIntervalSeconds))
+            }
+            : null;
         LosOracle = new LosOracleService(this, _clients, loggerFactory.CreateLogger<LosOracleService>());
         _transcriptDelivery = new TranscriptDeliveryService(this, _clients, _channelManager, LosOracle,
             loggerFactory.CreateLogger<TranscriptDeliveryService>());
@@ -234,6 +248,9 @@ public class SignalingServer
             _satcom.Start();
             _ = SatcomTickLoopAsync(_cts.Token);
         }
+
+        if (_jamming != null)
+            _ = JammingBroadcastLoopAsync(_cts.Token);
     }
 
     private int? ResolveBoundPort()
@@ -481,6 +498,9 @@ public class SignalingServer
             LogClientAuthenticated(_logger, GetDisplayName(session), session.Id, audioPort, null);
 
             await SendSuccess(session, "Authenticated", session.Id, audioPort, _config.EnableOpusCompression);
+
+            if (_jamming != null)
+                await SendToClient(session, SignalingMessageFactory.CreateJammerCatalogUpdate(_jamming.Snapshot()));
         }
         else
         {
@@ -853,6 +873,39 @@ public class SignalingServer
                     sinceLastEphemerisBroadcast = TimeSpan.Zero;
                     await BroadcastToAllChannels(
                         SignalingMessageFactory.CreateSatelliteEphemerisUpdate(_satcom.GetSatelliteInfoDtos()));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Server shutting down — expected
+        }
+    }
+
+    /// <summary>Broadcasts the jammer catalog on every change (checked each JammingTickInterval) and at least
+    /// every JammingCoordinator.BroadcastInterval, modelled on the SATCOM ephemeris broadcast.</summary>
+    private async Task JammingBroadcastLoopAsync(CancellationToken ct)
+    {
+        if (_jamming == null) return;
+        var sinceLastBroadcast = TimeSpan.Zero;
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(JammingTickInterval, ct);
+                sinceLastBroadcast += JammingTickInterval;
+
+                try
+                {
+                    var snapshot = _jamming.NextBroadcast(sinceLastBroadcast >= _jamming.BroadcastInterval);
+                    if (snapshot == null) continue;
+                    sinceLastBroadcast = TimeSpan.Zero;
+                    await BroadcastToAllChannels(SignalingMessageFactory.CreateJammerCatalogUpdate(snapshot));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Jamming: catalog broadcast failed");
                 }
             }
         }

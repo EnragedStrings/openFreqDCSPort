@@ -1,15 +1,20 @@
+using System.Text.Json.Serialization;
+
 namespace OpenFreq.Common.Jamming;
 
 /// <summary>One slice of spectrum a jammer is radiating on right now.</summary>
 public sealed class JammerEmission
 {
     /// <summary>Centre frequency, kHz.</summary>
+    [JsonPropertyName("centerKhz")]
     public double CenterKhz { get; set; }
 
     /// <summary>Occupied bandwidth, kHz (25 for a spot, the band width for barrage / partial-band).</summary>
+    [JsonPropertyName("bandwidthKhz")]
     public double BandwidthKhz { get; set; }
 
     /// <summary>Share of one PA's <see cref="JammerDefinition.TxPowerW"/> radiated in this slice (0..1).</summary>
+    [JsonPropertyName("powerFraction")]
     public double PowerFraction { get; set; } = 1.0;
 
     public JammerEmission()
@@ -23,8 +28,8 @@ public sealed class JammerEmission
         PowerFraction = powerFraction;
     }
 
-    public double StartKhz => CenterKhz - BandwidthKhz / 2.0;
-    public double EndKhz => CenterKhz + BandwidthKhz / 2.0;
+    [JsonIgnore] public double StartKhz => CenterKhz - BandwidthKhz / 2.0;
+    [JsonIgnore] public double EndKhz => CenterKhz + BandwidthKhz / 2.0;
 }
 
 /// <summary>Scripted targeting: what a resolved jammer radiates on (phase 1; the auto brain comes in phase 2).</summary>

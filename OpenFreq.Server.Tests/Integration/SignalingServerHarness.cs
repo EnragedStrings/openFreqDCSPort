@@ -33,7 +33,8 @@ public sealed class SignalingServerHarness : IAsyncDisposable
         bool broadcastPeerUpdates = true,
         bool dcsLineOfSightEnabled = true,
         TimeSpan? rtpTimeout = null,
-        TimeSpan? watchdogInterval = null)
+        TimeSpan? watchdogInterval = null,
+        Action<ServerConfig>? configure = null)
     {
         var config = new ServerConfig
         {
@@ -45,6 +46,7 @@ public sealed class SignalingServerHarness : IAsyncDisposable
             DcsLineOfSightEnabled = dcsLineOfSightEnabled,
             EnableOpusCompression = false,
         };
+        configure?.Invoke(config);
 
         var audio = new FakeAudioRelay();
         var server = new SignalingServer(

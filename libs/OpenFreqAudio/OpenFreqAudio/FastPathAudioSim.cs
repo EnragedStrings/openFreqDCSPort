@@ -76,12 +76,6 @@ namespace OpenFreqAudio
         // Zero when the first Fresnel zone was proven clear, or the path was too short to profile.
         public float TerrainLossDb;
 
-        // fast multipath flutter (events per second, can exceed 1.0). A function of SNR, but cached here.
-        public float DropoutRate;
-
-        // slow deep fades (events per second, typically 0-0.5). Also a function of SNR, but cached here.
-        public float DeepFadeRate;
-
         public int RadioFrequencyKHz;
 
         // Tune offset of the radio in parts per million.
@@ -104,7 +98,7 @@ namespace OpenFreqAudio
 
         public override string ToString()
         {
-            return $"ReceivedDb: {ReceivedDb}, ReceivedSnrDb: {ReceivedSnrDb}, FreeSpaceLossDb: {FreeSpaceLossDb}, TerrainLossDb: {TerrainLossDb}, DropoutRate : {DropoutRate}, DeepFadeRate: {DeepFadeRate}, TuneOffsetPPM: {TuneOffsetPPM}, SignalBlocked: {SignalBlocked}";
+            return $"ReceivedDb: {ReceivedDb}, ReceivedSnrDb: {ReceivedSnrDb}, FreeSpaceLossDb: {FreeSpaceLossDb}, TerrainLossDb: {TerrainLossDb}, TuneOffsetPPM: {TuneOffsetPPM}, SignalBlocked: {SignalBlocked}";
         }
         
     }
@@ -294,52 +288,6 @@ namespace OpenFreqAudio
         }
 
         /// <summary>
-        /// Fast flutter rate from rapid multipath fading (20-80ms "picket-fencing" effect).
-        /// </summary>
-        public static float CalculateDropoutRate(double snrDb, RadioBandConfig bandConfig)
-        {
-            double dropout;
-            if (snrDb > 15.0)
-                dropout = 0.0; // Clean signal
-            else if (snrDb > 5.0)
-                dropout = (15.0 - snrDb) / 10.0 * 0.3; // 0 → 0.3 events/sec
-            else if (snrDb > 0.0)
-                dropout = 0.3 + (5.0 - snrDb) / 5.0 * 0.4; // 0.3 → 0.7 events/sec
-            else
-                dropout = 0.7 + Math.Min(-snrDb / 10.0, 0.5); // 0.7 → 1.2 events/sec
-
-            // Wavelength-dependent multipath: Longer wavelengths less affected
-            // VHF (AM) typically has longer wavelengths than UHF (FM)
-            if (bandConfig.DiffractionCorrection_dB > 0) // Positive correction = better diffraction = longer wavelength
-                dropout *= 0.7;
-
-            return (float)Math.Clamp(dropout, 0.0, 1.5);
-        }
-
-        /// <summary>
-        /// Slow deep fade rate from terrain shadowing, deep multipath nulls, atmospheric ducting (400-2000ms).
-        /// Can drop signal below squelch threshold, triggering squelch pops.
-        /// </summary>
-        public static float CalculateDeepFadeRate(double snrDb, RadioBandConfig bandConfig)
-        {
-            double deepFade;
-            if (snrDb > 10.0)
-                deepFade = 0.0; // Good signal - no deep fades
-            else if (snrDb > 5.0)
-                deepFade = (10.0 - snrDb) / 5.0 * 0.05; // 0 → 0.05 events/sec
-            else if (snrDb > 0.0)
-                deepFade = 0.05 + (5.0 - snrDb) / 5.0 * 0.10; // 0.05 → 0.15 events/sec
-            else
-                deepFade = 0.15 + Math.Min(-snrDb / 10.0, 0.15); // 0.15 → 0.30 events/sec
-
-            // UHF more susceptible to deep fades (terrain nulls, shorter wavelength)
-            if (bandConfig.DiffractionCorrection_dB < 0) // Negative correction = worse diffraction = shorter wavelength
-                deepFade *= 1.5;
-
-            return (float)Math.Clamp(deepFade, 0.0, 0.5);
-        }
-
-        /// <summary>
         /// Calculates the Audio Parameters for a receiver
         /// </summary>
         public AudioParams CalculateAudioParams(
@@ -403,9 +351,6 @@ namespace OpenFreqAudio
             double kAvg = CalculateKAvg(txAltVal, rxAltVal);
             double effectiveEarthRadius = kAvg * EarthRadius;
 
-            // Get band configuration for this frequency
-            RadioBandConfig bandConfig = GetBandConfig(frequencyKhz);
-
             // Use provided sensitivity or band-based defaults
             double rxSensitivity = receiverSensitivityDbm ??
                                    (RadioStationPreset.IsVHF(frequencyKhz) ? -113.0 : -107.0);
@@ -421,8 +366,6 @@ namespace OpenFreqAudio
             if (profile.Count < 2)
             {
                 ap.ReceivedSnrDb = ap.ReceivedDb - (float)rxSensitivity;
-                ap.DropoutRate = CalculateDropoutRate(ap.ReceivedSnrDb, bandConfig);
-                ap.DeepFadeRate = CalculateDeepFadeRate(ap.ReceivedSnrDb, bandConfig);
                 SetTerrainProfile(ap, profile, includeTerrainProfile);
                 return ap;
             }
@@ -557,8 +500,6 @@ namespace OpenFreqAudio
                 ap.ReceivedDb -= ap.TerrainLossDb;
             }
             ap.ReceivedSnrDb = ap.ReceivedDb - (float)rxSensitivity;
-            ap.DropoutRate = CalculateDropoutRate(ap.ReceivedSnrDb, bandConfig);
-            ap.DeepFadeRate = CalculateDeepFadeRate(ap.ReceivedSnrDb, bandConfig);
             SetTerrainProfile(ap, profile, includeTerrainProfile);
             return ap;
         }
@@ -645,9 +586,7 @@ namespace OpenFreqAudio
                 RadioFrequencyKHz = frequencyKhz,
                 TuneOffsetPPM = ppm,
                 ReceivedDb = 0f, // no losses
-                ReceivedSnrDb = 50, // Clear as day.
-                DropoutRate = 0f,
-                DeepFadeRate = 0f
+                ReceivedSnrDb = 50 // Clear as day.
             };
             return ap;
         }

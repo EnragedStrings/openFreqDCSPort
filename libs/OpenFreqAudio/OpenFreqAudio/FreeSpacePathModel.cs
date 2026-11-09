@@ -54,7 +54,6 @@ public static class FreeSpacePathModel
         var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyKhz, (float)ppm);
         audioParams.ReceivedDb = (float)(txPowerDbm - fsplDb - weatherLossDb);
         audioParams.ReceivedSnrDb = audioParams.ReceivedDb - (float)receiverSensitivityDb;
-        UpdateFadingRates(audioParams);
         return audioParams;
     }
 
@@ -110,17 +109,9 @@ public static class FreeSpacePathModel
         {
             audioParams.ReceivedDb -= (float)extraLossDb;
             audioParams.ReceivedSnrDb -= (float)extraLossDb;
-            UpdateFadingRates(audioParams);
         }
 
         if (audioParams.ReceivedSnrDb <= -18.0f)
             audioParams.SignalBlocked = true;
-    }
-
-    private static void UpdateFadingRates(AudioParams audioParams)
-    {
-        var bandConfig = FastPathAudioSim.GetBandConfig(audioParams.RadioFrequencyKHz);
-        audioParams.DropoutRate = FastPathAudioSim.CalculateDropoutRate(audioParams.ReceivedSnrDb, bandConfig);
-        audioParams.DeepFadeRate = FastPathAudioSim.CalculateDeepFadeRate(audioParams.ReceivedSnrDb, bandConfig);
     }
 }

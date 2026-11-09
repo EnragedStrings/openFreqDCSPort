@@ -18,7 +18,6 @@ Radio frequency propagation modeling based on ITU-R standards:
 - **Fresnel zone clearance** for path obstruction
 - **Atmospheric refraction** using altitude-dependent refractivity (SAND2012-10690)
 - **Doppler shift** from transmitter and receiver velocities
-- **Multipath fading**: fast flutter (dropout rate) and slow deep fades
 - **Weather attenuation** (0.02 dB/km)
 
 ### Audio Processing
@@ -68,7 +67,7 @@ Demo application for testing and visualization:
 - **3D position simulation** with velocity controls
 - **Heterodyne testing**: adjustable PPM offset
 
-Allows testing of Doppler effects, terrain fading, multipath interference, and distance-dependent propagation.
+Allows testing of Doppler effects, terrain diffraction, multipath interference, and distance-dependent propagation.
 
 ### Technology Stack
 

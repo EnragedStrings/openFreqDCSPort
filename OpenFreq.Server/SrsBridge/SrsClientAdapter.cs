@@ -734,7 +734,7 @@ public sealed class SrsClientAdapter : IAsyncDisposable
     }
 
     // One SrsAudioProcessor per source OpenFreq peer, kept for the life of that pairing so its
-    // RadioEffect fading timers and KY-58 phase machine carry continuous state across packets
+    // RadioEffect ambient layer and KY-58 phase machine carry continuous state across packets
     // (see SrsAudioProcessor's own doc comment). Keyed by peer id, same as _outgoingTransmissions.
     private readonly Dictionary<string, SrsAudioProcessor> _audioProcessorsByPeer = new();
     private readonly Lock _audioProcessorsLock = new();

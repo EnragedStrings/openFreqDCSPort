@@ -17,8 +17,8 @@ public class SrsSignalQualityTests
             rxLatitudeDeg: 45.0, rxLongitudeDeg: 45.0, rxAltitudeMeters: 1000);
 
         Assert.False(audioParams.SignalBlocked);
-        Assert.Equal(0, audioParams.DropoutRate);
-        Assert.Equal(0, audioParams.DeepFadeRate);
+        // Clear as day: the default params' full SNR, no path loss.
+        Assert.Equal(FastPathAudioSim.GetDefaultAudioParams(251_000).ReceivedSnrDb, audioParams.ReceivedSnrDb);
     }
 
     [Fact]

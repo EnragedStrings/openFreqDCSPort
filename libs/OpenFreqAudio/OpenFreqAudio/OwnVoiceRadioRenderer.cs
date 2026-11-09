@@ -10,7 +10,7 @@ namespace OpenFreqAudio;
 /// full signal, no path loss, no fading.
 /// This is a port of the single-transmitter signal chain in
 /// <see cref="RadioPlayback"/>'s DSP callback
-///   1. RadioEffect: transmitter-side ambient SFX (cockpit, mask, …) + RF fading
+///   1. RadioEffect: transmitter-side ambient SFX (cockpit, mask, …)
 ///   2. AM envelope + background noise + AGC: the radio sound. The AGC is bounded here
 ///      (unlike a bare-voice AGC) because the carrier + noise floor are always present.
 ///   3. 300–3000 Hz band-pass
@@ -61,7 +61,7 @@ public sealed class OwnVoiceRadioRenderer
     public OwnVoiceRadioRenderer(int sampleRate, AudioParams initial, ILogger logger)
     {
         _sampleRate = sampleRate;
-        _effect = new RadioEffect(sampleRate, 1, initial, logger);
+        _effect = new RadioEffect(sampleRate, 1, logger);
         _agc = AttackDecayFilter.MakeAttackDecayFilter(
             RadioPlayback.AgcAttack, RadioPlayback.AgcDecay, sampleRate);
         // Unit-power noise, so 1.0 is the floor the gate is measured against.
@@ -78,7 +78,6 @@ public sealed class OwnVoiceRadioRenderer
     /// </summary>
     public void SetParams(AudioParams p, AmbientNoiseType ambient)
     {
-        _effect.Params = p;
         _effect.AmbientNoise = ambient;
         ApplyParams(p);
     }
@@ -115,7 +114,7 @@ public sealed class OwnVoiceRadioRenderer
             return;
         }
 
-        // 1. Transmitter acoustics (ambient SFX) + RF fading, on the voice portion only.
+        // 1. Transmitter acoustics (ambient SFX), on the voice portion only.
         if (voiceCount > 0) _effect.Process(buffer, 0, voiceCount, ambientVolume);
 
         // 2. AM envelope + noise + AGC (single transmitter → no beats).

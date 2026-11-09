@@ -2038,7 +2038,6 @@ public class OpenFreqService : IOpenFreqService
     private static bool IsFinite(AudioParams p) =>
         float.IsFinite(p.ReceivedDb) && float.IsFinite(p.ReceivedSnrDb) &&
         float.IsFinite(p.FreeSpaceLossDb) && float.IsFinite(p.TerrainLossDb) &&
-        float.IsFinite(p.DropoutRate) && float.IsFinite(p.DeepFadeRate) &&
         float.IsFinite(p.TuneOffsetPPM);
 
     /// <summary>
@@ -2051,12 +2050,11 @@ public class OpenFreqService : IOpenFreqService
         _logger.LogError(
             "Rejected non-finite audio params for {FreqMhz:F3} MHz from {PeerId}, keeping the last good ones: " +
             "ReceivedDb {ReceivedDb}, ReceivedSnrDb {ReceivedSnrDb}, FreeSpaceLossDb {FreeSpaceLossDb}, " +
-            "TerrainLossDb {TerrainLossDb}, DropoutRate {DropoutRate}, DeepFadeRate {DeepFadeRate}, " +
-            "TuneOffsetPPM {TuneOffsetPpm}. Inputs: tx position {TxPosition} m, tx velocity {TxVelocity} m/s, " +
+            "TerrainLossDb {TerrainLossDb}, TuneOffsetPPM {TuneOffsetPpm}. Inputs: tx position {TxPosition} m, tx velocity {TxVelocity} m/s, " +
             "{TxPowerWatts} W, {Ppm} ppm; rx position {RxPosition} m, rx velocity {RxVelocity} m/s, " +
             "rx sensitivity {RxSensitivityDbm} dBm",
             tx.Khz / 1000.0, peerId, p.ReceivedDb, p.ReceivedSnrDb, p.FreeSpaceLossDb, p.TerrainLossDb,
-            p.DropoutRate, p.DeepFadeRate, p.TuneOffsetPPM,
+            p.TuneOffsetPPM,
             tx.Position, tx.Velocity, tx.TxPowerWatts, tx.Ppm, rxPosition, rxVelocity, rxSensitivityDbm);
     }
 
@@ -2151,14 +2149,6 @@ public class OpenFreqService : IOpenFreqService
     {
         audioParams.ReceivedDb -= (float)attenuationDb;
         audioParams.ReceivedSnrDb -= (float)attenuationDb;
-        UpdateFadingRates(audioParams);
-    }
-
-    private static void UpdateFadingRates(AudioParams audioParams)
-    {
-        var bandConfig = FastPathAudioSim.GetBandConfig(audioParams.RadioFrequencyKHz);
-        audioParams.DropoutRate = FastPathAudioSim.CalculateDropoutRate(audioParams.ReceivedSnrDb, bandConfig);
-        audioParams.DeepFadeRate = FastPathAudioSim.CalculateDeepFadeRate(audioParams.ReceivedSnrDb, bandConfig);
     }
 
     private DcsLineOfSightResult? RequestDcsLineOfSight(
@@ -2188,8 +2178,6 @@ public class OpenFreqService : IOpenFreqService
         var attenuationDb = loss >= 0.99d ? 180.0d : loss * 60.0d;
         ApplyAttenuation(audioParams, attenuationDb);
 
-        audioParams.DropoutRate = Math.Max(audioParams.DropoutRate, (float)(loss * 8.0d));
-        audioParams.DeepFadeRate = Math.Max(audioParams.DeepFadeRate, (float)(loss * 1.5d));
         if (loss >= 0.99d)
         {
             audioParams.SignalBlocked = true;
@@ -2209,8 +2197,6 @@ public class OpenFreqService : IOpenFreqService
         {
             ReceivedDb = source.ReceivedDb,
             ReceivedSnrDb = source.ReceivedSnrDb,
-            DropoutRate = source.DropoutRate,
-            DeepFadeRate = source.DeepFadeRate,
             RadioFrequencyKHz = source.RadioFrequencyKHz,
             TuneOffsetPPM = source.TuneOffsetPPM,
             TerrainProfile = source.TerrainProfile,

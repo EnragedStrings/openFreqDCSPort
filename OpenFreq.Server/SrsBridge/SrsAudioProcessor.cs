@@ -6,20 +6,21 @@ namespace OpenFreqServer.SrsBridge;
 
 /// <summary>
 /// Headless per-(SRS receiver, source OpenFreq peer) DSP pipeline for the OpenFreq->SRS leg: runs
-/// decoded PCM through the same pure DSP primitives (RadioEffect fading/ambient,
+/// decoded PCM through the same pure DSP primitives (RadioEffect's transmitter ambient layer,
 /// KySecureReceiveState's KY-58 COMSEC state machine, ciphertext texture) a real OpenFreq client
 /// already applies locally on receive. A stock SRS client can't run any of that itself, so the
 /// server bakes it into the waveform before sending -- see docs/SRS_BRIDGE.md.
 ///
 /// One instance per (receiving SRS client, transmitting OpenFreq peer) pair, kept for the life of
-/// that pairing so RadioEffect's fading timers and KySecureReceiveState's phase machine carry
+/// that pairing so RadioEffect's ambient layer and KySecureReceiveState's phase machine carry
 /// continuous state across packets, matching how a real receiving slot's DSP chain persists for
 /// as long as it's tuned rather than resetting every buffer.
 ///
-/// RadioEffect.Params is updated every call from the caller-supplied AudioParams (see
-/// SrsSignalQuality.cs for how those get computed) rather than fixed at construction, so fading/
-/// distance/horizon degradation tracks the transmitter's actual position instead of staying
-/// permanently "clear." Real terrain LOS is not part of that yet (phase 4b-4d of the SRS bridge
+/// The caller-supplied AudioParams (see SrsSignalQuality.cs for how those get computed) decide
+/// only whether the transmitter is heard at all (SignalBlocked: distance/horizon). RadioEffect no
+/// longer fades the voice from them (upstream 9dc85e2 removed the synthetic RF fading, which
+/// warbled the voice while the static stayed constant); a stock SRS client applies its own
+/// receive effects. Real terrain LOS is not part of that yet (phase 4b-4d of the SRS bridge
 /// plan) -- SrsSignalQuality is geometric-only for now, same as OpenFreq's own no-terrain
 /// fallback.
 /// </summary>
@@ -42,7 +43,7 @@ public sealed class SrsAudioProcessor
 
     public SrsAudioProcessor(ILogger logger)
     {
-        _radioEffect = new RadioEffect(SampleRate, 1, FastPathAudioSim.GetDefaultAudioParams(0), logger);
+        _radioEffect = new RadioEffect(SampleRate, 1, logger);
         _kySecureState = new KySecureReceiveState(SampleRate);
         _cipherNoise = new CipherTextNoiseGenerator(SampleRate);
         _cvsdColoration = new CvsdColorationEffect();
@@ -56,7 +57,7 @@ public sealed class SrsAudioProcessor
     /// beep/noise-burst/mute sequence left Phase.Muted latched forever, silencing every later
     /// transmission from this peer -- including perfectly clear ones -- while ambient
     /// noise/radio effects kept playing normally (voice gone, everything else still audible).
-    /// RadioEffect's own fading/ambient state deliberately does NOT reset here -- see the class
+    /// RadioEffect's own ambient state deliberately does NOT reset here -- see the class
     /// doc comment on why that one is meant to persist for the life of the pairing.</summary>
     public void ResetForNewTalkSpurt()
     {
@@ -69,9 +70,8 @@ public sealed class SrsAudioProcessor
     /// determines this); streamEnc/streamEncKey the transmitting OpenFreq peer's. ambientNoiseType
     /// is the transmitter's own cockpit acoustic environment, already carried on the wire with no
     /// signal-quality dependency, so it's wired in now rather than deferred. audioParams is this
-    /// buffer's freshly-computed signal quality (see SrsSignalQuality.CreateAudioParams) -- applied
-    /// to RadioEffect before processing, same as a receiving OpenFreq client updates its own
-    /// stream's params on every packet.</summary>
+    /// buffer's freshly-computed signal quality (see SrsSignalQuality.CreateAudioParams); a
+    /// blocked signal is returned as silence.</summary>
     public short[] Process(ReadOnlySpan<short> pcmIn, bool slotEnc, int slotEncKey, bool streamEnc,
         int streamEncKey, AmbientNoiseType ambientNoiseType, AudioParams audioParams)
     {
@@ -121,7 +121,6 @@ public sealed class SrsAudioProcessor
 
         _sampleClock += buffer.Length;
 
-        _radioEffect.Params = audioParams;
         _radioEffect.AmbientNoise = ambientNoiseType;
         _radioEffect.Process(buffer, 0, buffer.Length, ambientNoiseVolume: 1.0f);
 

@@ -22,7 +22,7 @@ public class SrsAudioProcessorTests
 
     private static SrsAudioProcessor CreateProcessor() => new(NullLogger.Instance);
 
-    // "Clear as day" -- DropoutRate/DeepFadeRate 0, SignalBlocked false -- so these tests exercise
+    // "Clear as day" -- SignalBlocked false -- so these tests exercise
     // only the COMSEC/encryption chain, not SrsSignalQuality (covered separately).
     private static AudioParams ClearAudioParams() => FastPathAudioSim.GetDefaultAudioParams(0);
 
@@ -36,7 +36,7 @@ public class SrsAudioProcessorTests
             AmbientNoiseType.None, ClearAudioParams());
 
         Assert.Equal(input.Length, output.Length);
-        // No fading (default AudioParams has DropoutRate/DeepFadeRate = 0) and no encryption
+        // No blocking and no encryption
         // involved -- the tone should survive essentially intact, not be silenced or replaced.
         Assert.Contains(output, s => Math.Abs(s) > 1000);
     }

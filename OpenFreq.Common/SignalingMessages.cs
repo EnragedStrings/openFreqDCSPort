@@ -331,6 +331,29 @@ public class SatelliteEphemerisUpdateMessage
     [JsonPropertyName("satellites")] public List<SatcomSatelliteInfoDto> Satellites { get; set; } = [];
 }
 
+/// <summary>One jammer in a <see cref="JammerCatalogUpdateMessage"/>: its resolved definition (every field
+/// filled from its preset) and its live state.</summary>
+public class JammerCatalogEntryDto
+{
+    [JsonPropertyName("definition")] public Jamming.JammerDefinition Definition { get; set; } = new();
+
+    /// <summary>Radiating right now: enabled, alive, inside its schedule, with at least one emission.</summary>
+    [JsonPropertyName("active")] public bool Active { get; set; }
+
+    /// <summary>What it is radiating on right now (empty when not active).</summary>
+    [JsonPropertyName("emissions")] public List<Jamming.JammerEmission> Emissions { get; set; } = [];
+}
+
+/// <summary>
+/// Server -&gt; all clients: the communications-jammer catalog and live state (docs/jamming/JAMMING_DESIGN.md).
+/// Sent on change, every 5 s, and to each client right after it authenticates. Each client computes jamming at
+/// its own receivers from this; an empty list means no jamming.
+/// </summary>
+public class JammerCatalogUpdateMessage
+{
+    [JsonPropertyName("jammers")] public List<JammerCatalogEntryDto> Jammers { get; set; } = [];
+}
+
 /// <summary>One upcoming encoded SATCOM voice frame's server-decided disposition and scheduled
 /// local playback arrival time (Unix ms, client clock domain -- see SatcomLinkStateMessage remarks).</summary>
 public class SatcomFrameDispositionDto

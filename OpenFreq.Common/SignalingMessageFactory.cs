@@ -263,6 +263,17 @@ public static class SignalingMessageFactory
         };
     }
 
+    public static SignalingMessage CreateJammerCatalogUpdate(List<JammerCatalogEntryDto> jammers)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.JammerCatalogUpdate,
+            Payload = JsonSerializer.SerializeToElement(
+                new JammerCatalogUpdateMessage { Jammers = jammers },
+                OpenFreqJsonContext.Default.JammerCatalogUpdateMessage)
+        };
+    }
+
     public static SignalingMessage CreateSatcomLinkState(SatcomLinkStateMessage message)
     {
         return new SignalingMessage

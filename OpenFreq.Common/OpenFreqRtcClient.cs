@@ -33,6 +33,7 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<ErrorEventArgs>? ErrorOccurred;
     public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
+    public event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
     public event EventHandler<DcsLosOracleRequestEventArgs>? DcsLosOracleRequestReceived;
     public event EventHandler<TranscriptReceivedEventArgs>? TranscriptReceived;
 
@@ -780,6 +781,13 @@ public class OpenFreqRtcClient : IRtcClient
                         SignalingMessageFactory.DeserializePayload<SatelliteEphemerisUpdateMessage>(message.Payload);
                     if (ephemeris != null)
                         SatelliteEphemerisReceived?.Invoke(this, new SatelliteEphemerisEventArgs(ephemeris.Satellites));
+                    break;
+
+                case SignalingMessageTypes.JammerCatalogUpdate:
+                    var jammerCatalog =
+                        SignalingMessageFactory.DeserializePayload<JammerCatalogUpdateMessage>(message.Payload);
+                    if (jammerCatalog != null)
+                        JammerCatalogReceived?.Invoke(this, new JammerCatalogEventArgs(jammerCatalog));
                     break;
 
                 case SignalingMessageTypes.DcsLosOracleRequest:

@@ -35,6 +35,8 @@ namespace OpenFreq.Common;
 [JsonSerializable(typeof(TranscriptWordDto))]
 [JsonSerializable(typeof(TransmissionTranscriptMessage))]
 [JsonSerializable(typeof(TranscriptDeliveryMessage))]
+[JsonSerializable(typeof(JammerCatalogEntryDto))]
+[JsonSerializable(typeof(JammerCatalogUpdateMessage))]
 
 public partial class OpenFreqJsonContext : JsonSerializerContext
 {

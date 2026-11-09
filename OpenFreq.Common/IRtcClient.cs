@@ -14,6 +14,11 @@ public class SatelliteEphemerisEventArgs(List<SatcomSatelliteInfoDto> satellites
     public List<SatcomSatelliteInfoDto> Satellites { get; } = satellites;
 }
 
+public class JammerCatalogEventArgs(JammerCatalogUpdateMessage message) : EventArgs
+{
+    public JammerCatalogUpdateMessage Message { get; } = message;
+}
+
 public class DcsLosOracleRequestEventArgs(DcsLosOracleRequestMessage message) : EventArgs
 {
     public DcsLosOracleRequestMessage Message { get; } = message;
@@ -47,6 +52,9 @@ public interface IRtcClient : IDisposable
     event EventHandler<ErrorEventArgs>? ErrorOccurred;
     event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
+
+    /// <summary>The server's jammer catalog + live state (docs/jamming) -- see JammerCatalogUpdateMessage.</summary>
+    event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
 
     /// <summary>The server is asking this client to referee a remote terrain-LOS check via its own
     /// live DCS instance -- see DcsLosOracleRequestMessage's own doc comment. Answer with

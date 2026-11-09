@@ -25,6 +25,9 @@ public static class SignalingMessageTypes
     public const string SatelliteEphemerisUpdate = "satellite-ephemeris-update";
     public const string SatcomLinkState = "satcom-link-state";
 
+    /// <summary>Server -&gt; all clients: jammer catalog + live state -- see JammerCatalogUpdateMessage.</summary>
+    public const string JammerCatalogUpdate = "jammer-catalog-update";
+
     /// <summary>Client -&gt; server: the transmitting client's own local speech-to-text result for
     /// one completed PTT session -- see TransmissionTranscriptMessage.</summary>
     public const string TransmissionTranscript = "transmission-transcript";

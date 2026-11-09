@@ -494,7 +494,7 @@ public class RtpJitterBuffer
         double expectedInterval = (double)(samplesElapsed - _lastPacketTimestamp) / OpenFreqRtcClient.SAMPLE_RATE;
 
         // Detect transmission gap (PTT released).
-        if (expectedInterval > 0.5)
+        if (expectedInterval * 1000 > OpenFreqAudio.AudioFormat.TalkspurtGapMs)
         {
             _logger.LogInformation("Transmission gap detected ({IntervalMs:F0}ms RTP delta), resetting jitter measurement",
                 expectedInterval * 1000.0);

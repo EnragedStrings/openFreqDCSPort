@@ -77,6 +77,19 @@ public class RadioPlayback : IDisposable
         public required RadioEffect RadioEffect { get; set; }
         public required AudioParams CurrentParams { get; set; }
 
+        // The carrier from CurrentParams, smoothed over time so it never steps (upstream fa6ab98).
+        // Only touched on the DSP thread.
+        public required CarrierSmoother CarrierSmoother { get; init; }
+
+        // The carrier from CarrierSmoother at the start and end of this callback.
+        // The mixer ramps linearly between them.
+        // (We could step the smoother every audio sample, but this would be a lot more math
+        // for negligible gain - given a physics update rate of 5-20 Hz, this approach
+        // is only ever off by thousandths of a Hz in Doppler or dB in SNR.)
+        // Only ever touched on the DSP thread.
+        public CarrierState CarrierStart;
+        public CarrierState CarrierEnd;
+
         // Phase of this stream's carrier, relative to the channel frequency, in radians,
         // wrapped to [0, 2π) (upstream 49f2ede). Integrated per sample so a change in carrier
         // frequency (e.g. Doppler shift) doesn't cause an audible phase jump. Every slot tuned to
@@ -84,10 +97,12 @@ public class RadioPlayback : IDisposable
         // after all of them have used it. Only ever touched on the DSP thread.
         public double CarrierPhase;
 
-        // How far CarrierPhase moves per sample this callback, from CurrentParams as it was when
-        // the stream was drained, so every slot and the final advance agree even if physics
-        // swaps CurrentParams mid-callback. Only ever touched on the DSP thread.
-        public double CarrierPhaseStep;
+        // How far CarrierPhase moves per sample at the start and end of this callback (from
+        // CarrierStart / CarrierEnd); the step ramps linearly between them. Computed once when the
+        // stream is drained, so every slot and the final advance agree even if physics swaps
+        // CurrentParams mid-callback. Only ever touched on the DSP thread.
+        public double CarrierPhaseStepStart;
+        public double CarrierPhaseStepEnd;
 
         // Audio to play is pushed here and pulled by playback.
         public SyncRope<float> Buffer { get; } = new();
@@ -660,6 +675,7 @@ public class RadioPlayback : IDisposable
                         _loggerFactory.CreateLogger<RadioEffect>())
                     { AmbientNoise = ambientNoise },
                 CurrentParams = audioParams,
+                CarrierSmoother = new CarrierSmoother(audioParams),
                 AmbientNoise = ambientNoise
             };
 
@@ -793,6 +809,7 @@ public class RadioPlayback : IDisposable
             RadioEffect = new RadioEffect(sampleRate, channels, audioParams,
                 _loggerFactory.CreateLogger<RadioEffect>()),
             CurrentParams = audioParams,
+            CarrierSmoother = new CarrierSmoother(audioParams),
         };
 
         lock (_lock)
@@ -1614,7 +1631,26 @@ public class RadioPlayback : IDisposable
                     continue;
                 }
 
-                EndStreamGap(stream, callbackTicks);
+                bool firstAudio = stream.LastAudioTicks == 0;
+                double gapSeconds = EndStreamGap(stream, callbackTicks);
+
+                // Smooth the physics over this callback, continuing right where the previous
+                // one left off (upstream fa6ab98), so neither the carrier's level nor its Doppler
+                // shift steps every time physics (including our DCS LOS/horizon losses) lands a
+                // new result -- that stepping was AGC warble and pops in close formation.
+                var target = stream.CurrentParams;
+                // A new transmission (first audio, or a silence longer than a PTT release) starts
+                // at the latest physics result instead of ramping from the last transmission.
+                // So does a blocked signal: a hard LOS/horizon cutoff should cut at once, not
+                // fade out over ~200 ms. (The client normally clears the stream's buffer when it
+                // blocks, so this only matters for audio already buffered.)
+                if (firstAudio || gapSeconds * 1000 > AudioFormat.TalkspurtGapMs || target.SignalBlocked)
+                {
+                    stream.CarrierSmoother.Reset(target);
+                }
+                stream.CarrierStart = stream.CarrierSmoother.Carrier;
+                stream.CarrierSmoother.Step(target, (double)samples / SampleRate);
+                stream.CarrierEnd = stream.CarrierSmoother.Carrier;
 
                 if (stream.Scratch.Length < take)
                 {
@@ -1626,9 +1662,10 @@ public class RadioPlayback : IDisposable
                     throw new Exception($"Expected {take} samples, got {drained}");
                 }
 
-                var drainParams = stream.CurrentParams;
-                stream.CarrierPhaseStep = PhaseStep(drainParams.RadioFrequencyKHz, stream.FrequencyKHz,
-                    drainParams.TuneOffsetPPM);
+                stream.CarrierPhaseStepStart = PhaseStep(target.RadioFrequencyKHz, stream.FrequencyKHz,
+                    stream.CarrierStart.TuneOffsetPpm);
+                stream.CarrierPhaseStepEnd = PhaseStep(target.RadioFrequencyKHz, stream.FrequencyKHz,
+                    stream.CarrierEnd.TuneOffsetPpm);
 
                 // Apply radio effects
                 stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
@@ -1793,24 +1830,37 @@ public class RadioPlayback : IDisposable
                         }
 
                         var numStreams = transmittingStreams.Count;
+                        // Each carrier's level as of the end of this callback, which the FM capture
+                        // and noise-cliff decisions below are made on. The mix itself ramps each
+                        // carrier from CarrierStart to CarrierEnd (see CarrierSmoother), scaled by
+                        // captureWeights.
                         var relativePowers = new List<float>(numStreams);
-                        // Each carrier's phase step per sample, relative to the channel frequency,
-                        // and its running phase for this slot. Every slot starts from the stream's
-                        // stored CarrierPhase and doesn't write it back; it's advanced once for
-                        // the whole channel after the slot loop (AdvanceCarrierPhases).
-                        var phaseSteps = new double[numStreams];
+                        var captureWeights = new float[numStreams];
+                        // Each carrier's phase step per sample (ramping from start to end of the
+                        // callback), relative to the channel frequency, and its running phase for
+                        // this slot. Every slot starts from the stream's stored CarrierPhase and
+                        // doesn't write it back; it's advanced once for the whole channel after
+                        // the slot loop.
+                        var phaseStepStarts = new double[numStreams];
+                        var phaseStepSlopes = new double[numStreams];
+                        var amplitudeStarts = new double[numStreams];
+                        var amplitudeSlopes = new double[numStreams];
                         var phases = new double[numStreams];
                         for (int k = 0; k < numStreams; ++k)
                         {
-                            var txParams = transmittingStreams[k].CurrentParams;
-                            // We need to convert from dB to linear power when weighing the signals.
-                            relativePowers.Add((float)Math.Pow(10, txParams.ReceivedSnrDb / 20.0));
+                            var tx = transmittingStreams[k];
+                            // The smoothed SNR is already converted from dB to linear amplitude.
+                            relativePowers.Add((float)tx.CarrierEnd.Amplitude);
+                            captureWeights[k] = 1f;
+                            amplitudeStarts[k] = tx.CarrierStart.Amplitude;
+                            amplitudeSlopes[k] = (tx.CarrierEnd.Amplitude - tx.CarrierStart.Amplitude) / samples;
                             // Relative to the channel frequency, not the first transmitter: that one
                             // can change between callbacks, which would jump every phase now that
                             // they're integrated. The envelope doesn't care about a rotation applied
                             // to all carriers at once, so any stable reference works.
-                            phaseSteps[k] = transmittingStreams[k].CarrierPhaseStep;
-                            phases[k] = transmittingStreams[k].CarrierPhase;
+                            phaseStepStarts[k] = tx.CarrierPhaseStepStart;
+                            phaseStepSlopes[k] = (tx.CarrierPhaseStepEnd - tx.CarrierPhaseStepStart) / samples;
+                            phases[k] = tx.CarrierPhase;
                         }
 
                         if (slot.IsSatcomActive)
@@ -1841,8 +1891,8 @@ public class RadioPlayback : IDisposable
 
                             // FM vs AM (constant for this whole chunk, computed once from the
                             // per-transmitter powers above): FM receivers capture onto the strongest
-                            // co-channel signal instead of mixing weaker ones in (ApplyFmCaptureEffect
-                            // mutates relativePowers directly), and FM is quieter than AM above a
+                            // co-channel signal instead of mixing weaker ones in (ApplyFmCaptureEffect's
+                            // per-transmitter weights go in captureWeights), and FM is quieter than AM above a
                             // threshold SNR but noisier below it (the classic FM "cliff") instead of
                             // AM's smooth linear noise-vs-SNR curve. AM (fmNoiseScale stays 1) is
                             // completely unaffected by any of this.
@@ -1854,7 +1904,12 @@ public class RadioPlayback : IDisposable
                                     maxPower = Math.Max(maxPower, relativePowers[k]);
 
                                 if (numStreams > 1)
-                                    ApplyFmCaptureEffect(relativePowers, maxPower);
+                                {
+                                    var captured = new List<float>(relativePowers);
+                                    ApplyFmCaptureEffect(captured, maxPower);
+                                    for (int k = 0; k < numStreams; ++k)
+                                        captureWeights[k] = relativePowers[k] > 0f ? captured[k] / relativePowers[k] : 0f;
+                                }
 
                                 if (maxPower > 0f)
                                 {
@@ -1889,9 +1944,13 @@ public class RadioPlayback : IDisposable
                                         // the remainder rather than indexing past its samples.
                                         var txSpan = transmittingStreams[k].Samples.Span;
                                         float samp = sampleOverride?.Invoke(n) ?? (n < txSpan.Length ? txSpan[n] : 0f);
-                                        i += relativePowers[k] * (1 + samp * ModIndex) * Math.Cos(theta);
-                                        q += relativePowers[k] * (1 + samp * ModIndex) * Math.Sin(theta);
-                                        phases[k] = WrapPhase(theta + phaseSteps[k]);
+                                        // n + 1 here and for the phase step, so the last sample lands on
+                                        // CarrierEnd, which is where the next callback starts.
+                                        double carrier = (amplitudeStarts[k] + amplitudeSlopes[k] * (n + 1)) * captureWeights[k];
+                                        double amplitude = carrier * (1 + samp * ModIndex);
+                                        i += amplitude * Math.Cos(theta);
+                                        q += amplitude * Math.Sin(theta);
+                                        phases[k] = WrapPhase(theta + phaseStepStarts[k] + phaseStepSlopes[k] * (n + 1));
                                     }
 
                                     // Take the envelope.
@@ -2009,7 +2068,8 @@ public class RadioPlayback : IDisposable
                     // carrier on exactly once for this callback, so the next one continues
                     // where this one left off however many slots (if any) heard it.
                     foreach (var stream in transmittingStreamsAll)
-                        stream.CarrierPhase = AdvancePhase(stream.CarrierPhase, stream.CarrierPhaseStep, samples);
+                        stream.CarrierPhase = AdvancePhase(stream.CarrierPhase,
+                            stream.CarrierPhaseStepStart, stream.CarrierPhaseStepEnd, samples);
                 }
             }
 
@@ -2168,10 +2228,20 @@ public class RadioPlayback : IDisposable
     /// The phase <paramref name="samples"/> samples on from <paramref name="theta"/> at
     /// <paramref name="step"/> radians per sample, wrapped to [0, 2π).
     /// </summary>
-    internal static double AdvancePhase(double theta, double step, int samples)
+    internal static double AdvancePhase(double theta, double step, int samples) =>
+        AdvancePhase(theta, step, step, samples);
+
+    /// <summary>
+    /// The phase <paramref name="samples"/> samples on from <paramref name="theta"/>, with the
+    /// step ramping linearly from <paramref name="stepStart"/> to <paramref name="stepEnd"/>
+    /// the way the mixer ramps it (sample n advances by stepStart + slope · (n + 1)), wrapped to [0, 2π).
+    /// </summary>
+    internal static double AdvancePhase(double theta, double stepStart, double stepEnd, int samples)
     {
-        if (!double.IsFinite(theta) || !double.IsFinite(step)) return 0;
-        theta = (theta + step * samples) % TwoPi;
+        if (!double.IsFinite(theta) || !double.IsFinite(stepStart) || !double.IsFinite(stepEnd)) return 0;
+        double slope = (stepEnd - stepStart) / samples;
+        double total = stepStart * samples + slope * samples * (samples + 1) / 2.0;
+        theta = (theta + total) % TwoPi;
         return theta < 0 ? theta + TwoPi : theta;
     }
 
@@ -2186,7 +2256,10 @@ public class RadioPlayback : IDisposable
         float agc = slot.Agc.D1;
         float squelchDetector = slot.SquelchDetector.D1;
         float lastOutput = output.IsEmpty ? 0f : output[^1];
-        var transmitters = transmittingStreams.Select(s => (s.StreamId, s.CurrentParams)).ToList();
+        // This thread keeps changing the smoother, so format it before the log runs on another thread.
+        var transmitters = transmittingStreams
+            .Select(s => (s.StreamId, s.CurrentParams, Smoothed: s.CarrierSmoother.ToString()))
+            .ToList();
 
         LogOffDspThread(logger => logger.LogError(
             "Reset receiver on {Frequency:F3} MHz (slot {SlotId}) after it went non-finite: " +
@@ -2195,7 +2268,7 @@ public class RadioPlayback : IDisposable
             freqKhz / 1000.0, slotId, agc, squelchDetector, lastOutput,
             transmitters.Count == 0
                 ? "none"
-                : string.Join("; ", transmitters.Select(t => $"{t.StreamId}: {t.CurrentParams}"))));
+                : string.Join("; ", transmitters.Select(t => $"{t.StreamId}: {t.CurrentParams}, smoothed {t.Smoothed}"))));
     }
 
     /// <summary>

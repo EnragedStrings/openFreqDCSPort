@@ -43,6 +43,22 @@ namespace OpenFreqAudio.Tests
             Assert.Equal(theta, RadioPlayback.AdvancePhase(1.0, step, 480), 9);
         }
 
+        [Fact]
+        public void RampedAdvancePhase_MatchesTheMixersPerSampleIntegration()
+        {
+            // The mixer ramps the step across a callback as the smoothed Doppler moves
+            // (CarrierSmoother); the once-per-callback advance must land where every slot did.
+            double start = RadioPlayback.PhaseStep(127000, 127000, 1.0);
+            double end = RadioPlayback.PhaseStep(127000, 127000, 1.2);
+            const int samples = 480;
+            double slope = (end - start) / samples;
+            double theta = 2.0;
+            for (int n = 0; n < samples; ++n)
+                theta = RadioPlayback.WrapPhase(theta + start + slope * (n + 1));
+
+            Assert.Equal(theta, RadioPlayback.AdvancePhase(2.0, start, end, samples), 9);
+        }
+
         [Theory]
         [InlineData(1.0, -0.5, 480)]
         [InlineData(6.0, 0.4, 1_000_000)]

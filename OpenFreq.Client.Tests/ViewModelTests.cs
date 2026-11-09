@@ -1,3 +1,4 @@
+using OpenFreqClient;
 using OpenFreq.Client.Models;
 using OpenFreqClient.Models;
 using OpenFreqClient.Services.Interfaces;
@@ -197,6 +198,72 @@ public class SettingsViewModelTests
         Assert.Equal(800, saved.Width);
         Assert.Equal(500, saved.Height);
     }
+
+    private static IAudioService AudioWith(List<string> playback, int defaultPlayback,
+        List<string> recording, int defaultRecording)
+    {
+        var audio = VmFactory.Audio();
+        audio.GetPlaybackDevices().Returns(playback);
+        audio.GetRecordingDevices().Returns(recording);
+        audio.DefaultPlaybackDevice.Returns(defaultPlayback);
+        audio.DefaultRecordingDevice.Returns(defaultRecording);
+        return audio;
+    }
+
+    [Fact]
+    public void SavedDevice_MissingAtStartup_KeepsPreferenceAndUsesDefault()
+    {
+        // VR headset audio isn't up yet when the app launches: play on the default meanwhile,
+        // but don't overwrite the saved choice, so it is switched back to when it appears.
+        var audio = AudioWith(["Default", "Speakers"], 1, ["Default", "Headset Mic"], 1);
+        var vm = VmFactory.Settings(audio: audio);
+
+        vm.LoadFromSettings(new OpenFreqSettings
+        {
+            OutputDeviceName = "Pimax",
+            InputDeviceName = "Pimax Mic"
+        });
+
+        Assert.Equal(1, vm.PlaybackDeviceIndex);
+        Assert.Equal(1, vm.RecordingDeviceIndex);
+        Assert.Equal("Pimax", vm.GetSettings().OutputDeviceName);
+        Assert.Equal("Pimax Mic", vm.GetSettings().InputDeviceName);
+        audio.Received().SetPreferredPlaybackDevice("Pimax");
+        audio.Received().SetPreferredRecordingDevice("Pimax Mic");
+        audio.DidNotReceive().SetPreferredPlaybackDevice("Speakers");
+        audio.DidNotReceive().SetPreferredRecordingDevice("Headset Mic");
+    }
+
+    [Fact]
+    public void UserSelectingDevice_BecomesPreference()
+    {
+        var audio = AudioWith(["Default", "Speakers", "Pimax"], 1, ["Default", "Mic"], 1);
+        var vm = VmFactory.Settings(audio: audio);
+
+        vm.PlaybackDeviceIndex = 2;
+
+        Assert.Equal("Pimax", vm.OutputDeviceName);
+        audio.Received().SetPreferredPlaybackDevice("Pimax");
+    }
+}
+
+public class AudioDeviceResolutionTests
+{
+    [Fact]
+    public void PreferredPresent_IsChosenOverDefault()
+        => Assert.Equal(2, AudioService.ResolveDeviceIndex(["Default", "Speakers", "Pimax"], "Pimax", 1));
+
+    [Fact]
+    public void PreferredMissing_FallsBackToDefault()
+        => Assert.Equal(1, AudioService.ResolveDeviceIndex(["Default", "Speakers"], "Pimax", 1));
+
+    [Fact]
+    public void NoPreference_FollowsDefault()
+        => Assert.Equal(1, AudioService.ResolveDeviceIndex(["Default", "Speakers"], null, 1));
+
+    [Fact]
+    public void NothingAvailable_ReturnsMinusOne()
+        => Assert.Equal(-1, AudioService.ResolveDeviceIndex([], "Pimax", -1));
 }
 
 public class LocationViewModelTests

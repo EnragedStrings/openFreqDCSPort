@@ -139,6 +139,8 @@ public interface IOpenFreqService : IDisposable
 
     void SetVolume(int frequencyKhz, Guid slotId, float volumeValue);
     void SetPan(int frequencyKhz, Guid slotId, int pan);
+    /// <summary>163rd vFS 3DAS: binaural rendering at a helmet-fixed direction (enabled), else plain pan.</summary>
+    void SetSpatial(int frequencyKhz, Guid slotId, bool enabled, float azimuthDeg, float elevationDeg);
 
     void EnableFrequency(int frequencyKhz, Guid slotId);
     void DisableFrequency(int frequencyKhz, Guid slotId);

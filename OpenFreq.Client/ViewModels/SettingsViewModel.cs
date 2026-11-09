@@ -408,19 +408,33 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _openFreqService.MicLevelChanged += OnMicLevelChanged;
     }
 
+    // Set while the app (not the user) moves the device selection — startup defaults, a saved device
+    // that isn't plugged in yet, hot-plug fallback. While set, the selection is applied to the audio
+    // pipeline but NOT recorded as the user's preferred device, so the saved choice survives and is
+    // switched back to automatically when that device shows up.
+    private bool _applyingDeviceFallback;
+
     private void InitializeAudioDevices()
     {
         _audioService.Init();
 
-        var playbackDevices = _audioService.GetPlaybackDevices();
-        PlaybackDeviceNames = new ObservableCollection<string>(playbackDevices);
-        PlaybackDeviceIndex = _audioService.DefaultPlaybackDevice;
-        HasPlaybackDevices = playbackDevices.Count > 0;
+        _applyingDeviceFallback = true;
+        try
+        {
+            var playbackDevices = _audioService.GetPlaybackDevices();
+            PlaybackDeviceNames = new ObservableCollection<string>(playbackDevices);
+            PlaybackDeviceIndex = _audioService.DefaultPlaybackDevice;
+            HasPlaybackDevices = playbackDevices.Count > 0;
 
-        var recordingDevices = _audioService.GetRecordingDevices();
-        RecordingDeviceNames = new ObservableCollection<string>(recordingDevices);
-        RecordingDeviceIndex = _audioService.DefaultRecordingDevice;
-        HasRecordingDevices = recordingDevices.Count > 0;
+            var recordingDevices = _audioService.GetRecordingDevices();
+            RecordingDeviceNames = new ObservableCollection<string>(recordingDevices);
+            RecordingDeviceIndex = _audioService.DefaultRecordingDevice;
+            HasRecordingDevices = recordingDevices.Count > 0;
+        }
+        finally
+        {
+            _applyingDeviceFallback = false;
+        }
 
         _audioService.PlaybackDevicesChanged += OnPlaybackDevicesChanged;
         _audioService.RecordingDevicesChanged += OnRecordingDevicesChanged;
@@ -453,13 +467,23 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 "Recording devices changed: Old={Old}, New={New}, DeviceWasRemoved={Removed}",
                 e.OldDeviceIndex, e.NewDeviceIndex, e.DeviceWasRemoved);
 
-            RecordingDeviceNames.Clear();
-            foreach (var device in e.Devices)
-                RecordingDeviceNames.Add(device);
-            HasRecordingDevices = e.Devices.Count > 0;
+            // AudioService already resolved the user's preferred device (or the default while it
+            // is missing); don't let the list rebuild/reselect overwrite that preference.
+            _applyingDeviceFallback = true;
+            try
+            {
+                RecordingDeviceNames.Clear();
+                foreach (var device in e.Devices)
+                    RecordingDeviceNames.Add(device);
+                HasRecordingDevices = e.Devices.Count > 0;
 
-            // Update UI selection (may be same value — observable equality guard won't re-fire)
-            RecordingDeviceIndex = e.NewDeviceIndex;
+                // Update UI selection (may be same value — observable equality guard won't re-fire)
+                RecordingDeviceIndex = e.NewDeviceIndex;
+            }
+            finally
+            {
+                _applyingDeviceFallback = false;
+            }
 
             // Always propagate the resolved BASS index directly to the service, bypassing the
             // [ObservableProperty] equality check. Without this, if the physical device changed
@@ -495,13 +519,21 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 "Playback devices changed: Old={Old}, New={New}, DeviceWasRemoved={Removed}",
                 e.OldDeviceIndex, e.NewDeviceIndex, e.DeviceWasRemoved);
 
-            PlaybackDeviceNames.Clear();
-            foreach (var device in e.Devices)
-                PlaybackDeviceNames.Add(device);
-            HasPlaybackDevices = e.Devices.Count > 0;
+            _applyingDeviceFallback = true;
+            try
+            {
+                PlaybackDeviceNames.Clear();
+                foreach (var device in e.Devices)
+                    PlaybackDeviceNames.Add(device);
+                HasPlaybackDevices = e.Devices.Count > 0;
 
-            // Update UI selection (may be same value — observable equality guard won't re-fire)
-            PlaybackDeviceIndex = e.NewDeviceIndex;
+                // Update UI selection (may be same value — observable equality guard won't re-fire)
+                PlaybackDeviceIndex = e.NewDeviceIndex;
+            }
+            finally
+            {
+                _applyingDeviceFallback = false;
+            }
 
             // Always propagate the resolved BASS index directly to the service, bypassing the
             // [ObservableProperty] equality check. Critical case: selected device is removed and
@@ -577,7 +609,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         if (value >= 0 && value < RecordingDeviceNames.Count)
         {
-            InputDeviceName = RecordingDeviceNames[value];
+            if (!_applyingDeviceFallback)
+            {
+                InputDeviceName = RecordingDeviceNames[value];
+                _audioService.SetPreferredRecordingDevice(InputDeviceName);
+            }
             _openFreqService.RecordingDeviceIndex = _audioService.GetRecordingBassIndex(value);
         }
     }
@@ -586,7 +622,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         if (value >= 0 && value < PlaybackDeviceNames.Count)
         {
-            OutputDeviceName = PlaybackDeviceNames[value];
+            if (!_applyingDeviceFallback)
+            {
+                OutputDeviceName = PlaybackDeviceNames[value];
+                _audioService.SetPreferredPlaybackDevice(OutputDeviceName);
+            }
             _openFreqService.PlaybackDeviceIndex = _audioService.GetPlaybackBassIndex(value);
         }
     }
@@ -677,22 +717,34 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }, DispatcherPriority.Background);
         }
 
-        // Restore audio device selection
+        // Restore audio device selection. The saved names are the user's preference and are kept
+        // even when that device isn't present yet (e.g. a VR headset that powers on after launch):
+        // we play on the default meanwhile and AudioService switches back once it appears.
         InputDeviceName = settings.InputDeviceName;
         OutputDeviceName = settings.OutputDeviceName;
+        _audioService.SetPreferredRecordingDevice(InputDeviceName);
+        _audioService.SetPreferredPlaybackDevice(OutputDeviceName);
 
-        if (!string.IsNullOrEmpty(InputDeviceName))
+        _applyingDeviceFallback = true;
+        try
         {
-            RecordingDeviceIndex = RecordingDeviceNames.ToList().IndexOf(InputDeviceName);
-            if (RecordingDeviceIndex < 0)
-                RecordingDeviceIndex = _audioService.DefaultRecordingDevice;
+            if (!string.IsNullOrEmpty(InputDeviceName))
+            {
+                RecordingDeviceIndex = RecordingDeviceNames.ToList().IndexOf(InputDeviceName);
+                if (RecordingDeviceIndex < 0)
+                    RecordingDeviceIndex = _audioService.DefaultRecordingDevice;
+            }
+
+            if (!string.IsNullOrEmpty(OutputDeviceName))
+            {
+                PlaybackDeviceIndex = PlaybackDeviceNames.ToList().IndexOf(OutputDeviceName);
+                if (PlaybackDeviceIndex < 0)
+                    PlaybackDeviceIndex = _audioService.DefaultPlaybackDevice;
+            }
         }
-
-        if (!string.IsNullOrEmpty(OutputDeviceName))
+        finally
         {
-            PlaybackDeviceIndex = PlaybackDeviceNames.ToList().IndexOf(OutputDeviceName);
-            if (PlaybackDeviceIndex < 0)
-                PlaybackDeviceIndex = _audioService.DefaultPlaybackDevice;
+            _applyingDeviceFallback = false;
         }
 
         // Monitor/stream output device (reuses the playback device list).

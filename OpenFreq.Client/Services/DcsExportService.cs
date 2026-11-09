@@ -638,7 +638,11 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         oldRadio.SatcomSelected != newRadio.SatcomSelected ||
         oldRadio.SatcomBandActive != newRadio.SatcomBandActive ||
         oldRadio.SatcomDedicatedActive != newRadio.SatcomDedicatedActive ||
-        oldRadio.SatcomAntennaSelectorRaw != newRadio.SatcomAntennaSelectorRaw;
+        oldRadio.SatcomAntennaSelectorRaw != newRadio.SatcomAntennaSelectorRaw ||
+        (oldRadio.Spatial == null) != (newRadio.Spatial == null) ||
+        (oldRadio.Spatial != null && newRadio.Spatial != null &&
+         (oldRadio.Spatial.AzimuthDeg != newRadio.Spatial.AzimuthDeg ||
+          oldRadio.Spatial.ElevationDeg != newRadio.Spatial.ElevationDeg));
 
     private void ChangeState(ServiceState newState)
     {

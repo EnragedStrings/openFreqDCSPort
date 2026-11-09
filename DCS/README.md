@@ -61,6 +61,29 @@ debug line (`debugRadios`, on by default) for the raw values it's reading.
 4. Verify in-game with `debugArgScan` (below) for anything not already covered by the ported IDs,
    and check the new debug log line for sane values before calling it done.
 
+### Add-on radios (other mods)
+
+A mod can add radios to an aircraft without editing this script: ship
+`<Saved Games>\Mods\tech\<mod>\OpenFreq\autoload.lua` returning
+`{ register = function(OpenFreqDCS) ... end }`, and call
+`OpenFreqDCS.addRadioProvider(unitName, fn)` from `register`. After the aircraft's own `build()`,
+every export calls `fn(radios)`, which appends entries of the same shape as `buildA10C2Radios`
+on slot numbers the aircraft does not use. Load results and add-on errors go to
+`Logs\OpenFreqDCS.log`; an add-on error never stops the export. Example: the 163rd vFS Systems
+Mod LARS radio (A-10C II slot 4, frequency from the `LARS_FREQ` cockpit parameter).
+
+### A-10C II 3D audio (163rd vFS 3DAS)
+
+With the 163rd vFS New Cockpit 3DAP panel and the 163rd vFS 3DAS plugin installed, the A-10C II
+radios are rendered binaurally while the 3DAP is digital with 3D audio on (`3DAP_OUT_MODE` = 0.2,
+`3DAP_OUT_3DA` = 1, read through the plugin's `a10_3das` Lua bridge). This is the 3DAS "static
+rendering": each radio sits at a fixed direction around the helmet and does not point at the
+transmitting aircraft. Directions are per slot in `OpenFreqDCSConfig.a10c2.spatial3das`
+(azimuth + right, elevation + up); the defaults follow the AMDF CAFG402B layout: RT1 ahead -15 deg,
+LARS ahead +45 deg, ARC-164 left, RT2 right. The client's `BinauralRenderer` (spherical head:
+time difference, head shadow, and a brightness cue for elevation) does the rendering; any other
+state falls back to the channel's normal pan.
+
 ## Finding unknown cockpit argument IDs (e.g. squelch)
 
 Radio state (frequency, volume, encryption, PTT) is read via

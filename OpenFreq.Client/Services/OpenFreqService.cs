@@ -37,6 +37,10 @@ public class OpenFreqService : IOpenFreqService
 
     private IRtcClient? _client;
     private int _recordHandle;
+
+    // Environment.TickCount64 of the last mic callback; lets a TX detect a capture stream that
+    // opened fine but never delivers audio (and rebuild it, as reselecting the device would).
+    private long _lastRecordCallbackTicks;
     private readonly ConcurrentDictionary<int, List<int>> _activeTransmissionsAndMutedFrequencies = new();
 
     private readonly ISpeechTranscriber _speechTranscriber;
@@ -886,6 +890,7 @@ public class OpenFreqService : IOpenFreqService
         {
             _client.MarkTransmitStartTime();
             if (_playbackService != null) _playbackService.SidetoneEnabled = SidetoneEnabled;
+            _ = EnsureMicDeliveringAsync(frequencyKhz);
         }
 
         var transmissionId = await _client.StartTransmissionAsync(frequencyKhz);
@@ -1028,6 +1033,27 @@ public class OpenFreqService : IOpenFreqService
     }
 
     /// <summary>
+    /// Shortly after keying up, check the mic stream is actually delivering audio. A capture opened
+    /// before its device was ready (VR / wireless headset waking up) can sit silent with no error;
+    /// restart it once — the same rebuild reselecting the input device in Settings performs.
+    /// </summary>
+    private async Task EnsureMicDeliveringAsync(int frequencyKhz)
+    {
+        var keyedAt = Environment.TickCount64;
+        await Task.Delay(MicStallTimeoutMs);
+
+        if (_recordHandle == 0 || !_activeTransmissionsAndMutedFrequencies.ContainsKey(frequencyKhz)) return;
+        if (Volatile.Read(ref _lastRecordCallbackTicks) >= keyedAt) return;
+
+        _logger.LogWarning("No mic audio {Timeout} ms after PTT on BASS device {Device} — restarting capture",
+            MicStallTimeoutMs, RecordingDeviceIndex);
+        StopMicCapture();
+        StartMicCapture();
+    }
+
+    private const int MicStallTimeoutMs = 400;
+
+    /// <summary>
     /// Stops and frees the shared microphone capture stream if running. No-op when idle.
     /// </summary>
     private void StopMicCapture()
@@ -1058,6 +1084,11 @@ public class OpenFreqService : IOpenFreqService
     public void SetPan(int frequencyKhz, Guid slotId, int pan)
     {
         _playbackService?.SetFrequencyPan(frequencyKhz, slotId, pan);
+    }
+
+    public void SetSpatial(int frequencyKhz, Guid slotId, bool enabled, float azimuthDeg, float elevationDeg)
+    {
+        _playbackService?.SetFrequencySpatial(frequencyKhz, slotId, enabled, azimuthDeg, elevationDeg);
     }
 
     public void EnableFrequency(int frequencyKhz, Guid slotId)
@@ -1230,6 +1261,7 @@ public class OpenFreqService : IOpenFreqService
 
     private bool RecordProcedure(int handle, IntPtr buffer, int length, IntPtr user)
     {
+        Volatile.Write(ref _lastRecordCallbackTicks, Environment.TickCount64);
         try
         {
             if (length <= 0)
@@ -1754,6 +1786,10 @@ public class OpenFreqService : IOpenFreqService
 
         _peerTransmittingByFrequency[e.FrequencyKhz] = (e.IsTransmitting, e.Is3d);
         RecomputeFrequencyTransmissionStatus(e.FrequencyKhz);
+
+        // Make sure we can actually hear it: rebuilds an output whose device stopped since startup.
+        if (e.IsTransmitting)
+            _playbackService?.EnsureMasterStreamRunning();
     }
 
     /// <summary>Re-derives and publishes the Transmitting/Receiving/Idle status for one frequency

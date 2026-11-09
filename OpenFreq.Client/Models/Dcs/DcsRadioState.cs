@@ -61,6 +61,11 @@ public class DcsRadioState
     /// for radios other than the ARC-210, or aircraft without this switch modeled.</summary>
     public double? SatcomAntennaSelectorRaw { get; set; }
 
+    /// <summary>163rd vFS 3DAS static rendering: the direction this radio is heard from, fixed to
+    /// the helmet. Sent by OpenFreqDCS.lua only while the A-10C II's 3DAP panel is in digital mode
+    /// with 3D audio available (cockpit args 1060/1061); null = plain pan.</summary>
+    public DcsSpatialPosition? Spatial { get; set; }
+
     public int FrequencyKhz => (int)Math.Round(FrequencyHz / 1000d);
     public int SecondaryFrequencyKhz => (int)Math.Round(SecondaryFrequencyHz / 1000d);
 
@@ -84,7 +89,8 @@ public class DcsRadioState
             SatcomSelected = SatcomSelected,
             SatcomBandActive = SatcomBandActive,
             SatcomDedicatedActive = SatcomDedicatedActive,
-            SatcomAntennaSelectorRaw = SatcomAntennaSelectorRaw
+            SatcomAntennaSelectorRaw = SatcomAntennaSelectorRaw,
+            Spatial = Spatial == null ? null : new DcsSpatialPosition { AzimuthDeg = Spatial.AzimuthDeg, ElevationDeg = Spatial.ElevationDeg }
         };
     }
 }

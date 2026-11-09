@@ -23,6 +23,14 @@ public interface IAudioService : IAsyncDisposable
     /// <summary>List index (0-based position among enabled devices) of the system default recording device.</summary>
     public int DefaultRecordingDevice { get; }
 
+    /// <summary>
+    /// The playback device the user chose, by name. Device changes resolve to this device whenever it is
+    /// present and fall back to the system default only while it is missing. Null/empty follows the default.
+    /// </summary>
+    public void SetPreferredPlaybackDevice(string? deviceName);
+    /// <summary>Recording counterpart of <see cref="SetPreferredPlaybackDevice"/>.</summary>
+    public void SetPreferredRecordingDevice(string? deviceName);
+
     /// <summary>Convert a list index (ComboBox selection) to the underlying BASS device index.</summary>
     public int GetPlaybackBassIndex(int listIndex);
     /// <summary>Convert a list index (ComboBox selection) to the underlying BASS recording device index.</summary>

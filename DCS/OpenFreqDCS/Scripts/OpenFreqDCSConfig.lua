@@ -25,6 +25,25 @@ OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax = OpenFreqDCSConfig.a10c2.arc210I
 -- yet and always uses the argument-tolerance approach. See DCS/README.md and
 -- docs/SATCOM_SIMULATION.md for how these values were observed and the acquisition behavior gated
 -- on them.
+-- 163rd vFS 3DAS static rendering: helmet-fixed direction of each A-10C II radio while the 3DAP panel
+-- is digital with 3D audio (see apply3dasSpatial in OpenFreqDCS.lua). Static rendering: each radio is
+-- fixed to the helmet (3DAS "Static Rendering - HMIT"), it does NOT point at the transmitting aircraft.
+-- Degrees; azimuth 0 = ahead, + = right, - = left; elevation + = up.
+-- Defaults from the AMDF CAFG402B slide of the 3DAS academics: the box positions around the helmet give
+-- the azimuth (RT1/LARS ahead, 164 left, RT2 right, EW ~60 right) and the bracketed figures are the
+-- elevation (RT1 -15, LARS +45, 164 0, RT2 0, EW -20). EW is not a radio (the deck does not define it;
+-- probably the ALQ-213 countermeasures audio), so OpenFreq does not render it. MWS is dynamic (slide 9).
+-- Slots: 1 ARC-210 RT-1, 2 ARC-164, 3 ARC-210 RT-2 (ARC-186 without the Systems Mod), 4 LARS.
+OpenFreqDCSConfig.a10c2.spatial3das = OpenFreqDCSConfig.a10c2.spatial3das or {
+    enabled = true,
+    slots = {
+        [1] = { azimuth = 0, elevation = -15 },  -- RT1: ahead, low
+        [2] = { azimuth = -90, elevation = 0 },  -- 164: left
+        [3] = { azimuth = 90, elevation = 0 },   -- RT2: right
+        [4] = { azimuth = 0, elevation = 45 },   -- LARS: ahead, high
+    },
+}
+
 OpenFreqDCSConfig.a10c2.satcom = OpenFreqDCSConfig.a10c2.satcom or {}
 OpenFreqDCSConfig.a10c2.satcom.channelSelectorArgument = OpenFreqDCSConfig.a10c2.satcom.channelSelectorArgument or 552
 OpenFreqDCSConfig.a10c2.satcom.channel31Value = OpenFreqDCSConfig.a10c2.satcom.channel31Value or 0.8499

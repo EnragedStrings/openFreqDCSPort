@@ -33,6 +33,7 @@ public interface IPlaybackService
     void SetSquelchLevel(int frequencyKhz, Guid slotId, float squelchLevel);
     void SetFrequencyVolume(int frequencyKhz, Guid slotId, float volume);
     void SetFrequencyPan(int frequencyKhz, Guid slotId, int pan);
+    void SetFrequencySpatial(int frequencyKhz, Guid slotId, bool enabled, float azimuthDeg, float elevationDeg);
     void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable);
     void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate, double burstSeverity,
         double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0);
@@ -97,6 +98,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
         => _inner.SetFrequencyVolume(frequencyKhz, slotId, volume);
     public void SetFrequencyPan(int frequencyKhz, Guid slotId, int pan)
         => _inner.SetFrequencyPan(frequencyKhz, slotId, pan);
+    public void SetFrequencySpatial(int frequencyKhz, Guid slotId, bool enabled, float azimuthDeg, float elevationDeg)
+        => _inner.SetFrequencySpatial(frequencyKhz, slotId, enabled, azimuthDeg, elevationDeg);
     public void SetSlotEncryption(int frequencyKhz, Guid slotId, bool enc, int encKey, bool hqOn, bool cryptoCapable)
         => _inner.SetSlotEncryption(frequencyKhz, slotId, enc, encKey, hqOn, cryptoCapable);
     public void SetSatcomState(int frequencyKhz, Guid slotId, bool isActive, double frameErrorRate,

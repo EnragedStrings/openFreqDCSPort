@@ -14,11 +14,17 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
     public int DefaultPlaybackDevice { get; private set; } = -1;
     public int DefaultRecordingDevice { get; private set; } = -1;
 
-    // Track currently selected devices
+    // The device the user chose (persisted by name). Kept even while that device is absent, so a
+    // headset that powers on after launch (e.g. VR audio) is picked up again automatically.
+    // Written from the UI thread, read from the monitoring thread.
+    private volatile string? _preferredPlaybackDeviceName;
+    private volatile string? _preferredRecordingDeviceName;
+
+    // The device actually in use: the preferred one, or the system default while it is missing.
     private int _selectedPlaybackDeviceIndex = -1;
     private int _selectedRecordingDeviceIndex = -1;
-    private string? _selectedPlaybackDeviceName;
-    private string? _selectedRecordingDeviceName;
+    private string? _activePlaybackDeviceName;
+    private string? _activeRecordingDeviceName;
 
     // BASS initialization state — tracked separately so each can retry independently
     private bool _playbackInitialized;
@@ -141,49 +147,35 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
     {
         var devices = GetPlaybackDevices();
         var oldIndex = _selectedPlaybackDeviceIndex;
-        var newIndex = _selectedPlaybackDeviceIndex;
+        var oldName = _activePlaybackDeviceName;
+        var preferred = _preferredPlaybackDeviceName;
+        var newIndex = ResolveDeviceIndex(devices, preferred, DefaultPlaybackDevice);
 
-        // Try to find the previously selected device by name
-        if (!string.IsNullOrEmpty(_selectedPlaybackDeviceName))
-        {
-            newIndex = FindDeviceIndexByName(_selectedPlaybackDeviceName, isRecording: false);
-        }
-
-        // If device was removed or not found, fall back to default
         if (newIndex == -1)
         {
-            logger.LogWarning(
-                "Playback device '{DeviceName}' not found after device change, falling back to default (list index {DefaultDevice})",
-                _selectedPlaybackDeviceName, DefaultPlaybackDevice);
-            newIndex = DefaultPlaybackDevice;
-
-            if (newIndex != -1)
-            {
-                var deviceInfo = Bass.GetDeviceInfo(GetPlaybackBassIndex(newIndex));
-                _selectedPlaybackDeviceName = deviceInfo.Name;
-                logger.LogInformation("Playback fallback device: '{FallbackName}' (list index {Index})",
-                    _selectedPlaybackDeviceName, newIndex);
-            }
-            else
-            {
-                var msg = "No valid audio output device available — all playback devices were removed. Please connect an audio device.";
-                logger.LogError("{Message}", msg);
-                AudioDeviceErrorOccurred?.Invoke(this, msg);
-            }
+            var msg = "No valid audio output device available — all playback devices were removed. Please connect an audio device.";
+            logger.LogError("{Message}", msg);
+            AudioDeviceErrorOccurred?.Invoke(this, msg);
         }
+        else if (!string.IsNullOrEmpty(preferred) && devices[newIndex] != preferred)
+        {
+            logger.LogWarning(
+                "Preferred playback device '{Preferred}' not present, using default '{Fallback}' (list index {Index}) until it returns",
+                preferred, devices[newIndex], newIndex);
+        }
+
+        var newName = newIndex >= 0 ? devices[newIndex] : null;
 
         // DeviceWasRemoved: true when the physical device changed, even if list index stayed same.
         // Consumers MUST force a BASS device switch in this case regardless of index equality.
-        bool deviceWasRemoved = oldIndex != -1 && !string.Equals(
-            _selectedPlaybackDeviceName,
-            oldIndex >= 0 && oldIndex < devices.Count ? devices[oldIndex] : null,
-            StringComparison.Ordinal);
+        bool deviceWasRemoved = oldName != null && !string.Equals(oldName, newName, StringComparison.Ordinal);
 
         _selectedPlaybackDeviceIndex = newIndex;
+        _activePlaybackDeviceName = newName;
 
         logger.LogInformation(
-            "Playback device resolved: list index {Old} → {New}, DeviceWasRemoved={Removed}",
-            oldIndex, newIndex, deviceWasRemoved);
+            "Playback device resolved: '{Old}' (list index {OldIndex}) → '{New}' (list index {NewIndex}), DeviceWasRemoved={Removed}",
+            oldName, oldIndex, newName, newIndex, deviceWasRemoved);
 
         PlaybackDevicesChanged?.Invoke(this, new DeviceChangedEventArgs
         {
@@ -199,47 +191,32 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
     {
         var devices = GetRecordingDevices();
         var oldIndex = _selectedRecordingDeviceIndex;
-        var newIndex = _selectedRecordingDeviceIndex;
+        var oldName = _activeRecordingDeviceName;
+        var preferred = _preferredRecordingDeviceName;
+        var newIndex = ResolveDeviceIndex(devices, preferred, DefaultRecordingDevice);
 
-        // Try to find the previously selected device by name
-        if (!string.IsNullOrEmpty(_selectedRecordingDeviceName))
-        {
-            newIndex = FindDeviceIndexByName(_selectedRecordingDeviceName, isRecording: true);
-        }
-
-        // If device was removed or not found, fall back to default
         if (newIndex == -1)
         {
+            var msg = "No valid audio input device available — all recording devices were removed. Please connect a microphone.";
+            logger.LogError("{Message}", msg);
+            AudioDeviceErrorOccurred?.Invoke(this, msg);
+        }
+        else if (!string.IsNullOrEmpty(preferred) && devices[newIndex] != preferred)
+        {
             logger.LogWarning(
-                "Recording device '{DeviceName}' not found after device change, falling back to default (list index {DefaultDevice})",
-                _selectedRecordingDeviceName, DefaultRecordingDevice);
-            newIndex = DefaultRecordingDevice;
-
-            if (newIndex != -1)
-            {
-                var deviceInfo = Bass.RecordGetDeviceInfo(GetRecordingBassIndex(newIndex));
-                _selectedRecordingDeviceName = deviceInfo.Name;
-                logger.LogInformation("Recording fallback device: '{FallbackName}' (list index {Index})",
-                    _selectedRecordingDeviceName, newIndex);
-            }
-            else
-            {
-                var msg = "No valid audio input device available — all recording devices were removed. Please connect a microphone.";
-                logger.LogError("{Message}", msg);
-                AudioDeviceErrorOccurred?.Invoke(this, msg);
-            }
+                "Preferred recording device '{Preferred}' not present, using default '{Fallback}' (list index {Index}) until it returns",
+                preferred, devices[newIndex], newIndex);
         }
 
-        bool deviceWasRemoved = oldIndex != -1 && !string.Equals(
-            _selectedRecordingDeviceName,
-            oldIndex >= 0 && oldIndex < devices.Count ? devices[oldIndex] : null,
-            StringComparison.Ordinal);
+        var newName = newIndex >= 0 ? devices[newIndex] : null;
+        bool deviceWasRemoved = oldName != null && !string.Equals(oldName, newName, StringComparison.Ordinal);
 
         _selectedRecordingDeviceIndex = newIndex;
+        _activeRecordingDeviceName = newName;
 
         logger.LogInformation(
-            "Recording device resolved: list index {Old} → {New}, DeviceWasRemoved={Removed}",
-            oldIndex, newIndex, deviceWasRemoved);
+            "Recording device resolved: '{Old}' (list index {OldIndex}) → '{New}' (list index {NewIndex}), DeviceWasRemoved={Removed}",
+            oldName, oldIndex, newName, newIndex, deviceWasRemoved);
 
         RecordingDevicesChanged?.Invoke(this, new DeviceChangedEventArgs
         {
@@ -251,65 +228,40 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
         });
     }
 
-    private int FindDeviceIndexByName(string deviceName, bool isRecording)
+    /// <summary>
+    /// Pick the list index to use: the preferred device if it is present, otherwise the system default
+    /// (-1 if neither exists). An empty preference means "follow the system default".
+    /// </summary>
+    public static int ResolveDeviceIndex(IReadOnlyList<string> devices, string? preferredName, int defaultIndex)
     {
-        int listIndex = 0;
-        if (isRecording)
+        if (!string.IsNullOrEmpty(preferredName))
         {
-            for (var i = 0; i < Bass.RecordingDeviceCount; i++)
-            {
-                var deviceInfo = Bass.RecordGetDeviceInfo(i);
-                if (!deviceInfo.IsEnabled) continue;
-                if (deviceInfo.Name == deviceName) return listIndex;
-                listIndex++;
-            }
-        }
-        else
-        {
-            for (var i = 0; i < Bass.DeviceCount; i++)
-            {
-                var deviceInfo = Bass.GetDeviceInfo(i);
-                if (!deviceInfo.IsEnabled) continue;
-                if (deviceInfo.Name == deviceName) return listIndex;
-                listIndex++;
-            }
+            for (var i = 0; i < devices.Count; i++)
+                if (devices[i] == preferredName) return i;
         }
 
-        return -1;
+        return defaultIndex >= 0 && defaultIndex < devices.Count ? defaultIndex : -1;
     }
 
-    public void SetSelectedPlaybackDevice(int deviceIndex)
+    public void SetPreferredPlaybackDevice(string? deviceName)
     {
-        if (deviceIndex >= 0 && deviceIndex < Bass.DeviceCount)
-        {
-            var deviceInfo = Bass.GetDeviceInfo(deviceIndex);
-            if (deviceInfo.IsEnabled)
-            {
-                _selectedPlaybackDeviceIndex = deviceIndex;
-                _selectedPlaybackDeviceName = deviceInfo.Name;
-                logger.LogInformation("Selected playback device: {DeviceIndex} - {DeviceName}",
-                    deviceIndex, deviceInfo.Name);
-            }
-        }
+        _preferredPlaybackDeviceName = deviceName;
+        var devices = GetPlaybackDevices();
+        _selectedPlaybackDeviceIndex = ResolveDeviceIndex(devices, deviceName, DefaultPlaybackDevice);
+        _activePlaybackDeviceName = _selectedPlaybackDeviceIndex >= 0 ? devices[_selectedPlaybackDeviceIndex] : null;
+        logger.LogInformation("Preferred playback device: '{DeviceName}' (active: '{Active}')",
+            deviceName, _activePlaybackDeviceName);
     }
 
-    public void SetSelectedRecordingDevice(int deviceIndex)
+    public void SetPreferredRecordingDevice(string? deviceName)
     {
-        if (deviceIndex >= 0 && deviceIndex < Bass.RecordingDeviceCount)
-        {
-            var deviceInfo = Bass.RecordGetDeviceInfo(deviceIndex);
-            if (deviceInfo.IsEnabled)
-            {
-                _selectedRecordingDeviceIndex = deviceIndex;
-                _selectedRecordingDeviceName = deviceInfo.Name;
-                logger.LogInformation("Selected recording device: {DeviceIndex} - {DeviceName}",
-                    deviceIndex, deviceInfo.Name);
-            }
-        }
+        _preferredRecordingDeviceName = deviceName;
+        var devices = GetRecordingDevices();
+        _selectedRecordingDeviceIndex = ResolveDeviceIndex(devices, deviceName, DefaultRecordingDevice);
+        _activeRecordingDeviceName = _selectedRecordingDeviceIndex >= 0 ? devices[_selectedRecordingDeviceIndex] : null;
+        logger.LogInformation("Preferred recording device: '{DeviceName}' (active: '{Active}')",
+            deviceName, _activeRecordingDeviceName);
     }
-
-    public int GetSelectedPlaybackDeviceIndex() => _selectedPlaybackDeviceIndex;
-    public int GetSelectedRecordingDeviceIndex() => _selectedRecordingDeviceIndex;
 
     public List<string> GetPlaybackDevices()
     {

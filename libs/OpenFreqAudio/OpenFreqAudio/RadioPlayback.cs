@@ -103,6 +103,10 @@ public class RadioPlayback : IDisposable
         public float Volume { get; set; } = 1.0f;
         /// <summary>Pan position: -100 = full left, 0 = center (both), +100 = full right.</summary>
         public int Pan { get; set; } = 0;
+        /// <summary>163rd vFS 3DAS static rendering: when true the slot is rendered binaurally at
+        /// <see cref="Binaural"/>'s direction instead of with <see cref="Pan"/>.</summary>
+        public bool SpatialOn { get; set; }
+        public BinauralRenderer? Binaural { get; set; }
         /// <summary>Squelch threshold: 0 = always open (hear noise), 1 = normal gate (only signals break squelch).</summary>
         public float SquelchLevel { get; set; } = 1.0f;
         public bool WasSquelchOpen { get; set; }
@@ -428,6 +432,13 @@ public class RadioPlayback : IDisposable
         _loggerFactory = loggerFactory;
         lock (_bassInitLock)
         {
+            // Configure BASS for low-latency operation. Must precede Bass.Init: the device buffer
+            // length is only read when a device is initialized.
+            Bass.Configure(Configuration.UpdatePeriod, 5);
+            Bass.Configure(Configuration.PlaybackBufferLength, 10);
+            Bass.Configure(Configuration.DeviceBufferLength, 10);
+            Bass.Configure(Configuration.UpdateThreads, 1);
+
             // Just use the default device - BASS doesnt like any checks on that
             if (playbackDeviceIndex == -1)
             {
@@ -452,12 +463,6 @@ public class RadioPlayback : IDisposable
             // Capture the actual BASS device index after init so we know the fallback target.
             // For default device (-1), Bass.CurrentDevice resolves to the real index after init.
             _currentDeviceIndex = Bass.CurrentDevice;
-
-            // Configure BASS for low-latency operation
-            Bass.Configure(Configuration.UpdatePeriod, 5);
-            Bass.Configure(Configuration.PlaybackBufferLength, 10);
-            Bass.Configure(Configuration.DeviceBufferLength, 10);
-            Bass.Configure(Configuration.UpdateThreads, 1);
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
@@ -804,15 +809,27 @@ public class RadioPlayback : IDisposable
     /// <summary>
     /// Restart the master stream if it is not running. No-op if already playing.
     /// Guards against edge cases where the stream was stopped (e.g. all slots were
-    /// untuned during a shutdown) and the same RadioPlayback instance is reused on reconnect.
+    /// untuned during a shutdown) and the same RadioPlayback instance is reused on reconnect,
+    /// and against a stream whose device output stopped (state PausedDevice/Stopped) — the
+    /// silent-until-the-user-reselects-the-device case. Cheap enough to call on every RX start.
     /// </summary>
     public void EnsureMasterStreamRunning()
     {
-        if (_isInitialized && _masterStream == 0)
+        if (!_isInitialized) return;
+
+        if (_masterStream == 0)
         {
             _logger.LogWarning("Master stream not running — restarting");
             StartMasterStream();
+            return;
         }
+
+        var state = Bass.ChannelIsActive(_masterStream);
+        if (state == PlaybackState.Playing || _currentDeviceIndex < 0) return;
+
+        // Same rebuild as reselecting the output device in Settings.
+        _logger.LogWarning("Master stream on device {Device} is {State} — restarting output", _currentDeviceIndex, state);
+        ChangeOutputDevice(_currentDeviceIndex);
     }
 
     // Create the own-voice renderer if no capture sink owns one yet. Call under _lock.
@@ -1108,6 +1125,28 @@ public class RadioPlayback : IDisposable
                 _slots[key] = slot;
             }
             slot.Pan = Math.Clamp(pan, -100, 100);
+        }
+    }
+
+    /// <summary>163rd vFS 3DAS: render this slot binaurally at a fixed direction around the head
+    /// (<paramref name="enabled"/> true), or go back to the plain <see cref="SetFrequencyPan"/> pan.</summary>
+    public void SetFrequencySpatial(int frequencyKHz, Guid slotId, bool enabled, float azimuthDeg, float elevationDeg)
+    {
+        lock (_lock)
+        {
+            var key = (frequencyKHz, slotId);
+            if (!_slots.TryGetValue(key, out var slot))
+            {
+                slot = new RadioConfig(frequencyKHz);
+                _slots[key] = slot;
+            }
+            if (enabled)
+            {
+                if (slot.Binaural == null) slot.Binaural = new BinauralRenderer(SampleRate);
+                else if (!slot.SpatialOn) slot.Binaural.Reset();
+                slot.Binaural.SetDirection(azimuthDeg, elevationDeg);
+            }
+            slot.SpatialOn = enabled && slot.Binaural != null;
         }
     }
 
@@ -1742,6 +1781,13 @@ public class RadioPlayback : IDisposable
 
                         // Mix this slot's mono signal into the stereo output with its pan and volume.
                         float mv = MasterVolume;
+                        var binaural = slot.Binaural;
+                        if (slot.SpatialOn && binaural != null)
+                        {
+                            // 163rd vFS 3DAS static rendering: binaural at the slot's helmet-fixed direction.
+                            binaural.Process(_dspScratch, _stereoBuffer, samples, mv * slot.Volume);
+                            continue;
+                        }
                         float panAngle  = (slot.Pan + 100) / 200f * MathF.PI / 2f;
                         float leftGain  = mv * slot.Volume * MathF.Cos(panAngle);
                         float rightGain = mv * slot.Volume * MathF.Sin(panAngle);

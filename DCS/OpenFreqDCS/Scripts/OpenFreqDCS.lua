@@ -1475,6 +1475,103 @@ local aircraftBuilders = {
     ["UH-60L_DAP"] = { configKey = "uh60l", build = buildUH60Radios },
 }
 
+-- Add-on radios (e.g. the 163rd vFS Systems Mod LARS radio on the A-10C II). An add-on is
+--   <Saved Games>\Mods\tech\<mod>\OpenFreq\autoload.lua  returning  { register = function(OpenFreqDCS) ... end }
+-- and its register() calls OpenFreqDCS.addRadioProvider(unitName, fn). Every export, after the aircraft's own
+-- build(), fn(radios) may append radio entries of the same shape (see buildA10C2Radios) on slot numbers the
+-- aircraft does not use. Errors in an add-on are logged and never stop the export.
+OpenFreqDCS.radioProviders = OpenFreqDCS.radioProviders or {}
+
+function OpenFreqDCS.addRadioProvider(unitName, fn)
+    if type(unitName) ~= "string" or type(fn) ~= "function" then
+        return
+    end
+    local list = OpenFreqDCS.radioProviders[unitName] or {}
+    list[#list + 1] = fn
+    OpenFreqDCS.radioProviders[unitName] = list
+    writeLog("radio add-on registered for " .. unitName)
+end
+
+local function loadRadioAddons()
+    if not lfs or writeDir == "" then
+        return
+    end
+    local modsPath = writeDir .. [[Mods\tech]]
+    local okDir, iter, state = pcall(lfs.dir, modsPath)
+    if not okDir then
+        return
+    end
+    for modFolder in iter, state do
+        if modFolder ~= "." and modFolder ~= ".." then
+            local path = modsPath .. [[\]] .. modFolder .. [[\OpenFreq\autoload.lua]]
+            if lfs.attributes(path, "mode") == "file" then
+                local ok, err = pcall(function()
+                    local addon = dofile(path)
+                    if type(addon) == "table" and type(addon.register) == "function" then
+                        addon.register(OpenFreqDCS)
+                    end
+                end)
+                writeLog((ok and "loaded radio add-on " or "radio add-on failed ") .. path ..
+                    (ok and "" or (": " .. tostring(err))))
+            end
+        end
+    end
+end
+
+loadRadioAddons()
+
+local function addAddonRadios(unitName, radios)
+    local providers = OpenFreqDCS.radioProviders[unitName]
+    if not providers then
+        return
+    end
+    for _, fn in ipairs(providers) do
+        local ok, err = pcall(fn, radios)
+        if not ok then
+            writeLog("radio add-on error (" .. unitName .. "): " .. tostring(err))
+        end
+    end
+end
+
+-- 163rd vFS 3DAS static rendering (A-10C II with the 3DAP panel of the 163rd New Cockpit mod).
+-- While the 3DAP is digital with 3D audio available (3DAP_OUT_MODE = 0.2, 3DAP_OUT_3DA = 1) each radio
+-- gets a helmet-fixed direction, by slot (after add-ons: slot 3 = ARC-210 RT-2, slot 4 = LARS), from
+-- OpenFreqDCSConfig.a10c2.spatial3das. The client renders those radios binaurally; otherwise plain pan.
+local function apply3dasSpatial(radios)
+    local cfg = config.a10c2 and config.a10c2.spatial3das
+    if not cfg or cfg.enabled == false then
+        return
+    end
+    -- The 3DAP publishes its state as cockpit parameters 3DAP_OUT_MODE / 3DAP_OUT_3DA, read through the
+    -- 163rd vFS 3DAS plugin's Lua bridge (a10_3das, same export Lua state). Cockpit args 1060/1061 are
+    -- kept as a fallback, but they lie beyond the model's argument range and read 0 here.
+    local mode, available
+    local bridge = rawget(_G, "a10_3das")
+    if bridge and type(bridge.cockpit_param) == "function" then
+        mode = bridge.cockpit_param("3DAP_OUT_MODE")
+        available = bridge.cockpit_param("3DAP_OUT_3DA")
+    end
+    if mode == nil then
+        local mainPanel = getMainPanel()
+        if not mainPanel then
+            return
+        end
+        mode = getArgument(mainPanel, 1060, 0) or 0
+        available = getArgument(mainPanel, 1061, 0) or 0
+    end
+    mode, available = mode or 0, available or 0
+    if math.abs(mode - 0.2) > 0.05 or available < 0.5 then
+        return
+    end
+    local bySlot = cfg.slots or {}
+    for _, radio in ipairs(radios) do
+        local pos = bySlot[radio.slot]
+        if type(pos) == "table" then
+            radio.spatial = { azimuthDeg = numberOr(pos.azimuth, 0), elevationDeg = numberOr(pos.elevation, 0) }
+        end
+    end
+end
+
 local function buildPacket(modelTime)
     local selfData = callGlobal("LoGetSelfData", nil)
     local theater = detectTheater()
@@ -1496,6 +1593,13 @@ local function buildPacket(modelTime)
     local radios = {}
     if inSupportedAircraft then
         radios = aircraft.build()
+        addAddonRadios(selfData.Name, radios)
+        if selfData.Name == "A-10C_2" then
+            local ok, err = pcall(apply3dasSpatial, radios)
+            if not ok then
+                writeLog("3DAS spatial error: " .. tostring(err))
+            end
+        end
     end
 
     local heightmap = pumpHeightmap(theater)

@@ -897,6 +897,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             hqOn: radio.HqOn,
             squelchOn: radio.SquelchOn);
 
+        if (channel != null)
+        {
+            ApplyDcsSpatial(channel.FrequencyKhz, channel.Id, radio);
+        }
+
         if (channel != null && satcomState != null)
         {
             channel.SatcomAcquisitionState = satcomState.Value;
@@ -1117,6 +1122,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 _guardMonitorJoinedFrequencyKhz[radioKey] = guardFrequencyKhz;
             }
             _openFreqService.SetVolume(guardFrequencyKhz, slotId, (float)radio.Volume);
+            ApplyDcsSpatial(guardFrequencyKhz, slotId, radio);
         }
         else if (_guardMonitorJoinedFrequencyKhz.TryGetValue(radioKey, out var joinedFrequencyKhz) &&
                  _guardMonitorSlotIds.TryGetValue(radioKey, out var slotId))
@@ -1125,6 +1131,15 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 .Wait(TimeSpan.FromMilliseconds(500));
             _guardMonitorJoinedFrequencyKhz.Remove(radioKey);
         }
+    }
+
+    /// <summary>163rd vFS 3DAS static rendering: a radio that carries a helmet-fixed direction (A-10C II
+    /// 3DAP digital with 3D audio) is rendered binaurally there; otherwise its channel pan applies.</summary>
+    private void ApplyDcsSpatial(int frequencyKhz, Guid slotId, DcsRadioState radio)
+    {
+        var spatial = radio.Spatial;
+        _openFreqService.SetSpatial(frequencyKhz, slotId, spatial != null,
+            (float)(spatial?.AzimuthDeg ?? 0), (float)(spatial?.ElevationDeg ?? 0));
     }
 
     private ChannelCardViewModel? SyncDcsChannelOnUiThread(string key, string name, int frequencyKhz, bool shouldBeJoined,

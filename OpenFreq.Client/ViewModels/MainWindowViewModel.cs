@@ -165,8 +165,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.RecordingStateChanged += OnRecordingStateChanged;
         _audioService.AudioDeviceErrorOccurred += OnAudioErrorOccurred;
         _dcsExportService.ListenerErrorOccurred += OnAudioErrorOccurred;
-        if (_dcsExportService.ListenerError is { } dcsListenerError)
-            OnAudioErrorOccurred(_dcsExportService, dcsListenerError);
+        if (!string.IsNullOrEmpty(_dcsExportService.ListenerError))
+            OnAudioErrorOccurred(_dcsExportService, _dcsExportService.ListenerError);
 
         // Falcon Radio Shared Memory
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=

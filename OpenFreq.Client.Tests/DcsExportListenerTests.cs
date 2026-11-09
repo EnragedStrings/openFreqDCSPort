@@ -14,6 +14,9 @@ public class DcsExportListenerTests
     [Fact]
     public void PortTaken_ReportsUserFacingError()
     {
+        // Windows refuses a second bind of the same UDP port (what a second OpenFreq window hits); Linux .NET sockets
+        // share it, so there is nothing to report there -- and DCS, the only sender, runs on Windows.
+        if (!OperatingSystem.IsWindows()) return;
         using var occupier = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
         var port = ((IPEndPoint)occupier.Client.LocalEndPoint!).Port;
         using var service = new DcsExportService(NullLogger<DcsExportService>.Instance) { UdpPort = port };

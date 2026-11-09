@@ -23,7 +23,8 @@ namespace OpenFreqAudio.Tests
         private readonly HeightPyramid _pyramid;
         private readonly string _path;
 
-        public TerrainHarness(int width, int height, Func<int, double> elevationMetersByCol)
+        public TerrainHarness(int width, int height, Func<int, double> elevationMetersByCol,
+            double cellSizeMeters = 1.0)
         {
             // HeightPyramid requires a DEM at least 32×32 (its first level is a 32× max-pool).
             // Terrain varies only along columns here, so padding rows is behaviourally inert.
@@ -46,7 +47,7 @@ namespace OpenFreqAudio.Tests
             File.WriteAllBytes(_path, bytes);
 
             _pyramid = HeightPyramid.FromFile(_path, width, height);
-            Sim = new FastPathAudioSim(_pyramid, originX: 0.0, originY: 0.0, cellSizeMeters: 1.0,
+            Sim = new FastPathAudioSim(_pyramid, originX: 0.0, originY: 0.0, cellSizeMeters: cellSizeMeters,
                 NullLogger<FastPathAudioSim>.Instance);
         }
 

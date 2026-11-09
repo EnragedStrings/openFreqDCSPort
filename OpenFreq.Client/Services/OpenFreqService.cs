@@ -1982,6 +1982,29 @@ public class OpenFreqService : IOpenFreqService
             rxVelocity: ownVelocity?.ToTuple()
         );
 
+        // Refuse NaN or infinite physics output and keep playing the last good result. A single NaN SNR
+        // latches that radio's squelch shut until reconnect (upstream e6fe46f, the 1.1.0 F-15 bug).
+        if (!IsFinite(audioParams))
+        {
+            // Log once per run of bad results, not every time physics re-runs.
+            if (cached is not { Rejected: true })
+            {
+                LogNonFiniteAudioParams(peerId, frequencyTransmission, ownPosition, ownVelocity,
+                    receiverSensitivityDb, audioParams);
+            }
+
+            var lastGood = LastKnownOrDefaultAudioParams(cacheKey, frequencyTransmission.Khz);
+            // Cache the refusal too, so physics keeps its usual rate instead of re-running every packet.
+            _audioParamsCache[cacheKey] = new AudioParamsCacheEntry
+            {
+                Params = lastGood,
+                LastCalculated = now,
+                Rejected = true
+            };
+            return PrepareReceivedAudioParams(CloneAudioParams(lastGood), dcsLineOfSight, frequencyTransmission,
+                anySlotKey);
+        }
+
         // Update cache
         _audioParamsCache[cacheKey] = new AudioParamsCacheEntry
         {
@@ -1995,6 +2018,31 @@ public class OpenFreqService : IOpenFreqService
 
         return PrepareReceivedAudioParams(CloneAudioParams(audioParams), dcsLineOfSight, frequencyTransmission,
             anySlotKey);
+    }
+
+    private static bool IsFinite(AudioParams p) =>
+        float.IsFinite(p.ReceivedDb) && float.IsFinite(p.ReceivedSnrDb) &&
+        float.IsFinite(p.FreeSpaceLossDb) && float.IsFinite(p.TerrainLossDb) &&
+        float.IsFinite(p.DropoutRate) && float.IsFinite(p.DeepFadeRate) &&
+        float.IsFinite(p.TuneOffsetPPM);
+
+    /// <summary>
+    /// Physics produced a NaN or infinity. Print every parameter, plus every input that went into
+    /// the calculation, so the geometry can be replayed.
+    /// </summary>
+    private void LogNonFiniteAudioParams(string peerId, FrequencyTransmission tx, Vector3 rxPosition,
+        Vector3? rxVelocity, double rxSensitivityDbm, AudioParams p)
+    {
+        _logger.LogError(
+            "Rejected non-finite audio params for {FreqMhz:F3} MHz from {PeerId}, keeping the last good ones: " +
+            "ReceivedDb {ReceivedDb}, ReceivedSnrDb {ReceivedSnrDb}, FreeSpaceLossDb {FreeSpaceLossDb}, " +
+            "TerrainLossDb {TerrainLossDb}, DropoutRate {DropoutRate}, DeepFadeRate {DeepFadeRate}, " +
+            "TuneOffsetPPM {TuneOffsetPpm}. Inputs: tx position {TxPosition} m, tx velocity {TxVelocity} m/s, " +
+            "{TxPowerWatts} W, {Ppm} ppm; rx position {RxPosition} m, rx velocity {RxVelocity} m/s, " +
+            "rx sensitivity {RxSensitivityDbm} dBm",
+            tx.Khz / 1000.0, peerId, p.ReceivedDb, p.ReceivedSnrDb, p.FreeSpaceLossDb, p.TerrainLossDb,
+            p.DropoutRate, p.DeepFadeRate, p.TuneOffsetPPM,
+            tx.Position, tx.Velocity, tx.TxPowerWatts, tx.Ppm, rxPosition, rxVelocity, rxSensitivityDbm);
     }
 
     private AudioParams PrepareReceivedAudioParams(AudioParams audioParams, DcsLineOfSightResult? dcsLineOfSight,
@@ -2497,4 +2545,7 @@ internal class AudioParamsCacheEntry
 {
     public required AudioParams Params { get; set; }
     public DateTime LastCalculated { get; set; }
+
+    // The last calculation was non-finite and refused. Params still holds the last good result.
+    public bool Rejected { get; set; }
 }

@@ -98,8 +98,15 @@ public class RadioPlayback : IDisposable
     /// Each slot is its own receiver — it owns the full signal-processing chain
     /// (noise, AGC, band-pass filters, squelch) as well as its output params (volume, pan).
     /// </summary>
-    private class RadioConfig
+    internal class RadioConfig
     {
+        // Which slot this is, for logs.
+        public Guid SlotId { get; init; }
+
+        // True while this slot's receiver state is non-finite and being reset,
+        // so that's logged once per run instead of every callback. DSP thread only.
+        public bool WasNonFinite { get; set; }
+
         public bool IsTuned { get; set; }
         public float Volume { get; set; } = 1.0f;
         /// <summary>Pan position: -100 = full left, 0 = center (both), +100 = full right.</summary>
@@ -195,6 +202,25 @@ public class RadioPlayback : IDisposable
         // separate from Agc, which still does its normal job normalizing output level.
         public FirstOrderFilter SquelchDetector =
             FirstOrderFilter.MakeFirstOrderFilter(SquelchTau, SampleRate, 1.0);
+
+        /// <summary>
+        /// False if the detectors or the band-pass have gone NaN or infinite (upstream a12b86a).
+        /// Every sample passes through all four, and all four latch a bad value,
+        /// so checking once per callback catches one anywhere in it.
+        /// </summary>
+        /// <param name="output">This callback's output. The band-pass state isn't
+        /// visible, but a bad value in it shows up in the last sample.</param>
+        public bool IsFinite(ReadOnlySpan<float> output) =>
+            float.IsFinite(Agc.D1) && float.IsFinite(SquelchDetector.D1) &&
+            (output.IsEmpty || float.IsFinite(output[^1]));
+
+        public void ResetReceiver()
+        {
+            Agc.D1 = 1;
+            SquelchDetector.D1 = 1;
+            HighPass.Reset();
+            LowPass.Reset();
+        }
 
         // AGC attack and decay are exponential functions -
         // for a time constant tau, if Fs is our sample rate,
@@ -735,22 +761,16 @@ public class RadioPlayback : IDisposable
 
     public async Task StopStream(string streamId)
     {
-        bool shouldStopMaster = false;
-
+        // The master stream keeps running with nothing playing (upstream 9586ce7): recording, the monitor
+        // sink, the HUD Recorder feed and the KY-58 tones all run in its DSP callback, and nothing that
+        // tunes a slot or adds a stream would start it again.
         await Task.Run(() =>
         {
             lock (_lock)
             {
                 StopStreamInternal(streamId);
-                shouldStopMaster = ShouldStopMasterStream();
             }
         });
-
-        // Must release lock before calling StopMasterStream!
-        if (shouldStopMaster)
-        {
-            StopMasterStream();
-        }
     }
 
     private void StopStreamInternal(string streamId)
@@ -774,15 +794,6 @@ public class RadioPlayback : IDisposable
         }
 
         _streams.Remove(streamId);
-
-        // Note: Don't call StopMasterStream here - let the caller handle it
-        // since this method is called from within locks
-    }
-
-    private bool ShouldStopMasterStream()
-    {
-        bool hasTuned = _slots.Values.Any(s => s.IsTuned);
-        return _streams.Count == 0 && !hasTuned && _masterStream != 0;
     }
 
     public void UpdateStreamParams(string streamId, AudioParams newParams)
@@ -1031,7 +1042,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
 
@@ -1047,19 +1058,12 @@ public class RadioPlayback : IDisposable
 
     public void UntuneFrequency(int frequencyKHz, Guid slotId)
     {
-        bool shouldStopMaster;
-
+        // Leaves the master stream running; see StopStream.
         lock (_lock)
         {
             var key = (frequencyKHz, slotId);
             if (_slots.TryGetValue(key, out var slot))
                 slot.IsTuned = false;
-            shouldStopMaster = ShouldStopMasterStream();
-        }
-
-        if (shouldStopMaster)
-        {
-            StopMasterStream();
         }
     }
 
@@ -1070,7 +1074,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
             slot.SquelchLevel = squelchLevel;
@@ -1096,7 +1100,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
 
@@ -1131,7 +1135,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
             slot.Enc = enc;
@@ -1148,7 +1152,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
             // Headroom up to 4x (+12 dB)
@@ -1171,7 +1175,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
             slot.Pan = Math.Clamp(pan, -100, 100);
@@ -1187,7 +1191,7 @@ public class RadioPlayback : IDisposable
             var key = (frequencyKHz, slotId);
             if (!_slots.TryGetValue(key, out var slot))
             {
-                slot = new RadioConfig(frequencyKHz);
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
             if (enabled)
@@ -1283,7 +1287,7 @@ public class RadioPlayback : IDisposable
         return (long)(Math.Clamp(ms, 0, 500) / 1000.0 * Stopwatch.Frequency);
     }
 
-    private void StopMasterStream()
+    private void StopMasterStream(string reason)
     {
         int streamToStop = 0;
         int dspHandleToRemove = 0;
@@ -1312,6 +1316,8 @@ public class RadioPlayback : IDisposable
 
             Bass.ChannelStop(streamToStop);
             Bass.StreamFree(streamToStop);
+
+            _logger.LogInformation("Master stream stopped ({Reason})", reason);
         }
     }
 
@@ -1841,6 +1847,24 @@ public class RadioPlayback : IDisposable
                             }
                         }
 
+                        // Catch a NaN or infinity before it reaches the shared mix (and the 3DAS binaural
+                        // state, recording and HUD feed), where it would take out every radio. Silence this
+                        // slot for this callback and start its receiver over (upstream a12b86a). Don't let
+                        // NaN open the squelch gate instead: that's how it would get into the mix.
+                        if (!slot.IsFinite(_dspScratch.AsSpan(0, samples)))
+                        {
+                            if (!slot.WasNonFinite)
+                                LogNonFiniteSlot(freq, slot, _dspScratch.AsSpan(0, samples), transmittingStreams);
+                            slot.WasNonFinite = true;
+                            slot.ResetReceiver();
+                            Array.Clear(_dspScratch, 0, samples);
+                            squelchOpened = false;
+                        }
+                        else
+                        {
+                            slot.WasNonFinite = false;
+                        }
+
                         if (squelchOpened != slot.WasSquelchOpen)
                         {
 #if DEBUG
@@ -1954,6 +1978,36 @@ public class RadioPlayback : IDisposable
 
 
     /// <summary>
+    /// A slot's detectors or band-pass went NaN or infinite, and are about to be reset.
+    /// Called on the DSP thread, so this takes a snapshot and logs it from the thread pool.
+    /// </summary>
+    private void LogNonFiniteSlot(int freqKhz, RadioConfig slot, ReadOnlySpan<float> output,
+        List<RadioStream> transmittingStreams)
+    {
+        var slotId = slot.SlotId;
+        float agc = slot.Agc.D1;
+        float squelchDetector = slot.SquelchDetector.D1;
+        float lastOutput = output.IsEmpty ? 0f : output[^1];
+        var transmitters = transmittingStreams.Select(s => (s.StreamId, s.CurrentParams)).ToList();
+
+        LogOffDspThread(logger => logger.LogError(
+            "Reset receiver on {Frequency:F3} MHz (slot {SlotId}) after it went non-finite: " +
+            "AGC {Agc}, squelch detector {SquelchDetector}, last output sample {LastOutput}. " +
+            "Transmitters: {Transmitters}",
+            freqKhz / 1000.0, slotId, agc, squelchDetector, lastOutput,
+            transmitters.Count == 0
+                ? "none"
+                : string.Join("; ", transmitters.Select(t => $"{t.StreamId}: {t.CurrentParams}"))));
+    }
+
+    /// <summary>
+    /// Log from the thread pool, so the DSP thread never waits on a log sink.
+    /// Each call queues work, so keep this to rare events.
+    /// </summary>
+    private void LogOffDspThread(Action<ILogger> log) =>
+        ThreadPool.QueueUserWorkItem(_ => log(_logger));
+
+    /// <summary>
     /// Build one stereo recording frame (incoming as heard, with pan, + own voice rendered as
     /// if heard from the same position and panned centre) and feed it to the encoder. Runs on
     /// the DSP thread; the Opus encode itself happens on the recorder's own thread.
@@ -2023,7 +2077,7 @@ public class RadioPlayback : IDisposable
         }
 
         // 3. Stop master stream
-        StopMasterStream();
+        StopMasterStream("StopAll");
 
         // 4. Clear slot configs
         lock (_lock)
@@ -2103,7 +2157,7 @@ public class RadioPlayback : IDisposable
             previousDeviceIndex, newDeviceIndex);
 
         // Stop the current master stream regardless — StopMasterStream is a no-op if none running.
-        StopMasterStream();
+        StopMasterStream("switching output device");
 
         // Initialize the new device if BASS hasn't seen it yet.
         // NOTE: a device that was disconnected and reconnected still shows IsInitialized = true —

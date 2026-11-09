@@ -1960,6 +1960,12 @@ local previousAfterNextFrame = LuaExportAfterNextFrame
 -- to stop touching it: leave whatever SRS (or anything else) installed there completely alone.
 local openFreqAfterNextFrame -- our LuaExportAfterNextFrame, defined below
 local openFreqStop            -- our LuaExportStop
+-- The chains captured when this script loaded. A re-chain (below) puts another script's hook in
+-- previousAfterNextFrame / previousStop; these let it be undone.
+local loadedAfterNextFrame = previousAfterNextFrame
+local loadedStop = previousStop
+local inAfterNextFrame, reenteredAfterNextFrame = false, false
+local inStop, reenteredStop = false, false
 
 function LuaExportStart()
     if type(previousStart) == "function" then
@@ -1967,33 +1973,71 @@ function LuaExportStart()
     end
     -- Some export scripts (re)install their per-frame hook from inside their own LuaExportStart.
     -- That runs above, after OpenFreqDCS loaded, and would silently cut OpenFreqDCS out of the
-    -- frame chain (no radios, no error). Re-chain on top of whatever is there now.
+    -- frame chain (no radios, no error). So re-chain on top of whatever is there now -- but that
+    -- hook may instead be a wrapper of OURS, installed by a script loaded after OpenFreqDCS. Then
+    -- OpenFreqDCS -> wrapper -> OpenFreqDCS would recurse until the C stack overflows (v1.5.2,
+    -- with everything else in the chain dropped). The wrappers below detect that re-entry on the
+    -- first frame and undo the re-chain, which leaves the chain exactly as it was loaded.
     if LuaExportAfterNextFrame ~= openFreqAfterNextFrame then
         previousAfterNextFrame = LuaExportAfterNextFrame
         LuaExportAfterNextFrame = openFreqAfterNextFrame
-        writeLog("LuaExportAfterNextFrame was replaced by another export script at mission start -- re-chained")
+        writeLog("LuaExportAfterNextFrame is another script's hook at mission start -- chained under OpenFreqDCS")
     end
     if LuaExportStop ~= openFreqStop then
         previousStop = LuaExportStop
         LuaExportStop = openFreqStop
-        writeLog("LuaExportStop was replaced by another export script at mission start -- re-chained")
+        writeLog("LuaExportStop is another script's hook at mission start -- chained under OpenFreqDCS")
     end
     pcall(OpenFreqDCS.start)
 end
 
 function LuaExportStop()
+    if inStop then
+        reenteredStop = true
+        return
+    end
+    inStop = true
     pcall(OpenFreqDCS.stop)
     if type(previousStop) == "function" then
         pcall(previousStop)
+    end
+    inStop = false
+    if reenteredStop then
+        reenteredStop = false
+        LuaExportStop = previousStop
+        previousStop = loadedStop
+        -- The re-entered call returned early, so this stop never reached the chain we loaded with.
+        if type(loadedStop) == "function" then
+            pcall(loadedStop)
+        end
+        writeLog("LuaExportStop: that hook already calls OpenFreqDCS -- re-chain undone")
     end
 end
 openFreqStop = LuaExportStop
 
 function LuaExportAfterNextFrame()
+    if inAfterNextFrame then
+        -- Called again from inside our own previousAfterNextFrame: that hook wraps this one.
+        reenteredAfterNextFrame = true
+        return
+    end
+    inAfterNextFrame = true
     if type(previousAfterNextFrame) == "function" then
         pcall(previousAfterNextFrame)
     end
     pcall(scanArgumentsOnce)
     pcall(OpenFreqDCS.export)
+    inAfterNextFrame = false
+    if reenteredAfterNextFrame then
+        -- Undo: the wrapper goes back on top (it calls us), and we call what we loaded with.
+        reenteredAfterNextFrame = false
+        LuaExportAfterNextFrame = previousAfterNextFrame
+        previousAfterNextFrame = loadedAfterNextFrame
+        -- Same for this frame: run the chain we loaded with, which the early return skipped.
+        if type(loadedAfterNextFrame) == "function" then
+            pcall(loadedAfterNextFrame)
+        end
+        writeLog("LuaExportAfterNextFrame: that hook already calls OpenFreqDCS -- re-chain undone")
+    end
 end
 openFreqAfterNextFrame = LuaExportAfterNextFrame

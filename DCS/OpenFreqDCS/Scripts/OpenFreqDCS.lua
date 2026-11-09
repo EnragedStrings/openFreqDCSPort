@@ -1640,6 +1640,8 @@ local function buildPacket(modelTime)
 end
 
 function OpenFreqDCS.start()
+    pcall(resetArgScanLog)
+
     if not socket then
         return
     end
@@ -1711,21 +1713,65 @@ function OpenFreqDCS.export(modelTime)
 end
 
 -- Debug tool for discovering cockpit argument IDs (e.g. squelch switches) that have no known
--- ID yet. Enable via config.debugArgScan.enabled, then flip one switch at a time in the cockpit
--- and watch Logs\OpenFreqDCS.ArgScan.log for "changed" lines -- the id that changes right as you
--- flip the switch is the argument to use. Disable again once done; it's a perf cost. Kept in its
--- own file (not OpenFreqDCS.log or dcs.log) since it can be high-volume.
-local function writeArgScanLog(message)
-    if writeDir ~= "" then
-        local file = io.open(writeDir .. [[Logs\OpenFreqDCS.ArgScan.log]], "ab")
-        if file then
-            file:write(os.date("!%Y-%m-%dT%H:%M:%SZ "), tostring(message), "\r\n")
-            file:close()
-        end
-    end
-end
+-- ID yet. Opt in with config.debugArgScan.optIn = true, then flip one switch at a time in the
+-- cockpit and watch Logs\OpenFreqDCS.ArgScan.log for "changed" lines -- the id that changes right
+-- as you flip the switch is the argument to use. Turn it off again once done.
+--
+-- Off unless explicitly opted in: debugArgScan.enabled (from configs written before v1.5.2, where
+-- it defaulted to true -- the installer never overwrites an existing config) is ignored. Bounded
+-- even when on: arguments that keep changing (gauges, needles, animations) are muted after a few
+-- changes, the log is written once per scan, and a session stops logging at ARGSCAN_MAX_BYTES.
+-- Without these a single sortie wrote about a gigabyte in 20 minutes.
+local ARGSCAN_LOG = [[Logs\OpenFreqDCS.ArgScan.log]]
+local ARGSCAN_MAX_BYTES = 25 * 1024 * 1024
+local ARGSCAN_NOISY_CHANGES = 6      -- changes within ARGSCAN_NOISY_WINDOW seconds => continuous, muted
+local ARGSCAN_NOISY_WINDOW = 5
 
 local argScanPrevValues = {}
+local argScanRecent = {}   -- key -> { count, windowStart }
+local argScanMuted = {}    -- key -> true
+local argScanBytes = 0
+local argScanStopped = false
+
+local function argScanOptedIn()
+    local scanConfig = config.debugArgScan
+    return type(scanConfig) == "table" and scanConfig.optIn == true
+end
+
+-- Called at export start: a fresh, bounded log per session when opted in; otherwise remove the
+-- log a pre-v1.5.2 default-on scan may have left behind (it can be gigabytes).
+local function resetArgScanLog()
+    if writeDir == "" then return end
+    local path = writeDir .. ARGSCAN_LOG
+    if argScanOptedIn() then
+        local file = io.open(path, "wb")
+        if file then file:close() end
+    else
+        os.remove(path)
+    end
+    argScanPrevValues, argScanRecent, argScanMuted = {}, {}, {}
+    argScanBytes, argScanStopped = 0, false
+end
+
+local function writeArgScanLines(lines)
+    if writeDir == "" or #lines == 0 or argScanStopped then return end
+    local stamp = os.date("!%Y-%m-%dT%H:%M:%SZ ")
+    local chunk = {}
+    for i = 1, #lines do
+        chunk[i] = stamp .. lines[i] .. "\r\n"
+    end
+    local text = table.concat(chunk)
+    if argScanBytes + #text > ARGSCAN_MAX_BYTES then
+        text = stamp .. "ArgScan log limit reached (" .. ARGSCAN_MAX_BYTES .. " bytes) -- logging stopped for this session\r\n"
+        argScanStopped = true
+    end
+    local file = io.open(writeDir .. ARGSCAN_LOG, "ab")
+    if file then
+        file:write(text)
+        file:close()
+        argScanBytes = argScanBytes + #text
+    end
+end
 
 local function scanArgumentsOnce()
     local scanConfig = config.debugArgScan
@@ -1733,16 +1779,18 @@ local function scanArgumentsOnce()
     if not OpenFreqDCS.argScanConfigLogged then
         OpenFreqDCS.argScanConfigLogged = true
         writeLog(string.format(
-            "argScan config seen at load: present=%s enabled=%s minId=%s maxId=%s deviceIds=%s ignoreIds=%s",
+            "argScan config seen at load: present=%s optIn=%s minId=%s maxId=%s deviceIds=%s ignoreIds=%s%s",
             tostring(scanConfig ~= nil),
-            tostring(scanConfig and scanConfig.enabled),
+            tostring(scanConfig and scanConfig.optIn),
             tostring(scanConfig and scanConfig.minId),
             tostring(scanConfig and scanConfig.maxId),
             scanConfig and type(scanConfig.deviceIds) == "table" and table.concat(scanConfig.deviceIds, ",") or "nil",
-            scanConfig and type(scanConfig.ignoreIds) == "table" and table.concat(scanConfig.ignoreIds, ",") or "nil"))
+            scanConfig and type(scanConfig.ignoreIds) == "table" and table.concat(scanConfig.ignoreIds, ",") or "nil",
+            (scanConfig and scanConfig.enabled == true and scanConfig.optIn ~= true)
+                and " (debugArgScan.enabled is ignored since v1.5.2: set debugArgScan.optIn = true to scan)" or ""))
     end
 
-    if not scanConfig or scanConfig.enabled ~= true then
+    if not argScanOptedIn() or argScanStopped then
         return
     end
 
@@ -1765,26 +1813,43 @@ local function scanArgumentsOnce()
         end
     end
 
+    local lines = {}
     for _, deviceId in ipairs(deviceIds) do
         local device = getDevice(deviceId)
         if device then
             for id = minId, maxId do
                 if not ignoreIds[id] then
-                    local value = getArgument(device, id, nil)
-                    if type(value) == "number" then
-                        local key = deviceId .. ":" .. id
-                        local previous = argScanPrevValues[key]
-                        if previous ~= nil and math.abs(previous - value) > 0.0005 then
-                            writeArgScanLog(string.format(
-                                "device=%d id=%d changed %.4f -> %.4f",
-                                deviceId, id, previous, value))
+                    local key = deviceId .. ":" .. id
+                    if not argScanMuted[key] then
+                        local value = getArgument(device, id, nil)
+                        if type(value) == "number" then
+                            local previous = argScanPrevValues[key]
+                            if previous ~= nil and math.abs(previous - value) > 0.0005 then
+                                local recent = argScanRecent[key]
+                                if not recent or now - recent[2] > ARGSCAN_NOISY_WINDOW then
+                                    recent = { 0, now }
+                                    argScanRecent[key] = recent
+                                end
+                                recent[1] = recent[1] + 1
+                                if recent[1] > ARGSCAN_NOISY_CHANGES then
+                                    argScanMuted[key] = true
+                                    lines[#lines + 1] = string.format(
+                                        "device=%d id=%d muted: changes continuously (gauge/animation)",
+                                        deviceId, id)
+                                else
+                                    lines[#lines + 1] = string.format(
+                                        "device=%d id=%d changed %.4f -> %.4f",
+                                        deviceId, id, previous, value)
+                                end
+                            end
+                            argScanPrevValues[key] = value
                         end
-                        argScanPrevValues[key] = value
                     end
                 end
             end
         end
     end
+    writeArgScanLines(lines)
 end
 
 local previousStart = LuaExportStart

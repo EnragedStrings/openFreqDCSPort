@@ -114,14 +114,13 @@ OpenFreqDCSConfig.los.heightOffsetMeters = OpenFreqDCSConfig.los.heightOffsetMet
 OpenFreqDCSConfig.los.maxHeightOffsetMeters = OpenFreqDCSConfig.los.maxHeightOffsetMeters or 200
 OpenFreqDCSConfig.los.heightOffsetStepMeters = OpenFreqDCSConfig.los.heightOffsetStepMeters or 20
 
--- Diagnostic tool for finding unknown cockpit argument IDs (e.g. squelch switches). On by
--- default for now -- this repo is private with only developers using it, so it's more useful
--- for everyone to have live arg-scan data (Logs\OpenFreqDCS.ArgScan.log) than to keep it opt-in.
--- Flip to false here (or per-install, under Saved Games\...\Mods\Services\OpenFreqDCS\Scripts)
--- once the module roster settles down and this stops being worth the per-frame scan cost for
--- everyone. See DCS/README.md for details.
+-- Diagnostic tool for finding unknown cockpit argument IDs (e.g. squelch switches): logs every
+-- cockpit argument that changes to Logs\OpenFreqDCS.ArgScan.log. A developer tool with a per-frame
+-- cost, so OFF unless optIn = true here (or per-install, under Saved Games\...\Mods\Services\
+-- OpenFreqDCS\Scripts). Continuously changing arguments are muted and a session's log is capped at
+-- 25 MB. The old debugArgScan.enabled key is ignored. See DCS/README.md for details.
 OpenFreqDCSConfig.debugArgScan = OpenFreqDCSConfig.debugArgScan or {}
-OpenFreqDCSConfig.debugArgScan.enabled = OpenFreqDCSConfig.debugArgScan.enabled ~= false
+OpenFreqDCSConfig.debugArgScan.optIn = OpenFreqDCSConfig.debugArgScan.optIn == true
 OpenFreqDCSConfig.debugArgScan.scanHz = OpenFreqDCSConfig.debugArgScan.scanHz or 20
 OpenFreqDCSConfig.debugArgScan.minId = OpenFreqDCSConfig.debugArgScan.minId or 0
 OpenFreqDCSConfig.debugArgScan.maxId = OpenFreqDCSConfig.debugArgScan.maxId or 900

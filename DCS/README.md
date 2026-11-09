@@ -93,11 +93,10 @@ shipped with the mod for these IDs, so unmapped switches (e.g. squelch on the
 ARC-210/ARC-164/ARC-186) need to be found by correlating a physical switch
 flip with the argument that changes.
 
-`debugArgScan.enabled` defaults to `true` in the repo config (this repo is currently private
-with only developers on it, so it's more useful for everyone to have live arg-scan data than to
-keep it opt-in — flip it to `false` in `Scripts/OpenFreqDCSConfig.lua`, or per-install under
-`Saved Games\DCS...\Mods\Services\OpenFreqDCS\Scripts`, once that stops being worth the per-frame
-scan cost). With it on, flip **one switch at a time** in the cockpit, pausing a second or two
+ArgScan is off unless you opt in: set `debugArgScan.optIn = true` in
+`Scripts/OpenFreqDCSConfig.lua`, or per-install under
+`Saved Games\DCS...\Mods\Services\OpenFreqDCS\Scripts` (the old `debugArgScan.enabled` key is
+ignored since v1.5.2, because it defaulted to on and filled disks). With it on, flip **one switch at a time** in the cockpit, pausing a second or two
 between each. Every changed argument gets logged to its own file (kept separate from the radio
 debug log since it can be high-volume):
 
@@ -113,5 +112,6 @@ device=0 id=781 changed 0.0000 -> 0.2000
 The `id` on the line logged right as you flip a given switch is that switch's
 argument. `minId`/`maxId` (default `0`-`900`) bound the scan range, and
 `scanHz` (default `20`) throttles how often it samples — scanning is a real
-per-frame cost, so turn `debugArgScan.enabled` back off once you've found what
-you need.
+per-frame cost, so set `debugArgScan.optIn` back to `false` once you've found what
+you need. Arguments that keep changing (gauges, needles, animations) are logged as "muted" after a
+few changes and then skipped, and each DCS session starts a fresh log capped at 25 MB.

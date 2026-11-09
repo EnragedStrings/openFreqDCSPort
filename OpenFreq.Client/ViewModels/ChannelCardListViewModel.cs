@@ -377,10 +377,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 AltitudeFt = 30000
             });
 
-        var lobby1 = location.CreateChannel(1234, "BMS Lobby 1", false);
+        var lobby1 = location.CreateChannel(339750, "BMS Lobby 1", false);
         lobby1.PttHotKey = new KeyboardBinding(KeyCode.VcF1);
 
-        var lobby2 = location.CreateChannel(339750, "BMS Lobby 2", false);
+        var lobby2 = location.CreateChannel(1234, "BMS Lobby 2", false);
         lobby2.PttHotKey = new KeyboardBinding(KeyCode.VcF2);
 
         SelectedLocation = location;
@@ -437,19 +437,17 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private static float ComputeGainFromBmsVolume(int rawVolume)
     {
-        // BMS knob: ~600 = loudest, 10000 = mute (inverted scale).
-        // Floor set slightly below the loudest reading (600) so the very top of the knob reliably hits max gain
-        const float dxMin = 600f;
-        const float dxMax = 10000f;
-        // Calibrated empirically to the BMS *AI-voice* loudness curve - the BMS volume knob acts as an overall-volume control, so we match the active-RMS of BMS recordings at matched knob position
-        const float dbMin = -88.75f;
-        const float dbMax = 2.0f;
+        // BMS knob: 0 = loudest, 10000 = quietest (inverted scale). The dB range roughly matches IVC
+        // (upstream 4f99bc9; the old 600..10000 -> -88.75..+2 dB curve left most of the knob near-silent).
+        const double dxMin = 0;
+        const double dxMax = 10000;
+        const double dbMin = -40;
+        const double dbMax = 6;
 
         var clampedDx = Math.Clamp(rawVolume, dxMin, dxMax);
         var t = (dxMax - clampedDx) / (dxMax - dxMin);
         var db = dbMin + t * (dbMax - dbMin);
-        var gain = (float)Math.Pow(10.0, db / 20.0);
-        return gain < 0.00001f ? 0f : gain;
+        return (float)Math.Pow(10.0, db / 20.0);
     }
 
     private void OnRadioVolumeChanged(object? sender, RadioVolumeChangedEventArgs e)
@@ -543,7 +541,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         foreach (var type in Enum.GetValues<RadioType>())
         {
             var radioChannel = _falconRadioSharedMemoryService.GetRadioChannel(type);
-            if (radioChannel == null || radioChannel.RxVolume <= 0) continue;
+            // BMS scales RxVolume from 0, the loudest, to 10000, the quietest (upstream 4df79d1).
+            if (radioChannel == null || radioChannel.RxVolume < 0) continue;
             var gain = ComputeGainFromBmsVolume(radioChannel.RxVolume);
             foreach (var channel in FalconLocation.Channels.Where(c => c.BmsRadioType == type).ToList())
             {
@@ -1284,6 +1283,12 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                     _logger.LogDebug($"Explicitly joining updated channel: {e.NewFrequencyKhz}");
                     updatedChannel.Join();
                     _openFreqService.SetPan(e.NewFrequencyKhz, updatedChannel.Id, updatedChannel.Pan);
+                    // Playback keeps volume per (frequency, slot): carry the knob over to the new frequency,
+                    // or the radio plays at default volume until the knob next moves (upstream 20b35ed).
+                    var rxVolume = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.RxVolume ?? -1;
+                    if (rxVolume >= 0)
+                        _openFreqService.SetVolume(e.NewFrequencyKhz, updatedChannel.Id,
+                            ComputeGainFromBmsVolume(rxVolume));
                 }
 
                 // Still make sure to join all channels - e.g. when switching back from guard mode

@@ -4,6 +4,7 @@ using System.Reflection;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenFreq.Client.NativeMethods;
 using OpenFreq.Common;
 using OpenFreq.Common.Updates;
 using OpenFreqClient.Services;
@@ -121,6 +122,10 @@ sealed class Program
         var services = new ServiceCollection();
         services.AddOpenFreqServices();
         ServiceProvider = services.BuildServiceProvider();
+
+        // 1 ms timers for the PTT poll, the DCS export listener and BASS callbacks (upstream cc3ceea).
+        using var timerResolution =
+            Win32TimerResolution.Request(ServiceProvider.GetRequiredService<ILogger<Win32TimerResolution>>());
 
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);

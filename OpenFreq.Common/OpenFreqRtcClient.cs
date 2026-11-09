@@ -473,7 +473,8 @@ public class OpenFreqRtcClient : IRtcClient
     /// <see cref="RtpAudioSender.MarkTransmitStartTime"/>
     public void MarkTransmitStartTime()
     {
-        _rtpSender!.MarkTransmitStartTime();
+        // Null while reconnecting (upstream 1588f4a).
+        _rtpSender?.MarkTransmitStartTime();
     }
 
     public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn, double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies)

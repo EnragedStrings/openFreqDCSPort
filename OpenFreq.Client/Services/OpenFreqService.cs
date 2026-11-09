@@ -663,7 +663,7 @@ public class OpenFreqService : IOpenFreqService
                     ? Path.Combine(exeDir, "recordings")
                     : RecordingPath;
                 Directory.CreateDirectory(dir);
-                var file = Path.Combine(dir, $"OpenFreq_{DateTime.Now:yyyyMMdd_HHmmss}.ogg");
+                var file = Path.Combine(dir, $"OpenFreq_{DateTime.UtcNow:yyyyMMddTHHmmss}Z.ogg");
                 _playbackService.StartRecording(file);
                 if (!_playbackService.IsRecording) return; // start failed; error already surfaced
                 OnStatusMessage($"Recording to {file}");
@@ -871,6 +871,14 @@ public class OpenFreqService : IOpenFreqService
         if (_client == null || _playbackService == null)
         {
             throw new InvalidOperationException("Service not initialized");
+        }
+
+        // While the client reconnects it has no RTP sender and the server has no session for our start. A key
+        // recorded now would send audio with no start once the link came back, so refuse it (upstream 1588f4a).
+        if (!_client.IsConnected)
+        {
+            _logger.LogWarning("Not transmitting on {FrequencyKhz}, not connected to the server", frequencyKhz);
+            return;
         }
 
         _tunedSlots.TryGetValue((frequencyKhz, slotId), out var tunedFrequencyData);
@@ -1321,27 +1329,6 @@ public class OpenFreqService : IOpenFreqService
                 return true;
             }
 
-            // Handle first packet - BASS accumulates audio during initialization
-            // Calculate expected size for 20ms at 48kHz, mono, 16-bit
-            // 48000 samples/sec ÷ 50 = 960 samples per 20ms
-            // 960 samples × 2 bytes/sample × 1 channel = 1920 bytes
-            int expectedBytes = (OpenFreqRtcClient.SAMPLE_RATE / 50) * 2;
-
-            // TODO: I dont think we need this anymore with the shorter dsp updates. Deactivated for now
-            expectedBytes = 10000;
-
-            if (length > expectedBytes)
-            {
-                _logger.LogWarning("Recording packet oversized: {Length} bytes, truncating to {ExpectedBytes}",
-                    length, expectedBytes);
-                // Option 1: Only use the LAST 20ms (most recent audio)
-                buffer = IntPtr.Add(buffer, length - expectedBytes);
-                length = expectedBytes;
-
-                // Option 2: Skip first packet entirely
-                //_isFirstPacket = false;
-                //return true;
-            }
 
             // Copy audio data once
             short[] audioData = new short[length / 2];

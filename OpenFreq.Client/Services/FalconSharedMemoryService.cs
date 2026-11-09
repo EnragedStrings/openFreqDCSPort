@@ -296,7 +296,12 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
                     var terrainDir = StringDataParser.ParseTheaterTerrainDir(_lpStringBaseAddress);
 
                     // This happens when BMS is not done loading yet
-                    if (String.IsNullOrEmpty(terrainDir)) return false;
+                    if (String.IsNullOrEmpty(terrainDir))
+                    {
+                        // Release the handles, or every poll while BMS loads leaks a set (upstream de8b50e).
+                        DisconnectFromSharedMemory();
+                        return false;
+                    }
 
                     lock (_dataLock)
                     {

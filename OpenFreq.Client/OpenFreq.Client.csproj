@@ -71,6 +71,10 @@
     </ItemGroup>
 
     <ItemGroup>
+      <InternalsVisibleTo Include="OpenFreq.Client.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\libs\OpenFreqAudio\OpenFreqAudio\OpenFreqAudio.csproj" />
       <ProjectReference Include="..\OpenFreq.Common\OpenFreq.Common.csproj" />
     </ItemGroup>

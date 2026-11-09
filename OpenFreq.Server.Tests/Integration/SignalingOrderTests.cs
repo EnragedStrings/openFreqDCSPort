@@ -37,7 +37,7 @@ public class SignalingOrderTests
         await alice.Client.JoinFrequencyAsync(OtherFreq);
         await alice.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == OtherFreq);
 
-        Assert.Equal(new double[] { Freq, OtherFreq },
+        Assert.Equal(new[] { Freq, OtherFreq },
             server.Server.ChannelManager.GetClientChannels(alice.PeerId!).Order());
     }
 

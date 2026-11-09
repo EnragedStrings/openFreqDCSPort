@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using OpenFreqAudio;
+using OpenFreqAudio.Jamming;
 
 namespace OpenFreqClient.Services.Audio;
 
@@ -43,6 +44,9 @@ public interface IPlaybackService
         double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0);
     void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes);
     void PlayTxTone();
+
+    /// <summary>Replaces the jammers this slot currently receives (empty = none). See docs/jamming.</summary>
+    void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions);
 
     void AddTransmittingFrequencies(IEnumerable<int> frequencies);
     void RemoveTransmittingFrequencies(IEnumerable<int> frequencies);
@@ -118,6 +122,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes)
         => _inner.SetEncryptionToneAssets(txWavBytes, rxWavBytes);
     public void PlayTxTone() => _inner.PlayTxTone();
+    public void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions)
+        => _inner.SetSlotInterference(frequencyKhz, slotId, contributions);
 
     public void AddTransmittingFrequencies(IEnumerable<int> frequencies)
         => _inner.AddTransmittingFrequencies(frequencies);

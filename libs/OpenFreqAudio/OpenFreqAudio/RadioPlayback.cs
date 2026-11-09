@@ -4,6 +4,7 @@ using ManagedBass;
 using ManagedBass.Mix;
 using Microsoft.Extensions.Logging;
 using NWaves.Filters.Butterworth;
+using OpenFreqAudio.Jamming;
 using OpenFreqAudio.Satcom;
 
 // ReSharper disable InconsistentNaming
@@ -170,6 +171,10 @@ public class RadioPlayback : IDisposable
     {
         // Which slot this is, for logs.
         public Guid SlotId { get; init; }
+
+        // Jammers this slot currently receives (docs/jamming). Replaced wholesale by SetSlotInterference under
+        // _lock; the DSP thread reads the reference from its slot snapshot.
+        public IReadOnlyList<JammerContribution> Jammers { get; set; } = [];
 
         // True while this slot's receiver state is non-finite and being reset,
         // so that's logged once per run instead of every callback. DSP thread only.
@@ -1242,6 +1247,25 @@ public class RadioPlayback : IDisposable
     /// periodically (e.g. once per link-quality update) via repeated calls while active --
     /// cheap to call, does not reset the vocoder's decoder state or output buffer.
     /// </summary>
+    /// <summary>
+    /// Replaces the jammers this slot receives. Called by the client at the physics tick; an empty list clears
+    /// them. See docs/jamming/JAMMING_DESIGN.md.
+    /// </summary>
+    public void SetSlotInterference(int frequencyKHz, Guid slotId, IReadOnlyList<JammerContribution> contributions)
+    {
+        lock (_lock)
+        {
+            var key = (frequencyKHz, slotId);
+            if (!_slots.TryGetValue(key, out var slot))
+            {
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
+                _slots[key] = slot;
+            }
+
+            slot.Jammers = contributions;
+        }
+    }
+
     public void SetSatcomState(int frequencyKHz, Guid slotId, bool isActive, double frameErrorRate,
         double burstSeverity, double frameDurationSeconds = 0.0225, double propagationLatencySeconds = 0.0)
     {

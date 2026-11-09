@@ -43,6 +43,18 @@ public class RadioPlayback : IDisposable
         public required RadioEffect RadioEffect { get; set; }
         public required AudioParams CurrentParams { get; set; }
 
+        // Phase of this stream's carrier, relative to the channel frequency, in radians,
+        // wrapped to [0, 2π) (upstream 49f2ede). Integrated per sample so a change in carrier
+        // frequency (e.g. Doppler shift) doesn't cause an audible phase jump. Every slot tuned to
+        // the channel starts its mix from this value, and it's advanced exactly once per callback
+        // after all of them have used it. Only ever touched on the DSP thread.
+        public double CarrierPhase;
+
+        // How far CarrierPhase moves per sample this callback, from CurrentParams as it was when
+        // the stream was drained, so every slot and the final advance agree even if physics
+        // swaps CurrentParams mid-callback. Only ever touched on the DSP thread.
+        public double CarrierPhaseStep;
+
         // Audio to play is pushed here and pulled by playback.
         public SyncRope<float> Buffer { get; } = new();
         // Scratch space for decoding and FX application
@@ -288,8 +300,13 @@ public class RadioPlayback : IDisposable
     private short[] _satcomPcmScratch = new short[MaxBufferSize];
     private float[] _stereoBuffer = new float[MaxBufferSize * 2];
 
-    // Phase coherence is good - don't have phase jumps between DSP callbacks.
+    // Sample counter for the KY-58 wrong-key beep only, so its tone stays continuous across
+    // callbacks. Radio carriers integrate their own phase instead (RadioStream.CarrierPhase).
+    // Wrapped every second: the 900 Hz beep is a whole number of cycles per second, so the
+    // wrap is seamless and the counter never overflows.
     private int _sampleNum = 0;
+
+    private const double TwoPi = 2.0 * Math.PI;
 
     // Baseband is 8 kHz (4kHz Nyquist)
     // NB: Opus only accepts 8000, 12000, 16000, 24000, or 48000 Hz
@@ -1518,6 +1535,10 @@ public class RadioPlayback : IDisposable
                     throw new Exception($"Expected {take} samples, got {drained}");
                 }
 
+                var drainParams = stream.CurrentParams;
+                stream.CarrierPhaseStep = PhaseStep(drainParams.RadioFrequencyKHz, stream.FrequencyKHz,
+                    drainParams.TuneOffsetPPM);
+
                 // Apply radio effects
                 stream.RadioEffect.Process(stream.Scratch, 0, drained, AmbientNoiseVolume);
 
@@ -1590,11 +1611,16 @@ public class RadioPlayback : IDisposable
                     // where (I + jQ) is the representation of the signal as a complex number
                     // (see https://en.wikipedia.org/wiki/In-phase_and_quadrature_components).
                     //
-                    // And for each carrier frequency k (relative to θ_0),
+                    // If k people are talking on the same channel,
+                    // then each will have some signal modulated on a carrier frequency Fc_k
+                    // relative to our channel frequency. Then for each k,
                     // I_k = cos(θ_k[n])
                     // Q_k = sin(θ_k[n])
-                    // where θ_k[n] = 2π · beat[k] · n / F_s
+                    // where θ_k[n] = θ_k[n-1] + 2π · Fc_k / F_s
                     //   and F_s is the sample rate.
+                    // The phases θ_k must be *integrated* instead of calculated as
+                    // θ_k[n] = 2π · Fc_k · n / F_s,
+                    // since Fc_k changes on the fly with Doppler shift (upstream 49f2ede).
                     // We'll multiply those terms by each AM signal A_k + v_k[n],
                     // where A_k is the received power of the carrier and v_k[n] is the modulated voice.
                     // All together, we get
@@ -1677,30 +1703,23 @@ public class RadioPlayback : IDisposable
 
                         var numStreams = transmittingStreams.Count;
                         var relativePowers = new List<float>(numStreams);
-                        var carrierOffsets = new List<float>(numStreams);
-                        if (numStreams > 0)
+                        // Each carrier's phase step per sample, relative to the channel frequency,
+                        // and its running phase for this slot. Every slot starts from the stream's
+                        // stored CarrierPhase and doesn't write it back; it's advanced once for
+                        // the whole channel after the slot loop (AdvanceCarrierPhases).
+                        var phaseSteps = new double[numStreams];
+                        var phases = new double[numStreams];
+                        for (int k = 0; k < numStreams; ++k)
                         {
-                            // We can make any of the carrier frequencies "0" and calculate the relative frequencies
-                            // of the other carriers off of it.
-                            // Just pick the first transmitter in the list.
-                            float zeroCarrier = (float)transmittingStreams[0].CurrentParams.RadioFrequencyKHz * 1e3f;
-                            zeroCarrier += zeroCarrier * transmittingStreams[0].CurrentParams.TuneOffsetPPM * 1e-6f;
-                            for (int i = 0; i < numStreams; ++i)
-                            {
-                                // We need to convert from dB to linear power when weighing the signals.
-                                var thisSnrLinear = Math.Pow(10, transmittingStreams[i].CurrentParams.ReceivedSnrDb / 20.0);
-                                relativePowers.Add((float)thisSnrLinear);
-                                if (i == 0)
-                                {
-                                    carrierOffsets.Add(0);
-                                }
-                                else
-                                {
-                                    var thisFreq = (float)transmittingStreams[i].CurrentParams.RadioFrequencyKHz * 1e3f;
-                                    thisFreq += thisFreq * transmittingStreams[i].CurrentParams.TuneOffsetPPM * 1e-6f;
-                                    carrierOffsets.Add(thisFreq - zeroCarrier);
-                                }
-                            }
+                            var txParams = transmittingStreams[k].CurrentParams;
+                            // We need to convert from dB to linear power when weighing the signals.
+                            relativePowers.Add((float)Math.Pow(10, txParams.ReceivedSnrDb / 20.0));
+                            // Relative to the channel frequency, not the first transmitter: that one
+                            // can change between callbacks, which would jump every phase now that
+                            // they're integrated. The envelope doesn't care about a rotation applied
+                            // to all carriers at once, so any stable reference works.
+                            phaseSteps[k] = transmittingStreams[k].CarrierPhaseStep;
+                            phases[k] = transmittingStreams[k].CarrierPhase;
                         }
 
                         // True if squelch opened at any point in this set of samples. Left false
@@ -1778,8 +1797,7 @@ public class RadioPlayback : IDisposable
                                     for (int k = 0; k < numStreams; ++k)
                                     {
                                         // θ_k is the phasor that rotates around at each beat frequency k.
-                                        double theta = 2.0f * Math.PI * carrierOffsets[k] *
-                                            (double)(n + _sampleNum) / (double)SampleRate;
+                                        double theta = phases[k];
                                         // Sum IQ components _before_ taking the length of the vector,
                                         // as that's a nonlinear operation.
                                         // A stream can now be shorter than `samples` if it came up
@@ -1790,6 +1808,7 @@ public class RadioPlayback : IDisposable
                                         float samp = sampleOverride?.Invoke(n) ?? (n < txSpan.Length ? txSpan[n] : 0f);
                                         i += relativePowers[k] * (1 + samp * modIndex) * Math.Cos(theta);
                                         q += relativePowers[k] * (1 + samp * modIndex) * Math.Sin(theta);
+                                        phases[k] = WrapPhase(theta + phaseSteps[k]);
                                     }
 
                                     // Take the envelope.
@@ -1900,6 +1919,12 @@ public class RadioPlayback : IDisposable
                             _stereoBuffer[leftIdx + 1] += rightGain * _dspScratch[frame];
                         }
                     }
+
+                    // Every slot above started from the same stored phases. Now move each
+                    // carrier on exactly once for this callback, so the next one continues
+                    // where this one left off however many slots (if any) heard it.
+                    foreach (var stream in transmittingStreamsAll)
+                        stream.CarrierPhase = AdvancePhase(stream.CarrierPhase, stream.CarrierPhaseStep, samples);
                 }
             }
 
@@ -1957,9 +1982,8 @@ public class RadioPlayback : IDisposable
                 s = Math.Clamp(s, -1f, 1f);
 
             Marshal.Copy(_stereoBuffer, 0, bufferPtr, stereoOutputSamples);
-            // Keep sinusoids phase-coherent across callbacks.
-            // (At least until we roll over, but that's once every blue moon.)
-            _sampleNum += samples;
+            // Keep the wrong-key beep phase-coherent across callbacks (see _sampleNum).
+            _sampleNum = (_sampleNum + samples) % SampleRate;
         };
 
         _masterDspProcHandle = Bass.ChannelSetDSP(_masterStream, _dspProc, IntPtr.Zero);
@@ -1978,6 +2002,36 @@ public class RadioPlayback : IDisposable
             throw new Exception($"BASS error starting master stream playback: {Bass.LastError}");
     }
 
+
+    /// <summary>
+    /// How far a carrier's phase moves in one sample, relative to the channel frequency
+    /// (upstream 49f2ede / fa6ab98). In double: in float32 the carrier frequency only resolved
+    /// to ~16 Hz at 250 MHz, which quantized beat frequencies.
+    /// </summary>
+    internal static double PhaseStep(int txKhz, int channelKhz, double tuneOffsetPpm)
+    {
+        var offsetHz = (txKhz - channelKhz) * 1e3 + txKhz * 1e3 * tuneOffsetPpm * 1e-6;
+        return (TwoPi * offsetHz / SampleRate) % TwoPi;
+    }
+
+    /// <summary>Wrap a phase that's at most one turn out of range back into [0, 2π).</summary>
+    internal static double WrapPhase(double theta)
+    {
+        if (theta >= TwoPi) theta -= TwoPi;
+        else if (theta < 0) theta += TwoPi;
+        return theta;
+    }
+
+    /// <summary>
+    /// The phase <paramref name="samples"/> samples on from <paramref name="theta"/> at
+    /// <paramref name="step"/> radians per sample, wrapped to [0, 2π).
+    /// </summary>
+    internal static double AdvancePhase(double theta, double step, int samples)
+    {
+        if (!double.IsFinite(theta) || !double.IsFinite(step)) return 0;
+        theta = (theta + step * samples) % TwoPi;
+        return theta < 0 ? theta + TwoPi : theta;
+    }
 
     /// <summary>
     /// A slot's detectors or band-pass went NaN or infinite, and are about to be reset.

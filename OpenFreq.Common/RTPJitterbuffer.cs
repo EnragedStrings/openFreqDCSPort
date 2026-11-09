@@ -89,6 +89,21 @@ public class RtpJitterBuffer
     // Consecutive concealment frames emitted since the last real packet was released.
     private int _concealmentRunLength;
 
+    // Longest run this concealment run had already reached when it took a decision on
+    // the blind path, or -1 if it never took one. The cap compares run length before
+    // concealing, so a blind cap of C would have resynced this run instead of letting a
+    // real packet rescue it exactly when this reached C. Blind decisions happen at run
+    // lengths 0 to MAX_BLIND_CONCEAL_FRAMES - 1, so that is the range of the histogram.
+    // (Upstream 6da19dd.)
+    private int _blindHighWater = -1;
+    private readonly int[] _rescuesByBlindHighWater = new int[MAX_BLIND_CONCEAL_FRAMES];
+    private int _rescuedRuns;
+
+    // Blind concealment is speculative: nothing past the gap has arrived yet, so the
+    // talker may have stopped. Hold those frames here until the run ends, then charge
+    // them to loss if real audio resumed, and discard them if it did not. (Upstream d9934bf.)
+    private int _runBlindConceals;
+
     // Statistics
     private int _packetsReceived;
     private int _packetsLost;
@@ -353,12 +368,31 @@ public class RtpJitterBuffer
                     if (_concealmentRunLength >= cap)
                     {
                         _lastReleasedPt = null;
+                        // Nothing ever arrived past the gap, so the talker stopped.
+                        // Those blind frames were not lost packets, so drop them.
+                        _runBlindConceals = 0;
                         _concealmentRunLength = 0;
+                        // This run resynced rather than being rescued, so it is not
+                        // evidence either way about the blind cap.
+                        _blindHighWater = -1;
                         _activeBufferMs = _targetBufferMs;
                         // fall through to the buffer-empty check / release loop
                     }
                     else
                     {
+                        if (provenGap)
+                        {
+                            // A packet past this slot already arrived, so this slot is a real
+                            // hole. Whatever this run concealed blind never arrived either.
+                            _packetsLost += 1 + _runBlindConceals;
+                            _runBlindConceals = 0;
+                        }
+                        else
+                        {
+                            _blindHighWater = _concealmentRunLength;
+                            _runBlindConceals++;
+                        }
+
                         // If N+1 is already in the buffer, pass its payload so the
                         // decoder can use LBRR FEC to recover N instead of pure PLC.
                         byte[]? fecPayload = null;
@@ -373,7 +407,6 @@ public class RtpJitterBuffer
                         // Advance cursor and tell the drain thread to generate FEC/PLC.
                         _lastReleasedPt = nextExpectedPt;
                         _concealmentRunLength++;
-                        _packetsLost++;
                         return new ConcealmentNeeded(fecPayload);
                     }
                 }
@@ -428,7 +461,18 @@ public class RtpJitterBuffer
         {
             _lastReleasedPt = p.Timestamp - _baseTimestamp; // advance playout cursor
         }
-        _concealmentRunLength = 0; // real audio resumed — reset the concealment budget
+        // Real audio resumed, so a run in progress was rescued rather than resynced.
+        // Record how much blind budget that rescue needed, then reset the budget.
+        if (_concealmentRunLength > 0)
+        {
+            _rescuedRuns++;
+            if (_blindHighWater >= 0) _rescuesByBlindHighWater[_blindHighWater]++;
+        }
+        // Real audio resumed past the concealed slots, so those slots never played.
+        _packetsLost += _runBlindConceals;
+        _runBlindConceals = 0;
+        _concealmentRunLength = 0;
+        _blindHighWater = -1;
         return new PacketsReady(readies);
     }
 
@@ -510,6 +554,17 @@ public class RtpJitterBuffer
         _targetBufferMs = Math.Clamp(_targetBufferMs, MIN_BUFFER_MS, MAX_BUFFER_MS);
     }
 
+
+    /// <summary>
+    /// Evidence for how much blind concealment budget this link actually needs.
+    /// <paramref name="rescuedRuns"/> counts concealment runs that a real packet ended,
+    /// and <paramref name="byBlindHighWater"/> splits them by the run length each one
+    /// had reached when it last concealed blind. A blind cap of C would have resynced
+    /// instead of rescuing every run counted at index C and above, so index
+    /// MAX_BLIND_CONCEAL_FRAMES - 1 is what the current budget buys.
+    /// </summary>
+    public (int rescuedRuns, IReadOnlyList<int> byBlindHighWater) GetBlindConcealmentUse()
+        => (_rescuedRuns, (int[])_rescuesByBlindHighWater.Clone());
 
     /// <summary>
     /// Get buffer statistics

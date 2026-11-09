@@ -20,6 +20,8 @@ namespace OpenFreqAudio.Tests
         [InlineData("agc", float.NaN)]
         [InlineData("squelch", float.NaN)]
         [InlineData("squelch", float.PositiveInfinity)]
+        [InlineData("release", float.NaN)]
+        [InlineData("release", float.PositiveInfinity)]
         [InlineData("highpass", float.NaN)]
         [InlineData("lowpass", float.PositiveInfinity)]
         public void NonFiniteState_IsNoticed(string where, float bad)
@@ -30,6 +32,7 @@ namespace OpenFreqAudio.Tests
             {
                 case "agc": slot.Agc.D1 = bad; break;
                 case "squelch": slot.SquelchDetector.D1 = bad; break;
+                case "release": slot.SquelchReleaseDetector.D1 = bad; break;
                 // The band-pass filters' state isn't visible, but it shows in their output.
                 case "highpass":
                     slot.HighPass.Process(bad);
@@ -50,9 +53,11 @@ namespace OpenFreqAudio.Tests
         {
             var slot = new RadioPlayback.RadioConfig(127000);
 
+            var (openPower, closePower) = slot.SquelchPowers();
+
             // What 1.1.0 did: one NaN envelope sample through the detectors and band-pass...
             slot.Agc.Apply(float.NaN);
-            slot.SquelchDetector.Apply(float.NaN);
+            slot.StepSquelch(float.NaN, openPower, closePower);
             slot.LowPass.Process(slot.HighPass.Process(float.NaN));
 
             // ...and no amount of good signal afterwards brings them back.
@@ -60,24 +65,29 @@ namespace OpenFreqAudio.Tests
             for (int n = 0; n < 48000; n++)
             {
                 slot.Agc.Apply(1f);
-                slot.SquelchDetector.Apply(1f);
+                slot.StepSquelch(1f, openPower, closePower);
                 lastOut = slot.LowPass.Process(slot.HighPass.Process(1f));
             }
             Assert.True(float.IsNaN(slot.Agc.D1));
             Assert.True(float.IsNaN(slot.SquelchDetector.D1));
+            Assert.True(float.IsNaN(slot.SquelchReleaseDetector.D1));
             Assert.True(float.IsNaN(lastOut));
+
+            // A NaN loses both threshold comparisons, so it never latches the gate open.
+            Assert.False(slot.SquelchOpen);
 
             slot.ResetReceiver();
 
             // Back where a new slot starts, and tracking signal again.
             Assert.Equal(1f, slot.Agc.D1);
             Assert.Equal(1f, slot.SquelchDetector.D1);
+            Assert.Equal(1f, slot.SquelchReleaseDetector.D1);
             var output = new float[480];
             for (int n = 0; n < output.Length; n++)
             {
                 float envelope = 1f + 0.5f * MathF.Sin(2f * MathF.PI * 1000f * n / RadioPlayback.SampleRate);
                 slot.Agc.Apply(envelope);
-                slot.SquelchDetector.Apply(envelope * envelope);
+                slot.StepSquelch(envelope * envelope, openPower, closePower);
                 output[n] = slot.LowPass.Process(slot.HighPass.Process(envelope / slot.Agc.D1));
             }
             Assert.True(slot.IsFinite(output));

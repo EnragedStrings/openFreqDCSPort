@@ -11,10 +11,11 @@ namespace OpenFreq.Common;
 
 public class OpenFreqRtcClient : IRtcClient
 {
-    // Audio configuration constants
-    public const int SAMPLE_RATE = RadioPlayback.SampleRate;
-    public const int FRAME_SIZE_MS = 20;
-    public const int OPUS_SAMPLES_PER_FRAME = SAMPLE_RATE / (1000 / FRAME_SIZE_MS);
+    // Audio configuration constants. Aliases of OpenFreqAudio.AudioFormat (upstream 6da19dd
+    // dropped these); kept because the SRS bridge, BotClient, Whisper and SatcomResampler use them.
+    public const int SAMPLE_RATE = AudioFormat.SampleRate;
+    public const int FRAME_SIZE_MS = AudioFormat.OpusFrameMs;
+    public const int OPUS_SAMPLES_PER_FRAME = AudioFormat.OpusSamplesPerFrame;
     public const int DEFAULT_PORT = 9987;
 
     // Events for UI integration

@@ -32,6 +32,40 @@ public class RadioPlayback : IDisposable
     // the gate open. Shared with OwnVoiceRadioRenderer so both squelch gates behave the same way.
     public const double SquelchTau = 0.010;
 
+    // Time constant of the second squelch detector, which only ever closes the gate
+    // (upstream a4daedc).
+    //
+    // One detector and one threshold make the close time grow with signal strength.
+    // The detector decays from the received power P down through the threshold, which
+    // takes SquelchTau · ln((P - 1) / 3). That is 35 ms at 20 dB C/N but 171 ms at
+    // 78 dB, and the link budget hands us 78 dB for an aircraft a kilometre away.
+    // Every strong transmitter therefore leaves a long noise tail when it stops.
+    //
+    // A second, faster detector cuts that tail without letting impulses through,
+    // because it can only close a gate that SquelchTau has already opened. Impulse
+    // immunity stays entirely with the slow detector. Measured close times at
+    // 20/40/60/78 dB C/N: 8/18/27/35 ms, against 35/82/128/171 ms from SquelchTau alone.
+    public const double SquelchReleaseTau = 0.002;
+
+    // Hysteresis: the gate closes at this fraction of the power that opens it, so 3 dB.
+    //
+    // One threshold for both directions chatters whenever the received power sits on
+    // it. Measured at 4 dB C/N: 148 open/close cycles per second, with the gate open
+    // 27% of the time. Real squelch circuits put hysteresis around the comparator for
+    // exactly this reason.
+    public const float SquelchCloseRatio = 0.5f;
+
+    // Warn about stream gaps at most this often per stream, since drifting clocks
+    // repeat the same gap on every cycle.
+    private const double StreamGapLogIntervalSeconds = 5.0;
+
+    // Real aircraft radios don't have 100% modulation.
+    // A bunch of the standards are paywalled, but those I've found
+    // suggest minimum specs are 85% modulation, with 90-95% being common.
+    // https://www.etsi.org/deliver/etsi_i_ets/300600_300699/300676/01_20_91/ets_300676e01c.pdf
+    // https://avweb.com/avionics/vhf-nav-comm-basics/
+    public const double ModIndex = 0.95;
+
     private class RadioStream
     {
         private ILogger _logger;
@@ -74,6 +108,13 @@ public class RadioPlayback : IDisposable
 
         // Transmission state (separate from stream lifecycle)
         public AmbientNoiseType AmbientNoise { get; set; } = AmbientNoiseType.None;
+
+        // Tracking for the mid-transmission gap warning. A callback that finds Buffer
+        // empty drops this stream's carrier, which notches the envelope and can close
+        // the squelch. See BeginStreamGap and EndStreamGap. DSP thread only.
+        public long LastAudioTicks;
+        public long GapStartTicks;
+        public long LastGapLogTicks;
 
         // KY-58/COMSEC + HAVE QUICK state of the transmitting radio, updated per-packet.
         public bool Enc { get; set; }
@@ -210,26 +251,71 @@ public class RadioPlayback : IDisposable
         // according to attack and decay params below.
         public AttackDecayFilter Agc = AttackDecayFilter.MakeAttackDecayFilter(AgcAttack, AgcDecay, SampleRate);
 
-        // Slow power-tracking detector the squelch gate actually reads (see SquelchTau) --
-        // separate from Agc, which still does its normal job normalizing output level.
+        // The gate runs two detectors on the same mean power, both separate from Agc, which
+        // still does its normal job normalizing output level. Only SquelchDetector (slow, see
+        // SquelchTau) opens it, so an impulse too short to move that slow detector can never
+        // break squelch. Only SquelchReleaseDetector (fast, see SquelchReleaseTau) closes it,
+        // so the tail after a transmitter stops doesn't grow with how strong that transmitter was.
         public FirstOrderFilter SquelchDetector =
             FirstOrderFilter.MakeFirstOrderFilter(SquelchTau, SampleRate, 1.0);
 
+        public FirstOrderFilter SquelchReleaseDetector =
+            FirstOrderFilter.MakeFirstOrderFilter(SquelchReleaseTau, SampleRate, 1.0);
+
+        /// <summary>
+        /// Whether the gate is open. This has to survive across callbacks, since the
+        /// hysteresis means each threshold only applies in one direction. Stays false on a
+        /// SATCOM slot, whose vocoder decides what's audible instead. DSP thread only.
+        /// </summary>
+        public bool SquelchOpen;
+
+        /// <summary>
+        /// The mean powers this slot's gate opens and closes at.
+        /// Typical squelch is at +6 dB, which is a factor of 2x on the envelope.
+        /// The detectors track mean power, so square that.
+        /// </summary>
+        public (float Open, float Close) SquelchPowers()
+        {
+            float threshold = SquelchLevel * 2.0f;
+            float open = threshold * threshold;
+            return (open, open * SquelchCloseRatio);
+        }
+
+        /// <summary>
+        /// Advance both detectors with one sample's mean power, then return whether the
+        /// gate is open. The slow detector only opens the gate and the fast one only
+        /// closes it, so an impulse can cut a tail short but can never break squelch.
+        /// A NaN loses both comparisons and so closes the gate, which is the safe way
+        /// round: an open gate is how a NaN would reach the shared mix.
+        /// </summary>
+        public bool StepSquelch(float power, float openPower, float closePower)
+        {
+            SquelchDetector.Apply(power);
+            SquelchReleaseDetector.Apply(power);
+            SquelchOpen = SquelchOpen
+                ? SquelchReleaseDetector.D1 >= closePower
+                : SquelchDetector.D1 >= openPower;
+            return SquelchOpen;
+        }
+
         /// <summary>
         /// False if the detectors or the band-pass have gone NaN or infinite (upstream a12b86a).
-        /// Every sample passes through all four, and all four latch a bad value,
+        /// Every sample passes through all of them, and they all latch a bad value,
         /// so checking once per callback catches one anywhere in it.
         /// </summary>
         /// <param name="output">This callback's output. The band-pass state isn't
         /// visible, but a bad value in it shows up in the last sample.</param>
         public bool IsFinite(ReadOnlySpan<float> output) =>
             float.IsFinite(Agc.D1) && float.IsFinite(SquelchDetector.D1) &&
+            float.IsFinite(SquelchReleaseDetector.D1) &&
             (output.IsEmpty || float.IsFinite(output[^1]));
 
         public void ResetReceiver()
         {
             Agc.D1 = 1;
             SquelchDetector.D1 = 1;
+            SquelchReleaseDetector.D1 = 1;
+            SquelchOpen = false;
             HighPass.Reset();
             LowPass.Reset();
         }
@@ -308,9 +394,9 @@ public class RadioPlayback : IDisposable
 
     private const double TwoPi = 2.0 * Math.PI;
 
-    // Baseband is 8 kHz (4kHz Nyquist)
-    // NB: Opus only accepts 8000, 12000, 16000, 24000, or 48000 Hz
-    public const int SampleRate = 48000;
+    // Alias of AudioFormat.SampleRate, which is where the rate lives now (upstream a4daedc);
+    // kept because a lot of our code (3DAS, SATCOM, HUD feed, tests) reads it from here.
+    public const int SampleRate = AudioFormat.SampleRate;
 
     private const int NoiseFadeSamples = 2400;
 
@@ -1516,14 +1602,19 @@ public class RadioPlayback : IDisposable
             // happened, ratcheting latency up over a session. A stream that comes up short now
             // just holds its carrier with no voice modulation for the remainder of this callback
             // (see the bounds check on Samples.Span below) instead of shrinking everyone's buffer.
+            long callbackTicks = Stopwatch.GetTimestamp();
+
             foreach (var stream in streams)
             {
                 int take = Math.Min(samples, stream.Buffer.Available);
                 if (take <= 0)
                 {
+                    BeginStreamGap(stream, callbackTicks);
                     stream.Samples = new Memory<float>();
                     continue;
                 }
+
+                EndStreamGap(stream, callbackTicks);
 
                 if (stream.Scratch.Length < take)
                 {
@@ -1722,13 +1813,13 @@ public class RadioPlayback : IDisposable
                             phases[k] = transmittingStreams[k].CarrierPhase;
                         }
 
-                        // True if squelch opened at any point in this set of samples. Left false
-                        // for SATCOM slots (see ProcessSatcomSlot) -- the vocoder's own frame-
-                        // loss/concealment model, not AGC-driven squelch, decides what's audible.
-                        bool squelchOpened = false;
-
                         if (slot.IsSatcomActive)
                         {
+                            // The squelch gate stays shut for SATCOM slots (see ProcessSatcomSlot):
+                            // the vocoder's own frame-loss/concealment model, not AGC-driven
+                            // squelch, decides what's audible.
+                            slot.SquelchOpen = false;
+
                             // Entirely different path: frame-based digital vocoder processing
                             // instead of the AM/FM per-sample envelope/AGC/squelch/bandpass math
                             // below. Fills _dspScratch[0..samples-1] just like the AM/FM branch
@@ -1737,10 +1828,8 @@ public class RadioPlayback : IDisposable
                         }
                         else
                         {
-                            // Typical squelch is at +6 dB, which is a factor of 2x.
-                            float squelchThreshold = slot.SquelchLevel * 2.0f;
-                            // The squelch detector tracks mean power, so gate on the square.
-                            float squelchPowerThreshold = squelchThreshold * squelchThreshold;
+                            // Asymmetric open/close with hysteresis (upstream a4daedc); see StepSquelch.
+                            var (squelchOpenPower, squelchClosePower) = slot.SquelchPowers();
 
                             // Noise is always there!
                             // The question is just "how loud compared to the signal?"
@@ -1788,12 +1877,6 @@ public class RadioPlayback : IDisposable
                                     noiseGen?.Next(out ni0, out nq0);
                                     double i = ni0 * fmNoiseScale;
                                     double q = nq0 * fmNoiseScale;
-                                    // Real aircraft radios don't have 100% modulation.
-                                    // A bunch of the standards are paywalled, but those I've found
-                                    // suggest minimum specs are 85% modulation, with 90-95% being common.
-                                    // https://www.etsi.org/deliver/etsi_i_ets/300600_300699/300676/01_20_91/ets_300676e01c.pdf
-                                    // https://avweb.com/avionics/vhf-nav-comm-basics/
-                                    const double modIndex = 0.95;
                                     for (int k = 0; k < numStreams; ++k)
                                     {
                                         // θ_k is the phasor that rotates around at each beat frequency k.
@@ -1806,31 +1889,32 @@ public class RadioPlayback : IDisposable
                                         // the remainder rather than indexing past its samples.
                                         var txSpan = transmittingStreams[k].Samples.Span;
                                         float samp = sampleOverride?.Invoke(n) ?? (n < txSpan.Length ? txSpan[n] : 0f);
-                                        i += relativePowers[k] * (1 + samp * modIndex) * Math.Cos(theta);
-                                        q += relativePowers[k] * (1 + samp * modIndex) * Math.Sin(theta);
+                                        i += relativePowers[k] * (1 + samp * ModIndex) * Math.Cos(theta);
+                                        q += relativePowers[k] * (1 + samp * ModIndex) * Math.Sin(theta);
                                         phases[k] = WrapPhase(theta + phaseSteps[k]);
                                     }
 
                                     // Take the envelope.
                                     _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
 
-                                    // Update the AGC:
+                                    // Update the AGC, which sets the playback level...
                                     slot.Agc.Apply(_dspScratch[n]);
-                                    // Squelch reads its own slow power detector, not the AGC gain --
-                                    // see SquelchTau: impulsive noise can swing the AGC across
-                                    // threshold for a sample or two between real transmissions.
-                                    slot.SquelchDetector.Apply(_dspScratch[n] * _dspScratch[n]);
 
+                                    // ...and the squelch detectors, which decide whether we hear
+                                    // anything at all. Squelch reads its own power detectors, not the
+                                    // AGC gain -- see SquelchTau: impulsive noise can swing the AGC
+                                    // across threshold for a sample or two between real transmissions.
+                                    //
                                     // NB: Handle squelch per sample, before the band-pass smooths the edges!
                                     // We don't want to gate the whole buffer (or not!) based on a single value.
-                                    if (slot.SquelchDetector.D1 >= squelchPowerThreshold)
+                                    if (slot.StepSquelch(_dspScratch[n] * _dspScratch[n],
+                                            squelchOpenPower, squelchClosePower))
                                     {
                                         _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
                                         // SIM_VINSON: successfully-decrypted secure voice gets a CVSD-like
                                         // texture instead of sounding identical to clear analog AM.
                                         if (comsecOutcome == KySecureOutcome.Pass && matchedCipher)
                                             _dspScratch[n] = slot.CvsdEffect.Process(_dspScratch[n]);
-                                        squelchOpened = true;
                                     }
                                     else
                                     {
@@ -1849,13 +1933,12 @@ public class RadioPlayback : IDisposable
                                     double q = nq1;
                                     _dspScratch[n] = (float)Math.Sqrt(i * i + q * q);
                                     slot.Agc.Apply(_dspScratch[n]);
-                                    slot.SquelchDetector.Apply(_dspScratch[n] * _dspScratch[n]);
 
                                     // See above.
-                                    if (slot.SquelchDetector.D1 >= squelchPowerThreshold)
+                                    if (slot.StepSquelch(_dspScratch[n] * _dspScratch[n],
+                                            squelchOpenPower, squelchClosePower))
                                     {
                                         _dspScratch[n] = _dspScratch[n] / slot.Agc.D1;
-                                        squelchOpened = true;
                                     }
                                     else
                                     {
@@ -1874,8 +1957,8 @@ public class RadioPlayback : IDisposable
 
                         // Catch a NaN or infinity before it reaches the shared mix (and the 3DAS binaural
                         // state, recording and HUD feed), where it would take out every radio. Silence this
-                        // slot for this callback and start its receiver over (upstream a12b86a). Don't let
-                        // NaN open the squelch gate instead: that's how it would get into the mix.
+                        // slot for this callback and start its receiver over (upstream a12b86a). ResetReceiver
+                        // also closes the gate, so a NaN can't leave it latched open.
                         if (!slot.IsFinite(_dspScratch.AsSpan(0, samples)))
                         {
                             if (!slot.WasNonFinite)
@@ -1883,21 +1966,23 @@ public class RadioPlayback : IDisposable
                             slot.WasNonFinite = true;
                             slot.ResetReceiver();
                             Array.Clear(_dspScratch, 0, samples);
-                            squelchOpened = false;
                         }
                         else
                         {
                             slot.WasNonFinite = false;
                         }
 
-                        if (squelchOpened != slot.WasSquelchOpen)
+                        if (slot.SquelchOpen != slot.WasSquelchOpen)
                         {
 #if DEBUG
+                            // The detector is mean power against a unit-power noise floor,
+                            // so this is the carrier-to-noise ratio in dB.
                             _logger.LogDebug(
-                                "SQUELCH {State} (Freq: {Frequency}, SNR={SNR:F1}dB)",
-                                squelchOpened ? "OPEN" : "CLOSED", freq, slot.Agc.D1);
+                                "SQUELCH {State} (Freq: {Frequency}, Carrier SNR={CarrierToNoise:F1}dB)",
+                                slot.SquelchOpen ? "OPEN" : "CLOSED", freq,
+                                10.0 * Math.Log10(Math.Max(slot.SquelchDetector.D1, 1e-12f)));
 #endif
-                            slot.WasSquelchOpen = squelchOpened;
+                            slot.WasSquelchOpen = slot.SquelchOpen;
                         }
 
                         // Mix this slot's mono signal into the stereo output with its pan and volume.
@@ -2002,6 +2087,63 @@ public class RadioPlayback : IDisposable
             throw new Exception($"BASS error starting master stream playback: {Bass.LastError}");
     }
 
+
+    /// <summary>
+    /// This stream had no samples this callback, so its carrier drops. Start timing
+    /// the gap. A stream that has never delivered audio isn't in a gap - it is idle.
+    /// </summary>
+    private static void BeginStreamGap(RadioStream stream, long now)
+    {
+        if (stream.LastAudioTicks != 0 && stream.GapStartTicks == 0)
+            stream.GapStartTicks = now;
+    }
+
+    /// <summary>
+    /// This stream has samples again, so close out any gap we were timing (upstream a4daedc).
+    /// A gap shorter than one Opus frame means whatever fills this stream kept going
+    /// and we drained ahead of it, so the carrier dropped with audio still to come.
+    /// Warn about that. A longer gap means the producer itself stopped, which is how a
+    /// transmission ends, so say nothing.
+    /// </summary>
+    /// <returns>How long the gap lasted in seconds, or 0 if there was none.</returns>
+    private double EndStreamGap(RadioStream stream, long now)
+    {
+        double gapSeconds = 0;
+        if (stream.GapStartTicks != 0)
+        {
+            gapSeconds = (double)(now - stream.GapStartTicks) / Stopwatch.Frequency;
+            // Everything upstream paces audio one Opus frame at a time, so a shorter gap
+            // than that is drift between the producer and the BASS callbacks.
+            if (gapSeconds < (double)AudioFormat.OpusSamplesPerFrame / SampleRate)
+            {
+                double sinceLog = (double)(now - stream.LastGapLogTicks) / Stopwatch.Frequency;
+                if (stream.LastGapLogTicks == 0 || sinceLog >= StreamGapLogIntervalSeconds)
+                {
+                    stream.LastGapLogTicks = now;
+                    LogStreamGap(stream, gapSeconds);
+                }
+            }
+
+            stream.GapStartTicks = 0;
+        }
+
+        stream.LastAudioTicks = now;
+        return gapSeconds;
+    }
+
+    /// <summary>
+    /// A stream ran dry mid-transmission. Called on the DSP thread, so this takes a
+    /// snapshot and logs it from the thread pool.
+    /// </summary>
+    private void LogStreamGap(RadioStream stream, double gapSeconds)
+    {
+        var streamId = stream.StreamId;
+        int freqKhz = stream.FrequencyKHz;
+
+        LogOffDspThread(logger => logger.LogWarning(
+            "Stream {StreamId} on {Frequency:F3} MHz had no samples for {GapMs:F1} ms",
+            streamId, freqKhz / 1000.0, gapSeconds * 1000));
+    }
 
     /// <summary>
     /// How far a carrier's phase moves in one sample, relative to the channel frequency

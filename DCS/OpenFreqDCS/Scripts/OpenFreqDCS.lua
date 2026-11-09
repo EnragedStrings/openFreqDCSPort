@@ -61,8 +61,47 @@ local function writeLog(message)
     end
 end
 
+-- The per-second radio debug lines are the first thing to read when radios aren't detected, but
+-- written unconditionally they grew OpenFreqDCS.log by ~2 KB a second (hundreds of MB over a few
+-- sessions). Now: a line is skipped while identical to the previous line of the same kind (the
+-- text up to its first ':'), debug output stops at DEBUG_MAX_BYTES per session, and a log already
+-- over LOG_ROTATE_BYTES is moved to OpenFreqDCS.old.log when the script loads.
+local DEBUG_MAX_BYTES = 20 * 1024 * 1024
+local LOG_ROTATE_BYTES = 50 * 1024 * 1024
+local debugLastByKind = {}
+local debugBytes = 0
+local debugCapped = false
+
+if writeDir ~= "" then
+    pcall(function()
+        local path = writeDir .. [[Logs\OpenFreqDCS.log]]
+        local file = io.open(path, "rb")
+        if file then
+            local size = file:seek("end")
+            file:close()
+            if size and size > LOG_ROTATE_BYTES then
+                local old = writeDir .. [[Logs\OpenFreqDCS.old.log]]
+                os.remove(old)
+                os.rename(path, old)
+            end
+        end
+    end)
+end
+
 local function writeDebug(message)
-    if config.debugRadios == false then
+    if config.debugRadios == false or debugCapped then
+        return
+    end
+    message = tostring(message)
+    local kind = message:match("^([^:]*):") or message
+    if debugLastByKind[kind] == message then
+        return
+    end
+    debugLastByKind[kind] = message
+    debugBytes = debugBytes + #message + 22
+    if debugBytes > DEBUG_MAX_BYTES then
+        debugCapped = true
+        writeLog("debug log limit reached (" .. DEBUG_MAX_BYTES .. " bytes) -- radio debug lines stopped for this session")
         return
     end
     writeLog(message)
@@ -1603,6 +1642,20 @@ local function buildPacket(modelTime)
     local bank = selfData and selfData.Bank or nil
 
     local radios = {}
+    local unitType = selfData and selfData.Name or ""
+    local aircraftState = unitType .. "|" .. tostring(inSupportedAircraft)
+    if OpenFreqDCS.lastAircraftState ~= aircraftState then
+        OpenFreqDCS.lastAircraftState = aircraftState
+        if unitType == "" then
+            writeLog("aircraft: none (spectator, or not in a cockpit yet)")
+        elseif inSupportedAircraft then
+            writeLog("aircraft: " .. unitType .. " supported -- exporting its radios")
+        elseif aircraft then
+            writeLog("aircraft: " .. unitType .. " supported but disabled in OpenFreqDCSConfig.lua")
+        else
+            writeLog("aircraft: " .. unitType .. " NOT supported by OpenFreqDCS -- no radios exported")
+        end
+    end
     if inSupportedAircraft then
         radios = aircraft.build()
         addAddonRadios(selfData.Name, radios)
@@ -1875,9 +1928,25 @@ local previousAfterNextFrame = LuaExportAfterNextFrame
 -- internally, see OpenFreqDCS.export's own nextExportTime check) -- chaining
 -- LuaExportActivityNextEvent too was pure redundancy on OpenFreqDCS's side, so the fix is simply
 -- to stop touching it: leave whatever SRS (or anything else) installed there completely alone.
+local openFreqAfterNextFrame -- our LuaExportAfterNextFrame, defined below
+local openFreqStop            -- our LuaExportStop
+
 function LuaExportStart()
     if type(previousStart) == "function" then
         pcall(previousStart)
+    end
+    -- Some export scripts (re)install their per-frame hook from inside their own LuaExportStart.
+    -- That runs above, after OpenFreqDCS loaded, and would silently cut OpenFreqDCS out of the
+    -- frame chain (no radios, no error). Re-chain on top of whatever is there now.
+    if LuaExportAfterNextFrame ~= openFreqAfterNextFrame then
+        previousAfterNextFrame = LuaExportAfterNextFrame
+        LuaExportAfterNextFrame = openFreqAfterNextFrame
+        writeLog("LuaExportAfterNextFrame was replaced by another export script at mission start -- re-chained")
+    end
+    if LuaExportStop ~= openFreqStop then
+        previousStop = LuaExportStop
+        LuaExportStop = openFreqStop
+        writeLog("LuaExportStop was replaced by another export script at mission start -- re-chained")
     end
     pcall(OpenFreqDCS.start)
 end
@@ -1888,6 +1957,7 @@ function LuaExportStop()
         pcall(previousStop)
     end
 end
+openFreqStop = LuaExportStop
 
 function LuaExportAfterNextFrame()
     if type(previousAfterNextFrame) == "function" then
@@ -1896,3 +1966,4 @@ function LuaExportAfterNextFrame()
     pcall(scanArgumentsOnce)
     pcall(OpenFreqDCS.export)
 end
+openFreqAfterNextFrame = LuaExportAfterNextFrame

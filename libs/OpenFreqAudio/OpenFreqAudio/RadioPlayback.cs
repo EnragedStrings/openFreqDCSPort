@@ -1305,8 +1305,11 @@ public class RadioPlayback : IDisposable
                 slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
                 _slots[key] = slot;
             }
-            // Headroom up to 4x (+12 dB)
-            slot.Volume = Math.Clamp(volume, -4f, 4f);
+            // No headroom cap any more (upstream 8d37b34): the output and capture peak limiters keep
+            // a loud slot from clipping. A non-finite volume would still poison the whole mix
+            // (and the 3DAS binaural state), so that's the one value we refuse.
+            if (float.IsFinite(volume))
+                slot.Volume = volume;
         }
     }
 

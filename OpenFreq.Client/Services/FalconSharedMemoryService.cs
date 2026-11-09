@@ -59,8 +59,10 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
     private string? _acNctr;
     private readonly object _dataLock = new();
     private bool _disposed;
-    private bool _wasFlying;
-    private bool _isFlying;
+    // Consecutive polls with the flying bit clear before we accept "not flying" (upstream 7744bdd/7532056).
+    private const int NotFlyingDebounceSamples = 3;
+    // How many samples in a row have we not been flying (in 3D)? Used to debounce.
+    private int _notFlyingSamples = NotFlyingDebounceSamples;
     private readonly ILogger<FalconSharedMemoryService> _logger = logger;
 
     public event EventHandler<ServiceStateChangedEventArgs>? StateChanged;
@@ -103,7 +105,7 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
         {
             if (_state != ServiceState.Connected) return null;
             lock (_dataLock)
-                return _isFlying;
+                return _notFlyingSamples < NotFlyingDebounceSamples;
         }
     }
 
@@ -173,7 +175,7 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
         lock (_dataLock)
         {
             // Reset so the next Start() re-signals a false -> true transition
-            _wasFlying = false;
+            _notFlyingSamples = NotFlyingDebounceSamples;
             ChangeState(ServiceState.Stopped);
         }
 
@@ -415,14 +417,30 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
 
             // Read hsiBits
             uint hsiBits = BitConverter.ToUInt32(ReadBytes(_lpPrimaryBaseAddress, OFFSET_HSIBITS, 4), 0);
-            bool isFlying = (hsiBits & HSI_FLYING_BIT) != 0;
+            bool rawIsFlying = (hsiBits & HSI_FLYING_BIT) != 0;
 
-            if (isFlying != _wasFlying)
+            // Debounce the flying -> not-flying state: a one-read flicker of the bit would otherwise pause/resume
+            // the PTT keys and reload the heightmap.
+            bool isFlying, wasFlying;
+            lock (_dataLock)
             {
-                FlyingStateChanged?.Invoke(this, new FlyingStateChangedEventArgs(_wasFlying, isFlying));
+                wasFlying = _notFlyingSamples < NotFlyingDebounceSamples;
+                _notFlyingSamples = rawIsFlying ? 0 : Math.Min(_notFlyingSamples + 1, NotFlyingDebounceSamples);
+                isFlying = _notFlyingSamples < NotFlyingDebounceSamples;
             }
 
-            _wasFlying = isFlying;
+            if (isFlying != wasFlying)
+            {
+                _logger.LogInformation("Flying state changed: {Old} -> {New}", wasFlying, isFlying);
+                try
+                {
+                    FlyingStateChanged?.Invoke(this, new FlyingStateChangedEventArgs(wasFlying, isFlying));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "FlyingStateChanged subscriber threw");
+                }
+            }
 
             // Poll AcName/AcNCTR — can change while BMS is running
             bool aircraftInfoChanged = false;
@@ -444,16 +462,25 @@ public class FalconSharedMemoryService(ILogger<FalconSharedMemoryService> logger
                 }
             }
 
-            if (aircraftInfoChanged)
-                AircraftInfoChanged?.Invoke(this, new AircraftInfoChangedEventArgs(newAcName, newAcNctr));
-
-            // Update position & velocity
+            // Update position & velocity before notifying, so a throwing subscriber cannot leave the cached
+            // state stale.
             lock (_dataLock)
             {
                 // For some reason BMS switches x & y in shmem, correct this
                 _position = new FlightPosition((int)y, (int)x, (int)z);
                 _velocity = new FlightVelocity(yDot, xDot, zDot);
-                _isFlying = isFlying;
+            }
+
+            if (aircraftInfoChanged)
+            {
+                try
+                {
+                    AircraftInfoChanged?.Invoke(this, new AircraftInfoChangedEventArgs(newAcName, newAcNctr));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AircraftInfoChanged subscriber threw");
+                }
             }
 
             return true;

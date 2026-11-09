@@ -29,7 +29,7 @@ public class RadioPlayback : IDisposable
     // Squelch gates on this slower, dedicated power detector rather than on the fast AGC gain
     // itself -- impulsive VHF noise (see BackgroundNoiseGenerator) can swing the AGC across the
     // threshold for a sample or two between real transmissions, which used to be enough to pop
-    // the gate open. Shared with OwnVoiceRadioRenderer so both squelch gates behave the same way.
+    // the gate open.
     public const double SquelchTau = 0.010;
 
     // Time constant of the second squelch detector, which only ever closes the gate
@@ -349,7 +349,7 @@ public class RadioPlayback : IDisposable
         // distortions when barely coming through.
         // Pick time constants about a third of those values
         // to get the intended effect. (Feel free to tune these by ear!)
-        // Values live on RadioPlayback.AgcAttack/AgcDecay (shared with OwnVoiceRadioRenderer).
+        // Values live on RadioPlayback.AgcAttack/AgcDecay.
     }
 
 
@@ -526,7 +526,7 @@ public class RadioPlayback : IDisposable
     }
 
     // --- Session capture (one combined stereo mix: incoming as heard with pan + own voice centered,
-    //     rendered as if heard from same position). The mix can be written to an Ogg Opus file
+    //     with the radio tone of OwnVoiceRadioRenderer). The mix can be written to an Ogg Opus file
     //     OR streamed to a separate playback device (e.g. a virtual cable). Exclusive in practice,
     //     but both sinks are supported independently here. ---
     private bool _recording;        // file sink active
@@ -557,9 +557,41 @@ public class RadioPlayback : IDisposable
         if (Capturing) _recordOwnVoiceBuffer.Write(samples);
     }
 
-    /// <summary>Set the radio params + transmitter ambient SFX used to render own voice. Call at TX start.</summary>
-    public void SetOwnVoiceRecordParams(AudioParams p, AmbientNoiseType ambient)
-        => _ownVoiceRenderer?.SetParams(p, ambient);
+    /// <summary>
+    /// Transmitter ambient SFX for own voice in the capture (upstream 102796d). The SFX run for the
+    /// whole capture, so set this before it starts. A capture that starts later picks up the current value.
+    /// </summary>
+    public AmbientNoiseType OwnVoiceAmbient
+    {
+        get;
+        set
+        {
+            // Under the lock, so a renderer that EnsureCaptureRenderer creates at the same time
+            // can't miss the new value.
+            lock (_lock)
+            {
+                field = value;
+                if (_ownVoiceRenderer != null) _ownVoiceRenderer.AmbientNoise = value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The frequency we transmit on, which sets own voice's band-pass high edge in the capture the
+    /// same way it's set for a receiver tuned there (see FastPathAudioSim.GetBandConfig).
+    /// </summary>
+    public int OwnVoiceFrequencyKhz
+    {
+        get;
+        set
+        {
+            lock (_lock)
+            {
+                field = value;
+                if (_ownVoiceRenderer != null) _ownVoiceRenderer.FrequencyKhz = value;
+            }
+        }
+    }
 
     public bool IsRecording => _recording;
     public bool IsMonitoring => _monitoring;
@@ -569,16 +601,11 @@ public class RadioPlayback : IDisposable
     /// <summary>Any sink wants own voice (PushOwnVoiceForRecording), the HUD Recorder feed included.</summary>
     public bool WantsOwnVoice => Capturing;
 
-    /// <summary>When false, own voice is captured clean (no radio FX/AGC/squelch). Default true.</summary>
-    public bool OwnVoiceSfxEnabled
-    {
-        get;
-        set
-        {
-            field = value;
-            if (_ownVoiceRenderer != null) _ownVoiceRenderer.ApplySfx = value;
-        }
-    } = true;
+    /// <summary>
+    /// Wet/dry blend (0..1) of the ambient SFX on own voice in the capture.
+    /// The band-pass runs at any setting, so own voice keeps the radio tone even at 0.
+    /// </summary>
+    public float OwnVoiceSfxVolume { get; set; } = 1.0f;
 
     // Wet/dry blend (0..1) for the transmitter-side ambient noise layer.
     // 0 bypasses ambient SFX entirely; 1 applies them at full strength.
@@ -981,10 +1008,10 @@ public class RadioPlayback : IDisposable
     {
         if (_ownVoiceRenderer != null) return;
         _ownVoiceRenderer = new OwnVoiceRadioRenderer(SampleRate,
-            FastPathAudioSim.GetDefaultAudioParams(0),
             _loggerFactory.CreateLogger<OwnVoiceRadioRenderer>())
         {
-            ApplySfx = OwnVoiceSfxEnabled
+            AmbientNoise = OwnVoiceAmbient,
+            FrequencyKhz = OwnVoiceFrequencyKhz,
         };
         _recordOwnVoiceBuffer.Clear();
     }
@@ -999,8 +1026,8 @@ public class RadioPlayback : IDisposable
 
     /// <summary>
     /// Start recording the session to a combined stereo Ogg Opus file at <paramref name="filePath"/>.
-    /// Captures incoming audio (as heard, post-FX, with pan) plus our own voice rendered as if heard
-    /// from the same position, panned centre. No-op if already recording. Encoding runs on the
+    /// Captures incoming audio (as heard, post-FX, with pan) plus our own voice with the radio tone
+    /// (see <see cref="OwnVoiceRadioRenderer"/>), panned centre. No-op if already recording. Encoding runs on the
     /// recorder's own thread.
     /// </summary>
     public void StartRecording(string filePath)
@@ -2278,8 +2305,8 @@ public class RadioPlayback : IDisposable
         ThreadPool.QueueUserWorkItem(_ => log(_logger));
 
     /// <summary>
-    /// Build one stereo recording frame (incoming as heard, with pan, + own voice rendered as
-    /// if heard from the same position and panned centre) and feed it to the encoder. Runs on
+    /// Build one stereo recording frame (incoming as heard, with pan, + own voice with the
+    /// radio tone, panned centre) and feed it to the encoder. Runs on
     /// the DSP thread; the Opus encode itself happens on the recorder's own thread.
     /// </summary>
     private void CaptureRecordingFrame(int samples, OggOpusRecorder? recorder, int monitorStream,
@@ -2291,9 +2318,8 @@ public class RadioPlayback : IDisposable
         // Incoming, as heard (pre-sidetone) — pan / volume already applied in the fan-out.
         Array.Copy(_stereoBuffer, _recordStereo, stereo);
 
-        // Own voice, rendered through the radio FX, mixed in centre. The renderer runs EVERY
-        // frame (not just when voice is present) so its noise / AGC / squelch state machine
-        // stays continuous and produces the key-down crackle and key-up squelch tail.
+        // Own voice, with the radio tone and ambient SFX, mixed in centre. The renderer runs EVERY
+        // frame (not just when voice is present) so its ambient SFX are continuous.
         if (renderer != null)
         {
             if (_ownVoiceScratch.Length < samples) _ownVoiceScratch = new float[samples];
@@ -2301,10 +2327,10 @@ public class RadioPlayback : IDisposable
             int drained = voiceAvail > 0
                 ? _recordOwnVoiceBuffer.Read(_ownVoiceScratch.AsSpan()[..voiceAvail])
                 : 0;
-            // Carrier-off remainder of the buffer (key released) → squelch tail develops.
+            // The rest of the buffer is silence (key released, or the mic is behind).
             for (int i = drained; i < samples; i++) _ownVoiceScratch[i] = 0f;
 
-            renderer.Process(_ownVoiceScratch, drained, samples, AmbientNoiseVolume);
+            renderer.Process(_ownVoiceScratch, samples, OwnVoiceSfxVolume);
 
             // Centre pan: each channel gets cos45° = sin45° ≈ 0.707, scaled by MasterVolume —
             // matches the gain staging a centre-panned, unity-volume incoming stream receives.

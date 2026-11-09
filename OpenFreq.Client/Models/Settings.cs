@@ -80,7 +80,23 @@ public class OpenFreqSettings
     public string RecordingPath { get; set; } = "";
     public IOpenFreqService.CaptureSink CaptureSink { get; set; } = IOpenFreqService.CaptureSink.File;
     public string MonitorDeviceName { get; set; } = "";
-    public bool ApplyOwnVoiceSfx { get; set; } = true;
+    /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture (upstream 4abdbd2).</summary>
+    public double OwnVoiceSfxVolume { get; set; } = 1.0;
+
+    /// <summary>
+    /// Pre-1.6.0 on/off switch for SFX on own voice, read from older settings files only and never
+    /// written back. Off maps to <see cref="OwnVoiceSfxVolume"/> 0, the nearest thing the slider has to
+    /// the old clean voice; on keeps the slider's default. Newer files only carry OwnVoiceSfxVolume.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ApplyOwnVoiceSfx
+    {
+        get => null;
+        set
+        {
+            if (value == false) OwnVoiceSfxVolume = 0.0;
+        }
+    }
     /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Off by default.</summary>
     public bool HudTapeFeedEnabled { get; set; } = false;
     public bool? DarkMode { get; set; }

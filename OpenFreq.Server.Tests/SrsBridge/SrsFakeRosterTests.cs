@@ -14,7 +14,10 @@ namespace OpenFreq.Server.Tests.SrsBridge;
 /// </summary>
 public class SrsFakeRosterTests
 {
-    private static ClientSession CreateSession(string id, string displayName, bool authenticated = true,
+    // xUnit builds a fresh instance per test, so each test gets its own channel table.
+    private readonly FrequencyChannelManager _channels = new();
+
+    private ClientSession CreateSession(string id, string displayName, bool authenticated = true,
         params int[] joinedKhz)
     {
         var session = new ClientSession(id, displayName, new FakeWebSocket(), "127.0.0.1")
@@ -22,12 +25,12 @@ public class SrsFakeRosterTests
             IsAuthenticated = authenticated
         };
         foreach (var khz in joinedKhz)
-            session.CurrentFrequencies[khz] = ClientSession.FrequencyClientStatus.Receiving;
+            _channels.JoinChannel(khz, id, displayName);
         return session;
     }
 
-    private static SrsBridgeServer CreateBridge(ConcurrentDictionary<string, ClientSession> openFreqClients)
-        => new(new ServerConfig(), null!, NullLoggerFactory.Instance, openFreqClients, null!);
+    private SrsBridgeServer CreateBridge(ConcurrentDictionary<string, ClientSession> openFreqClients)
+        => new(new ServerConfig(), null!, NullLoggerFactory.Instance, openFreqClients, null!, _channels);
 
     [Fact]
     public void GetRosterSnapshot_IncludesFakeEntryForRealOpenFreqClient()
@@ -80,6 +83,39 @@ public class SrsFakeRosterTests
         var second = bridge.GetRosterSnapshot().Single().ClientGuid;
 
         Assert.Equal(first, second);
+    }
+
+    [Fact]
+    public void GetRosterSnapshot_ExcludesSilentlyObservedFrequencies()
+    {
+        // A GCI scanner's observer joins must never surface in the fake roster -- that would
+        // reveal to SRS users that someone is silently listening on their frequency.
+        var clients = new ConcurrentDictionary<string, ClientSession>();
+        clients["gci-1"] = CreateSession("gci-1", "Magic", joinedKhz: 251_000);
+        _channels.JoinChannel(135_000, "gci-1", "Magic", isObserver: true);
+        _channels.JoinChannel(30_000, "gci-1", "Magic", isObserver: true);
+
+        var bridge = CreateBridge(clients);
+
+        var entry = Assert.Single(bridge.GetRosterSnapshot());
+        var tuned = entry.RadioInfo!.Radios.Where(r => r.IsTuned)
+            .Select(r => (int)Math.Round(r.Freq / 1000.0)).ToList();
+        Assert.Equal([251_000], tuned);
+    }
+
+    [Fact]
+    public void GetRosterSnapshot_ObserverOnlyClient_ListedWithNoTunedRadios()
+    {
+        // Same as a connected client with no radios tuned: the client itself is visible on the
+        // server, but nothing about what it is silently scanning is.
+        var clients = new ConcurrentDictionary<string, ClientSession>();
+        clients["gci-1"] = CreateSession("gci-1", "Magic");
+        _channels.JoinChannel(251_000, "gci-1", "Magic", isObserver: true);
+
+        var bridge = CreateBridge(clients);
+
+        var entry = Assert.Single(bridge.GetRosterSnapshot());
+        Assert.DoesNotContain(entry.RadioInfo!.Radios, r => r.IsTuned);
     }
 
     private sealed class FakeWebSocket : WebSocket

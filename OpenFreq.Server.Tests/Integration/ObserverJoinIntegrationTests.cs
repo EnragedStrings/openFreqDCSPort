@@ -114,4 +114,58 @@ public class ObserverJoinIntegrationTests
         var status = await pilot.AllPeersStatus.WaitForAsync(s => s.AllPeers.TryGetValue(Freq, out var peers) && peers.Count == 2);
         Assert.Equal(2, status.AllPeers[Freq].Count);
     }
+
+    [Fact]
+    public async Task ObserverRejoin_IsIdempotentAndStillSilent()
+    {
+        // A duplicate observer join on the same session (reconnect race) is AlreadyInChannel:
+        // it just resends channel state -- no announcement, no second membership, and the
+        // member stays an observer.
+        await using var server = await SignalingServerHarness.StartAsync(maxClientsPerChannel: 1);
+        await using var pilot = RtcClientHarness.Create(server, "Viper1");
+        await using var scanner = RtcClientHarness.Create(server, "Scanner");
+
+        await pilot.ConnectAsync();
+        await scanner.ConnectAsync();
+
+        await pilot.Client.JoinFrequencyAsync(Freq);
+        await pilot.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
+
+        await scanner.Client.JoinFrequencyAsync(Freq, isObserver: true);
+        await scanner.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
+        await scanner.Client.JoinFrequencyAsync(Freq, isObserver: true);
+        await scanner.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
+
+        await scanner.Errors.AssertNoneAsync();
+        await pilot.PeerJoined.AssertNoneAsync();
+
+        var channels = server.Server.ChannelManager;
+        Assert.Equal(2, channels.GetClientsInChannel(Freq).Length);
+        Assert.True(channels.IsObserver(Freq, scanner.PeerId!));
+        Assert.Equal(1, channels.GetChannelCount(Freq));
+    }
+
+    [Fact]
+    public async Task ObserverDisconnect_DoesNotBroadcastPeerLeft()
+    {
+        await using var server = await SignalingServerHarness.StartAsync();
+        await using var pilot = RtcClientHarness.Create(server, "Viper1");
+        var scanner = RtcClientHarness.Create(server, "Scanner");
+
+        await pilot.ConnectAsync();
+        await scanner.ConnectAsync();
+
+        await pilot.Client.JoinFrequencyAsync(Freq);
+        await pilot.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
+        await scanner.Client.JoinFrequencyAsync(Freq, isObserver: true);
+        await scanner.FrequencyJoined.WaitForAsync(e => e.FrequencyKhz == Freq);
+        var scannerId = scanner.PeerId!;
+
+        await scanner.DisposeAsync();
+
+        await TestAsync.PollUntil(() => !server.Server.ChannelManager.IsInAnyChannel(scannerId),
+            TimeSpan.FromSeconds(5));
+        await pilot.PeerLeft.AssertNoneAsync();
+        Assert.Equal([pilot.PeerId!], server.Server.ChannelManager.GetClientsInChannel(Freq));
+    }
 }

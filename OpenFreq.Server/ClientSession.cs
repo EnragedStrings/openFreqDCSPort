@@ -10,7 +10,6 @@ public class ClientSession(string id, string displayName, WebSocket webSocket, s
     public string Id { get; } = id;
     public WebSocket WebSocket { get; } = webSocket;
     public bool IsAuthenticated { get; set; }
-    public ConcurrentDictionary<int, FrequencyClientStatus> CurrentFrequencies { get; } = new();
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
     public string? DisplayName { get; set; } = displayName;
     public string Ip { get; set; } = ip;
@@ -53,11 +52,6 @@ public class ClientSession(string id, string displayName, WebSocket webSocket, s
 
     public bool IsDcsPresenceFresh =>
         DcsPresenceUpdatedUtc is { } updatedUtc && DateTime.UtcNow - updatedUtc <= DcsPresenceStaleAfter;
-
-    public enum FrequencyClientStatus
-    {
-        Transmitting, Receiving
-    }
 
     public void UpdateActivity()
     {

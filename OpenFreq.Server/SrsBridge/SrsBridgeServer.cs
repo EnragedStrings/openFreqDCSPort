@@ -25,6 +25,9 @@ public sealed class SrsBridgeServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, SrsClientAdapter> _clients = new();
     private readonly ConcurrentDictionary<string, ClientSession> _openFreqClients;
 
+    /// <summary>The OpenFreq server's channel table -- the only record of who is tuned where.</summary>
+    private readonly FrequencyChannelManager _channelManager;
+
     /// <summary>Picks a connected OpenFreq client to referee terrain LOS for a leg involving an
     /// SRS-bridged peer -- see LosOracleService's own doc comment. Public so SrsClientAdapter (via
     /// _bridge) can consult it from the OpenFreq-&gt;SRS leg's signal-quality computation. Shared with
@@ -52,13 +55,18 @@ public sealed class SrsBridgeServer : IAsyncDisposable
     private static readonly TimeSpan FakeRosterPushInterval = TimeSpan.FromSeconds(3);
 
     public SrsBridgeServer(ServerConfig config, IRtcClientFactory rtcClientFactory, ILoggerFactory loggerFactory,
-        ConcurrentDictionary<string, ClientSession> openFreqClients, SignalingServer signalingServer)
+        ConcurrentDictionary<string, ClientSession> openFreqClients, SignalingServer signalingServer,
+        FrequencyChannelManager? channelManager = null)
     {
         _config = config;
         _rtcClientFactory = rtcClientFactory;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<SrsBridgeServer>();
         _openFreqClients = openFreqClients;
+
+        // Real usage takes the live server's table. Test-only construction may pass a null
+        // SignalingServer, and then either its own table or none (an always-empty one).
+        _channelManager = channelManager ?? signalingServer?.ChannelManager ?? new FrequencyChannelManager();
 
         // Real usage always passes a live SignalingServer -- share its LosOracle instance so both
         // consumers see one consistent cache/sticky-oracle state. Test-only construction (roster-
@@ -207,7 +215,10 @@ public sealed class SrsBridgeServer : IAsyncDisposable
             if (!session.IsAuthenticated || _shadowPeerIds.ContainsKey(session.Id)) continue;
 
             var radios = SrsPlayerRadioInfo.CreateDefaultRadios();
-            var khzList = session.CurrentFrequencies.Keys.Take(SrsPlayerRadioInfo.MaxRadios).ToList();
+            // Real memberships only: frequencies a GCI scanner is silently observing must not
+            // show up here, or the fake roster would reveal that an observer is listening.
+            var khzList = _channelManager.GetClientChannels(session.Id, includeObserved: false)
+                .Take(SrsPlayerRadioInfo.MaxRadios).ToList();
             for (var i = 0; i < khzList.Count; i++)
             {
                 var khz = khzList[i];

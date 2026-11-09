@@ -108,6 +108,9 @@ public class OpenFreqService : IOpenFreqService
     private TunedFrequencyData? GetAnyTunedSlot(int frequencyKhz) =>
         _tunedSlots.FirstOrDefault(kvp => kvp.Key.FreqKhz == frequencyKhz).Value;
 
+    private List<Guid> SlotsTunedTo(int frequencyKhz) =>
+        _tunedSlots.Keys.Where(k => k.FreqKhz == frequencyKhz).Select(k => k.SlotId).ToList();
+
 
     private IPlaybackService? _playbackService;
     private readonly Lock _streamCreationLock = new();
@@ -1730,8 +1733,12 @@ public class OpenFreqService : IOpenFreqService
         foreach (var peer in e.Peers)
             CreateAudioStreamForPeer(e.FrequencyKhz, peer.Id);
 
-        // Update all slots tuned to this frequency to Connected.
-        OnFrequencyConnectionStatusChanged(e.FrequencyKhz, Channel.ChannelConnectionStatus.Connected, e.Peers);
+        // Mark only the slots that actually tuned this frequency (upstream dfd9adc). Other channel cards can sit on
+        // the same frequency without having joined it; flipping those to Connected lets them start a transmission
+        // for a slot the audio path has no RadioStationData for.
+        foreach (var slotId in SlotsTunedTo(e.FrequencyKhz))
+            OnFrequencyConnectionStatusChanged(e.FrequencyKhz, Channel.ChannelConnectionStatus.Connected, e.Peers,
+                slotId);
     }
 
     private void OnClientFrequencyLeft(object? sender, FrequencyLeftEventArgs e)
@@ -2345,7 +2352,7 @@ public class OpenFreqService : IOpenFreqService
         StatusMessageReceived?.Invoke(this, message);
 
     private void OnFrequencyConnectionStatusChanged(int frequencyKhz, Channel.ChannelConnectionStatus connectionStatus,
-        List<ChannelStateMessage.Peer> peers, Guid? slotId = null)
+        List<ChannelStateMessage.Peer> peers, Guid slotId)
     {
         _logger.LogDebug("Frequency {FrequencyKhz}: {Status}", frequencyKhz, connectionStatus);
         FrequencyConnectionStatusChanged?.Invoke(this,
@@ -2515,14 +2522,14 @@ public class FrequencyConnectionStatusEventArgs(
     int frequencyKhz,
     Channel.ChannelConnectionStatus connectionStatus,
     List<ChannelStateMessage.Peer> peers,
-    Guid? slotId = null)
+    Guid slotId)
     : EventArgs
 {
     public int FrequencyKhz { get; } = frequencyKhz;
     public Channel.ChannelConnectionStatus ConnectionStatus { get; } = connectionStatus;
     public List<ChannelStateMessage.Peer> Peers = peers;
     /// <summary>When set, only the channel with this Id should be updated; null means all channels on the frequency.</summary>
-    public Guid? SlotId { get; } = slotId;
+    public Guid SlotId { get; } = slotId;
 }
 
 public class FrequencyTransmissionStatusEventArgs(

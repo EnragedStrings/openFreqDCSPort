@@ -18,7 +18,6 @@ Radio frequency propagation modeling based on ITU-R standards:
 - **Fresnel zone clearance** for path obstruction
 - **Atmospheric refraction** using altitude-dependent refractivity (SAND2012-10690)
 - **Doppler shift** from transmitter and receiver velocities
-- **Weather attenuation** (0.02 dB/km)
 
 ### Audio Processing
 

@@ -47,6 +47,18 @@ public class FreeSpacePathModelTests
     }
 
     [Fact]
+    public void CreateBaseAudioParams_IsPureFreeSpaceLoss()
+    {
+        // No weather/atmospheric term any more (upstream bd1576a), matching FastPathAudioSim:
+        // 10 W (40 dBm) at 251 MHz over 100 km is FSPL = 20·log10(4π·d·f/c) ≈ 120.43 dB.
+        var audioParams = FreeSpacePathModel.CreateBaseAudioParams(251_000, 10, 0, 100_000, -107);
+
+        double fsplDb = 20.0 * Math.Log10(4.0 * Math.PI * 100_000 * 251_000_000.0 / 299_792_458.0);
+        Assert.Equal(40.0 - fsplDb, audioParams.ReceivedDb, 2);
+        Assert.Equal(40.0 - fsplDb + 107.0, audioParams.ReceivedSnrDb, 2);
+    }
+
+    [Fact]
     public void ApplyHorizonLoss_WellBeyondHorizon_BlocksSignal()
     {
         var audioParams = FreeSpacePathModel.CreateBaseAudioParams(251_000, 10, 0, 5000, -113);

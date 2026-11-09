@@ -36,8 +36,9 @@ public static class FreeSpacePathModel
 
     private static double DegreesToRadians(double degrees) => degrees * Math.PI / 180.0;
 
-    /// <summary>Base free-space signal estimate from distance alone -- FSPL + a small fixed
-    /// weather-loss term, no horizon/extra-distance loss (that's the separate <see
+    /// <summary>Base free-space signal estimate from distance alone -- FSPL only (no atmospheric
+    /// absorption, same as FastPathAudioSim: per ITU-R P.676/P.838 it's under ~1 dB even at the
+    /// radio horizon), no horizon/extra-distance loss (that's the separate <see
     /// cref="ApplyHorizonLoss"/> stage, kept apart so callers that already have a real
     /// terrain/signal calculation for the base signal can still layer horizon loss on top of it
     /// without double-computing FSPL). Mirrors OpenFreqService.TryCreateDcsFreeSpaceAudioParams
@@ -49,10 +50,9 @@ public static class FreeSpacePathModel
         var frequencyHz = Math.Max(1.0, frequencyKhz * 1000.0);
         var txPowerDbm = 10.0 * Math.Log10(Math.Max(0.001, txPowerWatts) * 1000.0);
         var fsplDb = 20.0 * Math.Log10(4.0 * Math.PI * clampedDistance * frequencyHz / SpeedOfLightMetersPerSecond);
-        var weatherLossDb = 0.02 * (clampedDistance / 1000.0);
 
         var audioParams = FastPathAudioSim.GetDefaultAudioParams(frequencyKhz, (float)ppm);
-        audioParams.ReceivedDb = (float)(txPowerDbm - fsplDb - weatherLossDb);
+        audioParams.ReceivedDb = (float)(txPowerDbm - fsplDb);
         audioParams.ReceivedSnrDb = audioParams.ReceivedDb - (float)receiverSensitivityDb;
         return audioParams;
     }

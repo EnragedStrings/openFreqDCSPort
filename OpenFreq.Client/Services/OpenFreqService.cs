@@ -160,6 +160,7 @@ public class OpenFreqService : IOpenFreqService
     // Pre-allocated sidetone conversion buffer — reused every recording callback (single-threaded).
     private float[] _sidetonePushBuffer = new float[4800]; // 100ms @ 48kHz, grows if needed
     private readonly MicLevelNormalizer _micNormalizer = new(OpenFreqRtcClient.SAMPLE_RATE);
+    private bool _wasTransmitting; // whether the last record callback was transmitting, to see a talk-spurt start
     private DateTime _lastMicLevelEventUtc = DateTime.MinValue;
     private DateTime _nextEmptyTransmissionWarningUtc = DateTime.MinValue;
 
@@ -1091,13 +1092,13 @@ public class OpenFreqService : IOpenFreqService
     {
         if (_recordHandle == 0) return;
 
+        // ChannelStop both stops *and* frees a recording channel — BASS has no ChannelFree, and StreamFree only
+        // accepts HSTREAM, so calling it here just logged BASS_ERROR_HANDLE on every stop (upstream 3ff4ecd).
         if (!Bass.ChannelStop(_recordHandle))
             _logger.LogWarning("ChannelStop on record handle {Handle} returned false: {Error}",
                 _recordHandle, Bass.LastError);
-        if (!Bass.StreamFree(_recordHandle))
-            _logger.LogWarning("StreamFree on record handle {Handle} returned false: {Error}",
-            _recordHandle, Bass.LastError);
         _recordHandle = 0;
+        _wasTransmitting = false;
         MicLevelChanged?.Invoke(this, new MicLevelChangedEventArgs(0, 0));
     }
 
@@ -1304,6 +1305,7 @@ public class OpenFreqService : IOpenFreqService
             // gate during transmission: the estimate only advances on this idle path.
             if (_activeTransmissionsAndMutedFrequencies.Count == 0)
             {
+                _wasTransmitting = false;
                 if (MicNormalizationEnabled)
                 {
                     // Read directly from the input buffer;
@@ -1329,6 +1331,12 @@ public class OpenFreqService : IOpenFreqService
                 return true;
             }
 
+            // A new talk-spurt: don't let the normalizer's 2 ms limiter start with the end of the last one.
+            if (!_wasTransmitting)
+            {
+                _wasTransmitting = true;
+                _micNormalizer.BeginTalkspurt();
+            }
 
             // Copy audio data once
             short[] audioData = new short[length / 2];

@@ -422,6 +422,10 @@ public class RadioPlayback : IDisposable
     // DSP thread (consumer). Same SPSC buffer used for sidetone.
     private readonly SidetoneSpscBuffer _recordOwnVoiceBuffer = new(8192);
 
+    // Keeps the capture mix (recording, monitor, HUD feed) under full scale (upstream 74b46f0). Reset when a capture
+    // starts, so it doesn't start with the last 2 ms of the previous one. Both are used only on the DSP thread.
+    private readonly PeakLimiter _captureLimiter = new(SampleRate, channels: 2);
+    private bool _wasCapturing;
     private bool _feeding;          // HUD Recorder feed active (local shared memory, see HudTapeFeed)
     private HudTapeFeed? _hudFeed;  // created on the first start, kept until Dispose (the DSP thread may hold it)
     private long _outputLatencyTicks; // DSP callback -> heard, Stopwatch ticks (re-read at every master stream start)
@@ -1411,6 +1415,8 @@ public class RadioPlayback : IDisposable
 
     private void SetupDSPAndPlay()
     {
+        var outputLimiter = new PeakLimiter(SampleRate, channels: 2);
+
         // This callback is fired continuously - to avoid stutters,
         // we need to provide length bytes of stereo audio samples.
         _dspProc = (_, _, bufferPtr, length, _) =>
@@ -1900,9 +1906,20 @@ public class RadioPlayback : IDisposable
             // Capture for the session recording/monitor BEFORE sidetone is mixed in, so the
             // incoming side is "as heard" minus our own raw mic loopback. Our own voice
             // is added back rendered through the radio FX (CaptureRecordingFrame).
+            // The capture limiter delays the capture by as much as the output limiter delays playback, so the HUD
+            // feed's "heard" stamp needs no correction.
+            if (capturing && !_wasCapturing)
+                _captureLimiter.Reset();
+            _wasCapturing = capturing;
             if (capturing)
                 CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer, hudFeed,
                     callbackQpc + _outputLatencyTicks);
+
+            // Several radios at once and high volume settings can add up past full scale. Clipping there makes loud,
+            // broadband pops far outside our 300-3000 Hz passband. A 2 ms look-ahead limiter (upstream 74b46f0)
+            // replaces scaling the whole buffer by its loudest sample, which pumped and made the output quieter every
+            // time another speaker came in. Sidetone and the KY-58 tones go in after it, so they don't get its delay.
+            outputLimiter.Process(_stereoBuffer.AsSpan(0, stereoOutputSamples));
 
             // Sidetone: mix own voice (mono) into stereo output
             // No AGC/ALC
@@ -1926,7 +1943,7 @@ public class RadioPlayback : IDisposable
             }
 
             // Encryption PTT tones (KY_58_TX / KY_58_RX): short one-shot cues mixed in centered,
-            // same as sidetone. Participates in the peak-limiter below like everything else.
+            // same as sidetone, after the output limiter (so no added delay) and before the final clamp.
             // Locked because PlayTxTone() can be called concurrently from another thread.
             lock (_lock)
             {
@@ -1934,25 +1951,10 @@ public class RadioPlayback : IDisposable
                 MixOneShotTone(ref _rxTonePosition, _rxToneSamples, samples);
             }
 
-            // Peak-limit the mixed output: find the highest absolute sample,
-            // and if it would clip, scale the entire buffer down uniformly.
-            // Necessary when dealing with multiple incoming channels at once.
-            var peak = 0f;
-            for (int i = 0; i < stereoOutputSamples; ++i)
-            {
-                peak = MathF.Max(peak, MathF.Abs(_stereoBuffer[i]));
-            }
-
-            // True brickwall limiter: leave the mix alone unless a peak would clip the
-            // BASS float output (full scale ±1), then scale the whole buffer down so the
-            // loudest sample sits at ±1. No makeup boost here - headroom is what lets the
-            // per-radio volume knob (slot.Volume) and the Master Volume slider (0–200 %)
-            // actually control loudness instead of everything pinning at the clip.
-            var limitGain = peak > 1f ? 1f / peak : 1f;
-            for (var i = 0; i < stereoOutputSamples; ++i)
-            {
-                _stereoBuffer[i] = Math.Clamp(_stereoBuffer[i] * limitGain, -1f, 1f);
-            }
+            // Sidetone and tones can't clip alone, but can add to loud receive audio. A clamp touches only the samples
+            // that overflow, and adds no delay.
+            foreach (ref float s in _stereoBuffer.AsSpan(0, stereoOutputSamples))
+                s = Math.Clamp(s, -1f, 1f);
 
             Marshal.Copy(_stereoBuffer, 0, bufferPtr, stereoOutputSamples);
             // Keep sinusoids phase-coherent across callbacks.
@@ -2046,6 +2048,9 @@ public class RadioPlayback : IDisposable
                 _recordStereo[i * 2 + 1] += s;
             }
         }
+
+        // In case multiple RX channels plus our own voice make us clip (upstream b4e67d7 / 74b46f0).
+        _captureLimiter.Process(_recordStereo.AsSpan(0, stereo));
 
         // File sink: queued to the recorder's own encode thread.
         recorder?.Write(_recordStereo.AsSpan(0, stereo));

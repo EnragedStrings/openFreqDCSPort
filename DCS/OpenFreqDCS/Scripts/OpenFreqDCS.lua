@@ -605,11 +605,31 @@ local function buildA10C2Radios()
     local arc210DisplayFrequency, arc210DisplayRaw, arc210DisplayIndicator, arc210DisplayValues = getArc210DisplayFrequencyHz()
     local arc210DialFrequency = getArc210DialFrequencyHz(mainPanel)
     local arc164DialFrequency = getArc164DialFrequencyHz(mainPanel)
-    if arc210DisplayFrequency then
+    -- The ARC-210 control head shows one receiver-transmitter at a time (txt_RT "RT1" or txt_RT2
+    -- "RT2") and boots through "POWER UP LOADER" / "INITIALIZING" pages with no frequency. Slot 1 is
+    -- RT1, so its display frequency counts only on an RT1 page. Otherwise RT1's own device
+    -- frequency is used, and the knob-derived "dial" value (args 554-558, which read 133.000 on the
+    -- A-10C II whatever the radio is tuned to) only as a last resort. Before this, an RT2 page
+    -- retuned slot 1 to RT2's frequency and every boot or non-frequency page to 133.000.
+    local arc210DisplayText = type(arc210DisplayRaw) == "string" and arc210DisplayRaw or ""
+    local arc210Booting = arc210DisplayText:find("INITIALIZING", 1, true) ~= nil
+        or arc210DisplayText:find("POWER UP LOADER", 1, true) ~= nil
+    local arc210DisplayShowsRt2 = type(arc210DisplayValues) == "table" and arc210DisplayValues.txt_RT2 ~= nil
+    local arc210FrequencySource
+    if arc210DisplayFrequency and not arc210DisplayShowsRt2 then
         arc210Frequency = arc210DisplayFrequency
+        arc210FrequencySource = "display"
+    elseif arc210Frequency and arc210Frequency >= 30000000 and arc210Frequency <= 400000000 then
+        arc210FrequencySource = "device"
     elseif arc210DialFrequency then
         arc210Frequency = arc210DialFrequency
+        arc210FrequencySource = "dial"
+    else
+        arc210FrequencySource = "none"
     end
+    writeDebug(string.format("ARC210 page: %s, frequency from %s%s",
+        arc210Booting and "booting" or (arc210DisplayShowsRt2 and "RT2" or (arc210DisplayValues and "RT1" or "no display")),
+        arc210FrequencySource, arc210Booting and " (radio treated as off until booted)" or ""))
     if arc164DialFrequency then
         arc164Frequency = arc164DialFrequency
     end
@@ -818,7 +838,8 @@ local function buildA10C2Radios()
             secondaryFrequencyHz = getArc210GuardHz(mainPanel),
             modulation = arc210Modulation,
             volume = getVolume(mainPanel, 238, 225, 226),
-            isOn = not arc210PowerKnobOff and getDevicePower(arc210, arc210Frequency, arc210IsOn, requireDevicePower),
+            isOn = not arc210PowerKnobOff and not arc210Booting
+                and getDevicePower(arc210, arc210Frequency, arc210IsOn, requireDevicePower),
             ptt = ptt.arc210,
             enc = arc210Enc,
             encKey = arc210EncKey,

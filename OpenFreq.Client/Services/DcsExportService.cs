@@ -12,6 +12,7 @@ using FalconRadioService.Models;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Models.Dcs;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Common.Updates;
 using OpenFreqClient.Json;
 
 namespace OpenFreq.Client.Services;
@@ -184,6 +185,8 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     public event EventHandler<DcsGameModeChangedEventArgs>? GameModeChanged;
     public event EventHandler<DcsAircraftChangedEventArgs>? AircraftChanged;
     public event EventHandler<DcsHeightmapChangedEventArgs>? HeightmapChanged;
+    public event EventHandler<string>? ListenerErrorOccurred;
+    public string? ListenerError { get; private set; }
 
     public DcsRadioState? GetRadio(int slot)
     {
@@ -279,6 +282,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             _udpClient = new UdpClient(new IPEndPoint(IPAddress.Loopback, UdpPort));
             _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
             _watchdogTask = Task.Run(() => WatchdogLoopAsync(_cts.Token));
+            ListenerError = null;
             logger.LogInformation("DCS export listener started on UDP {Port}", UdpPort);
         }
         catch (Exception ex)
@@ -292,7 +296,30 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
                 ChangeState(ServiceState.Stopped);
             }
             logger.LogError(ex, "Failed to start DCS export listener on UDP {Port}", UdpPort);
+
+            // Silent before: DCS kept sending, this window showed no radios and nothing said why.
+            ListenerError = DescribeListenerFailure(ex, UdpPort);
+            ListenerErrorOccurred?.Invoke(this, ListenerError);
         }
+    }
+
+    /// <summary>User-facing reason the DCS export listener could not bind its port. The usual case is
+    /// a second OpenFreq window: only one program can receive DCS's radio data, and the radios then
+    /// appear only in the other (possibly hidden, in the tray) window.</summary>
+    internal static string DescribeListenerFailure(Exception ex, int port)
+    {
+        if (ex is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse or SocketError.AccessDenied })
+        {
+            var exe = Environment.ProcessPath;
+            var others = exe == null ? [] : SelfUpdateLauncher.FindOtherInstances(exe, Environment.ProcessId);
+            return others.Count > 0
+                ? $"DCS radios can't be received in this window: another OpenFreq window (process {string.Join(", ", others)}) " +
+                  "is already receiving them. Close every OpenFreq window (check the system tray too) and start OpenFreq once."
+                : $"DCS radios can't be received: UDP port {port} is already used by another program. Close it " +
+                  "(or another OpenFreq window) and restart OpenFreq.";
+        }
+
+        return $"DCS radios can't be received: the DCS export listener on UDP port {port} failed to start ({ex.Message}).";
     }
 
     public void Stop()

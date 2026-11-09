@@ -1774,7 +1774,16 @@ function OpenFreqDCS.export(modelTime)
             return encodeJson(buildPacket(now))
         end)
         if ok and payload then
-            pcall(function() OpenFreqDCS.udp:send(payload) end)
+            local sendOk, sent, sendErr = pcall(function() return OpenFreqDCS.udp:send(payload) end)
+            if not sendOk or not sent then
+                -- Was discarded silently: a failing send looked exactly like a healthy export.
+                if OpenFreqDCS.nextSendErrorLogTime == nil or now >= OpenFreqDCS.nextSendErrorLogTime then
+                    OpenFreqDCS.nextSendErrorLogTime = now + 10
+                    writeLog(string.format("export send failed (%d bytes to %s:%s): %s", #payload,
+                        tostring(config.host or "127.0.0.1"), tostring(config.port or 34321),
+                        tostring(sendOk and sendErr or sent)))
+                end
+            end
         elseif not ok then
             if OpenFreqDCS.nextExportErrorLogTime == nil or now >= OpenFreqDCS.nextExportErrorLogTime then
                 OpenFreqDCS.nextExportErrorLogTime = now + 1

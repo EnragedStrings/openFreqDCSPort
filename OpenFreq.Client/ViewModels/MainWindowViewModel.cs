@@ -164,6 +164,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.AudioPlaybackErrorOccurred += OnAudioErrorOccurred;
         _openFreqService.RecordingStateChanged += OnRecordingStateChanged;
         _audioService.AudioDeviceErrorOccurred += OnAudioErrorOccurred;
+        _dcsExportService.ListenerErrorOccurred += OnAudioErrorOccurred;
+        if (_dcsExportService.ListenerError is { } dcsListenerError)
+            OnAudioErrorOccurred(_dcsExportService, dcsListenerError);
 
         // Falcon Radio Shared Memory
         _falconRadioSharedMemoryService.ConnectionParametersChanged +=
@@ -783,8 +786,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Shared handler for audio errors from both <see cref="IOpenFreqService.AudioPlaybackErrorOccurred"/>
-    /// (RadioPlayback / BASS) and <see cref="IAudioService.AudioDeviceErrorOccurred"/> (device monitoring).
+    /// Shared handler for user-facing errors from <see cref="IOpenFreqService.AudioPlaybackErrorOccurred"/>
+    /// (RadioPlayback / BASS), <see cref="IAudioService.AudioDeviceErrorOccurred"/> (device monitoring) and
+    /// <see cref="IDcsExportService.ListenerErrorOccurred"/> (DCS export listener could not start).
     /// Marshals to the UI thread — callers may fire from background threads.
     /// </summary>
     private void OnAudioErrorOccurred(object? sender, string message)
@@ -1301,6 +1305,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _openFreqService.AudioPlaybackErrorOccurred -= OnAudioErrorOccurred;
         _openFreqService.RecordingStateChanged -= OnRecordingStateChanged;
         _audioService.AudioDeviceErrorOccurred -= OnAudioErrorOccurred;
+        _dcsExportService.ListenerErrorOccurred -= OnAudioErrorOccurred;
         _ivcMonitorService.IvcStatusChanged -= OnIvcStatusChanged;
         _falconSharedMemoryService.StateChanged -= OnFalconSharedMemoryStateChanged;
         PeerList.CollectionChanged -= OnPeerListChanged;

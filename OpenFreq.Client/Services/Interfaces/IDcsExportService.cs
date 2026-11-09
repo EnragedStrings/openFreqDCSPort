@@ -49,6 +49,14 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     event EventHandler<DcsGameModeChangedEventArgs>? GameModeChanged;
     event EventHandler<DcsAircraftChangedEventArgs>? AircraftChanged;
     event EventHandler<DcsHeightmapChangedEventArgs>? HeightmapChanged;
+
+    /// <summary>Why the DCS export listener could not start (null while it runs or was never
+    /// started). Kept, not only raised, because the listener can start before the main window has
+    /// subscribed to <see cref="ListenerErrorOccurred"/>.</summary>
+    string? ListenerError { get; }
+
+    /// <summary>The DCS export listener could not start: DCS radios will not appear. User-facing text.</summary>
+    event EventHandler<string>? ListenerErrorOccurred;
 }
 
 public class DcsRadioChangedEventArgs(DcsRadioState? oldRadio, DcsRadioState newRadio) : EventArgs

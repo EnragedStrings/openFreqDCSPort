@@ -1537,9 +1537,21 @@ end
 -- While the 3DAP is digital with 3D audio available (3DAP_OUT_MODE = 0.2, 3DAP_OUT_3DA = 1) each radio
 -- gets a helmet-fixed direction, by slot (after add-ons: slot 3 = ARC-210 RT-2, slot 4 = LARS), from
 -- OpenFreqDCSConfig.a10c2.spatial3das. The client renders those radios binaurally; otherwise plain pan.
+-- Built-in AMDF CAFG402B layout, used when OpenFreqDCSConfig.lua has no spatial3das block: the installer
+-- never overwrites an existing config, so installs upgraded from before v1.4.0 keep one without it.
+local DEFAULT_SPATIAL_3DAS = {
+    enabled = true,
+    slots = {
+        [1] = { azimuth = 0, elevation = -15 },  -- RT1: ahead, low
+        [2] = { azimuth = -90, elevation = 0 },  -- 164: left
+        [3] = { azimuth = 90, elevation = 0 },   -- RT2: right
+        [4] = { azimuth = 0, elevation = 45 },   -- LARS: ahead, high
+    },
+}
+
 local function apply3dasSpatial(radios)
-    local cfg = config.a10c2 and config.a10c2.spatial3das
-    if not cfg or cfg.enabled == false then
+    local cfg = (config.a10c2 and config.a10c2.spatial3das) or DEFAULT_SPATIAL_3DAS
+    if cfg.enabled == false then
         return
     end
     -- The 3DAP publishes its state as cockpit parameters 3DAP_OUT_MODE / 3DAP_OUT_3DA, read through the

@@ -322,6 +322,28 @@ public class OpenFreqService : IOpenFreqService
         }
     } = true;
 
+    /// <summary>
+    /// When true, the capture mix (incoming as heard + own voice through the radio FX) is fed to HUD Recorder, a local
+    /// DCS gun-camera mod, through local shared memory, so its HUD tapes carry the radios in sync. Independent of the
+    /// file/device capture. Windows only; off by default.
+    /// </summary>
+    public bool HudTapeFeedEnabled
+    {
+        get => field;
+        set
+        {
+            field = value;
+            ApplyHudTapeFeed();
+        }
+    }
+
+    private void ApplyHudTapeFeed()
+    {
+        if (_playbackService == null) return;
+        if (HudTapeFeedEnabled && OperatingSystem.IsWindows()) _playbackService.StartHudTapeFeed();
+        else _playbackService.StopHudTapeFeed();
+    }
+
     /// <summary>Selects the capture output: file or playback device.</summary>
     public IOpenFreqService.CaptureSink Sink { get; set; } = IOpenFreqService.CaptureSink.File;
 
@@ -458,6 +480,7 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.SidetoneVolume = (float)SidetoneVolume;
         _playbackService.AmbientNoiseVolume = (float)AmbientNoiseVolume;
         _playbackService.OwnVoiceSfxEnabled = ApplyOwnVoiceSfx;
+        ApplyHudTapeFeed();
         _playbackService.SetEncryptionToneAssets(
             LoadEmbeddedAudioAsset("AudioEffects/KY_58_TX.wav"),
             LoadEmbeddedAudioAsset("AudioEffects/KY_58_RX.wav"));
@@ -1354,7 +1377,7 @@ public class OpenFreqService : IOpenFreqService
             // session recording (own voice, rendered through radio FX downstream).
             // Pre-allocated buffer avoids GC allocation on the hot audio path.
             bool wantSidetone = _playbackService is { SidetoneEnabled: true };
-            bool wantRecord = _playbackService is { IsCapturing: true };
+            bool wantRecord = _playbackService is { WantsOwnVoice: true }; // any capture sink, HUD Recorder feed included
             if (wantSidetone || wantRecord)
             {
                 int n = audioData.Length;

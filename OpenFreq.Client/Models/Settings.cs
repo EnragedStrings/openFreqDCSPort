@@ -81,6 +81,8 @@ public class OpenFreqSettings
     public IOpenFreqService.CaptureSink CaptureSink { get; set; } = IOpenFreqService.CaptureSink.File;
     public string MonitorDeviceName { get; set; } = "";
     public bool ApplyOwnVoiceSfx { get; set; } = true;
+    /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Off by default.</summary>
+    public bool HudTapeFeedEnabled { get; set; } = false;
     public bool? DarkMode { get; set; }
     public bool MinimizeOnConnect { get; set; } = true;
 

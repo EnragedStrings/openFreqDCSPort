@@ -69,6 +69,12 @@
                 IsChecked="{Binding Settings.ApplyOwnVoiceSfx}"
                 Margin="0,12,0,4" />
 
+      <CheckBox Content="Feed HUD Recorder (DCS HUD tapes)"
+                IsChecked="{Binding Settings.HudTapeFeedEnabled}"
+                IsVisible="{Binding Settings.IsWindowsPlatform}"
+                ToolTip.Tip="Puts the radios (as heard, plus your own voice with radio SFX) on HUD Recorder's DCS HUD tapes, in sync. Local shared memory only, nothing leaves this PC. Runs whenever OpenFreq plays audio, independent of recording/streaming."
+                Margin="0,0,0,4" />
+
 
     </StackPanel>
   </controls:Card>

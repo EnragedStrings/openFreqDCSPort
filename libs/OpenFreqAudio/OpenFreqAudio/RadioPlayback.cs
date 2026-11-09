@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using ManagedBass.Mix;
@@ -395,7 +396,12 @@ public class RadioPlayback : IDisposable
     // DSP thread (consumer). Same SPSC buffer used for sidetone.
     private readonly SidetoneSpscBuffer _recordOwnVoiceBuffer = new(8192);
 
-    private bool Capturing => _recording || _monitoring;
+    private bool _feeding;          // HUD Recorder feed active (local shared memory, see HudTapeFeed)
+    private HudTapeFeed? _hudFeed;  // created on the first start, kept until Dispose (the DSP thread may hold it)
+    private long _outputLatencyTicks; // DSP callback -> heard, Stopwatch ticks (re-read at every master stream start)
+
+    // Any sink active: the DSP thread builds the capture frame and owns an own-voice renderer.
+    private bool Capturing => _recording || _monitoring || _feeding;
 
     /// <summary>Feed own mic samples (mono, 48kHz, [-1,1]) for the outgoing side of the capture.</summary>
     public void PushOwnVoiceForRecording(ReadOnlySpan<float> samples)
@@ -409,7 +415,11 @@ public class RadioPlayback : IDisposable
 
     public bool IsRecording => _recording;
     public bool IsMonitoring => _monitoring;
-    public bool IsCapturing => Capturing;
+    /// <summary>The user's capture (file or monitor device) is running. The HUD Recorder feed is not counted.</summary>
+    public bool IsCapturing => _recording || _monitoring;
+    public bool IsFeedingHudTape => _feeding;
+    /// <summary>Any sink wants own voice (PushOwnVoiceForRecording), the HUD Recorder feed included.</summary>
+    public bool WantsOwnVoice => Capturing;
 
     /// <summary>When false, own voice is captured clean (no radio FX/AGC/squelch). Default true.</summary>
     public bool OwnVoiceSfxEnabled
@@ -974,6 +984,46 @@ public class RadioPlayback : IDisposable
         _logger.LogInformation("Monitor stream stopped");
     }
 
+    /// <summary>
+    /// Start feeding the capture mix (incoming as heard + own voice through the radio FX, as recorded) to HUD Recorder's
+    /// local shared memory, so its DCS HUD tapes carry the radios in sync. Windows only; no-op if already feeding.
+    /// Fails with a user-facing error if another program (e.g. the 455th SRS fork) already feeds it.
+    /// </summary>
+    public void StartHudTapeFeed()
+    {
+        lock (_lock)
+        {
+            if (_feeding) return;
+            if (_hudFeed == null)
+            {
+                _hudFeed = HudTapeFeed.Open(out var reason);
+                if (_hudFeed == null)
+                {
+                    RaiseUserFacingError($"HUD Recorder feed: {reason}");
+                    return;
+                }
+            }
+
+            EnsureCaptureRenderer();
+            _feeding = true;
+            _logger.LogInformation("HUD Recorder feed started (output latency {Ms:F1} ms)",
+                _outputLatencyTicks * 1000.0 / Stopwatch.Frequency);
+        }
+    }
+
+    /// <summary>Stop feeding HUD Recorder (the shared memory stays mapped until Dispose). No-op if not feeding.</summary>
+    public void StopHudTapeFeed()
+    {
+        lock (_lock)
+        {
+            if (!_feeding) return;
+            _feeding = false;
+            ClearCaptureRendererIfIdle();
+        }
+
+        _logger.LogInformation("HUD Recorder feed stopped");
+    }
+
     public void TuneFrequency(int frequencyKHz, Guid slotId)
     {
         lock (_lock)
@@ -1212,6 +1262,25 @@ public class RadioPlayback : IDisposable
         _masterStream = Bass.CreateStream(SampleRate, 2, BassFlags.Float, streamProc, IntPtr.Zero);
         if (_masterStream == 0) throw new Exception($"BASS error creating master stream: {Bass.LastError}");
         SetupDSPAndPlay();
+        _outputLatencyTicks = MeasureOutputLatencyTicks();
+    }
+
+    // How far the DSP callback runs ahead of the speaker: the stream's playback buffer plus the device's own latency
+    // (BASS reports it when known; otherwise its device buffer). Only stamps the HUD Recorder feed.
+    private static long MeasureOutputLatencyTicks()
+    {
+        double ms = Bass.GetConfig(Configuration.PlaybackBufferLength);
+        try
+        {
+            var info = Bass.Info;
+            ms += info.Latency > 0 ? info.Latency : Bass.GetConfig(Configuration.DeviceBufferLength);
+        }
+        catch
+        {
+            ms += Bass.GetConfig(Configuration.DeviceBufferLength);
+        }
+
+        return (long)(Math.Clamp(ms, 0, 500) / 1000.0 * Stopwatch.Frequency);
     }
 
     private void StopMasterStream()
@@ -1364,6 +1433,8 @@ public class RadioPlayback : IDisposable
             OggOpusRecorder? recorder;
             int monitorStream;
             OwnVoiceRadioRenderer? ownVoiceRenderer;
+            HudTapeFeed? hudFeed;
+            long callbackQpc = Stopwatch.GetTimestamp();
             lock (_lock)
             {
                 transmittingFrequencies = new(_transmittingFrequencies);
@@ -1373,6 +1444,7 @@ public class RadioPlayback : IDisposable
                 recorder = _recorder;
                 monitorStream = _monitorStream;
                 ownVoiceRenderer = _ownVoiceRenderer;
+                hudFeed = _feeding ? _hudFeed : null;
 
                 // Build freq → tuned-slots index from _slots snapshot
                 tunedSlotsByFreq = new Dictionary<int, List<RadioConfig>>();
@@ -1805,7 +1877,8 @@ public class RadioPlayback : IDisposable
             // incoming side is "as heard" minus our own raw mic loopback. Our own voice
             // is added back rendered through the radio FX (CaptureRecordingFrame).
             if (capturing)
-                CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer);
+                CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer, hudFeed,
+                    callbackQpc + _outputLatencyTicks);
 
             // Sidetone: mix own voice (mono) into stereo output
             // No AGC/ALC
@@ -1886,7 +1959,7 @@ public class RadioPlayback : IDisposable
     /// the DSP thread; the Opus encode itself happens on the recorder's own thread.
     /// </summary>
     private void CaptureRecordingFrame(int samples, OggOpusRecorder? recorder, int monitorStream,
-        OwnVoiceRadioRenderer? renderer)
+        OwnVoiceRadioRenderer? renderer, HudTapeFeed? hudFeed, long heardQpc)
     {
         int stereo = samples * 2;
         if (_recordStereo.Length < stereo) _recordStereo = new float[stereo];
@@ -1925,6 +1998,8 @@ public class RadioPlayback : IDisposable
         // Device sink: push to the monitor output stream (its device pulls at its own rate).
         if (monitorStream != 0)
             Bass.StreamPutData(monitorStream, _recordStereo, stereo * sizeof(float));
+        // HUD Recorder feed: copied into its shared memory now, stamped with when this block is heard.
+        hudFeed?.WriteHeard(_recordStereo.AsSpan(0, stereo), heardQpc);
     }
 
     public async Task StopAll()
@@ -2140,6 +2215,16 @@ public class RadioPlayback : IDisposable
     public void Dispose()
     {
         StopAll().Wait(500);
+        // After StopAll the master stream (and its DSP callback) is gone, so nothing writes the feed any more.
+        HudTapeFeed? feed;
+        lock (_lock)
+        {
+            _feeding = false;
+            feed = _hudFeed;
+            _hudFeed = null;
+        }
+
+        feed?.Dispose();
     }
 
     // Lock-free SPSC ring buffer for sidetone.

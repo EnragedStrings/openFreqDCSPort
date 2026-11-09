@@ -50,6 +50,8 @@ public interface IOpenFreqService : IDisposable
     bool AutoRecordInGameMode { get; set; }
     /// <summary>When true, own voice in the capture gets the full radio FX (AGC/squelch/SFX); when false it stays clean.</summary>
     bool ApplyOwnVoiceSfx { get; set; }
+    /// <summary>When true, the capture mix is fed to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
+    bool HudTapeFeedEnabled { get; set; }
     /// <summary>Directory recordings are written to. Created if missing. Blank → "recordings" next to the executable.</summary>
     string RecordingPath { get; set; }
     /// <summary>True while a capture (file or device) is in progress.</summary>

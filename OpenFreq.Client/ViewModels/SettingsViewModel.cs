@@ -174,6 +174,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     }
     /// <summary>When true, own voice in the capture gets the full radio FX; when false it stays clean.</summary>
     [ObservableProperty] public partial bool ApplyOwnVoiceSfx { get; set; } = true;
+    /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
+    [ObservableProperty] public partial bool HudTapeFeedEnabled { get; set; }
     /// <summary>List index into <see cref="PlaybackDeviceNames"/> for the monitor/stream output device.</summary>
     [ObservableProperty] public partial int MonitorDeviceIndex { get; set; }
     [ObservableProperty] public partial string MonitorDeviceName { get; set; } = string.Empty;
@@ -593,6 +595,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnApplyOwnVoiceSfxChanged(bool value) => _openFreqService.ApplyOwnVoiceSfx = value;
 
+    partial void OnHudTapeFeedEnabledChanged(bool value) => _openFreqService.HudTapeFeedEnabled = value;
+
     partial void OnMonitorDeviceIndexChanged(int value)
     {
         if (value < 0 || value >= PlaybackDeviceNames.Count) return;
@@ -703,6 +707,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             RecordingPath = settings.RecordingPath;
         StreamToDevice = settings.CaptureSink == IOpenFreqService.CaptureSink.Device;
         ApplyOwnVoiceSfx = settings.ApplyOwnVoiceSfx;
+        HudTapeFeedEnabled = settings.HudTapeFeedEnabled && IsWindowsPlatform;
         if (settings.DarkMode.HasValue)
         {
             IsDarkMode = settings.DarkMode.Value;
@@ -920,6 +925,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 : IOpenFreqService.CaptureSink.File,
             MonitorDeviceName = MonitorDeviceName,
             ApplyOwnVoiceSfx = ApplyOwnVoiceSfx,
+            HudTapeFeedEnabled = HudTapeFeedEnabled,
             DarkMode = IsDarkMode,
             Left = _left,
             Top = _top,

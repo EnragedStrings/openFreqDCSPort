@@ -22,6 +22,8 @@ public interface IPlaybackService
     bool IsRecording { get; }
     bool IsMonitoring { get; }
     bool IsCapturing { get; }
+    bool IsFeedingHudTape { get; }
+    bool WantsOwnVoice { get; }
 
     void Initialize();
     void EnsureMasterStreamRunning();
@@ -56,6 +58,8 @@ public interface IPlaybackService
     void StopRecording();
     void StartMonitor(int deviceIndex);
     void StopMonitor();
+    void StartHudTapeFeed();
+    void StopHudTapeFeed();
     void ClearSidetone();
 
     void PushSidetone(ReadOnlySpan<float> samples);
@@ -84,6 +88,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public bool IsRecording => _inner.IsRecording;
     public bool IsMonitoring => _inner.IsMonitoring;
     public bool IsCapturing => _inner.IsCapturing;
+    public bool IsFeedingHudTape => _inner.IsFeedingHudTape;
+    public bool WantsOwnVoice => _inner.WantsOwnVoice;
 
     public void Initialize() => _inner.Initialize();
     public void EnsureMasterStreamRunning() => _inner.EnsureMasterStreamRunning();
@@ -131,6 +137,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public void StopRecording() => _inner.StopRecording();
     public void StartMonitor(int deviceIndex) => _inner.StartMonitor(deviceIndex);
     public void StopMonitor() => _inner.StopMonitor();
+    public void StartHudTapeFeed() => _inner.StartHudTapeFeed();
+    public void StopHudTapeFeed() => _inner.StopHudTapeFeed();
     public void ClearSidetone() => _inner.ClearSidetone();
 
     public void PushSidetone(ReadOnlySpan<float> samples) => _inner.PushSidetone(samples);

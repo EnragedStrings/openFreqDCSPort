@@ -126,6 +126,56 @@ namespace OpenFreqAudio.Tests
             Assert.Equal(0u, v.ReadUInt32(24)); // released: another program may take it over
         }
 
+        [Fact]
+        public void ExistingSmallerFeed_IsRefusedWithoutThrowing()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            string name = TestName();
+            using var small = MemoryMappedFile.CreateNew(name, 4096); // e.g. another feed version made it
+            var feed = HudTapeFeed.Open(out var reason, name);
+            Assert.Null(feed);
+            Assert.Contains("different size", reason);
+        }
+
+        [Fact]
+        public void AnotherLiveWriterOfAnotherVersion_IsNamedInTheReason()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            string name = TestName();
+            using var map = MemoryMappedFile.CreateNew(name, HudTapeFeed.Size);
+            using var v = map.CreateViewAccessor(0, HudTapeFeed.Size);
+            using var other = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 >nul")
+                { CreateNoWindow = true, UseShellExecute = false })!;
+            try
+            {
+                v.Write(0, HudTapeFeed.Magic);
+                v.Write(4, 2u);
+                v.Write(24, (uint)other.Id);
+                Assert.Null(HudTapeFeed.Open(out var reason, name));
+                Assert.Contains("version 2", reason);
+            }
+            finally
+            {
+                other.Kill();
+                other.WaitForExit();
+            }
+        }
+
+        [Fact]
+        public void Abandon_ReleasesOwnershipButStaysMapped()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            string name = TestName();
+            using var feed = HudTapeFeed.Open(out var reason, name);
+            Assert.True(feed != null, reason);
+            using var map = MemoryMappedFile.OpenExisting(name);
+            using var v = map.CreateViewAccessor(0, HudTapeFeed.Size, MemoryMappedFileAccess.Read);
+            feed!.Abandon();
+            Assert.Equal(0u, v.ReadUInt32(24));
+            feed.WriteHeard(new float[480], 1); // still mapped: writing is safe
+            Assert.Equal(1L, v.ReadInt64(HudTapeFeed.RingHeaderOffset(0)));
+        }
+
         private static float Sample(long frame, int ch) => (float)Math.Sin(frame * 0.01 + ch) * 0.5f;
     }
 }

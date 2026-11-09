@@ -75,21 +75,46 @@ public sealed unsafe class HudTapeFeed : IDisposable
             return null;
         }
 
-        var view = map.CreateViewAccessor(0, Size, MemoryMappedFileAccess.ReadWrite);
-        uint magic = view.ReadUInt32(0);
-        uint owner = view.ReadUInt32(24); // the header's pid
-        int self = Environment.ProcessId;
-        if (magic == Magic && owner != 0 && owner != self && IsAlive((int)owner))
+        // Everything after CreateOrOpen depends on another program's state (an existing map may be smaller: an older or
+        // other-version writer made it), so no exception may leave here: startup and the settings toggle call this.
+        MemoryMappedViewAccessor? view = null;
+        try
         {
-            reason = $"another program (pid {owner}, {ProcessName((int)owner)}) already feeds HUD Recorder";
-            view.Dispose();
+            try
+            {
+                view = map.CreateViewAccessor(0, Size, MemoryMappedFileAccess.ReadWrite);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                reason = $"the existing {name} has a different size (another feed version?): {ex.Message}";
+                map.Dispose();
+                return null;
+            }
+
+            uint magic = view.ReadUInt32(0), version = view.ReadUInt32(4);
+            uint owner = view.ReadUInt32(24); // the header's pid
+            int self = Environment.ProcessId;
+            if (magic == Magic && owner != 0 && owner != self && IsAlive((int)owner))
+            {
+                reason = version == Version
+                    ? $"another program (pid {owner}, {ProcessName((int)owner)}) already feeds HUD Recorder"
+                    : $"another program (pid {owner}, {ProcessName((int)owner)}) writes HUD Recorder feed version {version}, this OpenFreq writes {Version}";
+                view.Dispose();
+                map.Dispose();
+                return null;
+            }
+
+            var feed = new HudTapeFeed(map, view);
+            feed.Reset();
+            return feed;
+        }
+        catch (Exception ex)
+        {
+            reason = $"can't use {name}: {ex.Message}";
+            view?.Dispose();
             map.Dispose();
             return null;
         }
-
-        var feed = new HudTapeFeed(map, view);
-        feed.Reset();
-        return feed;
     }
 
     private static bool IsAlive(int pid)
@@ -160,6 +185,15 @@ public sealed unsafe class HudTapeFeed : IDisposable
         *(int*)(b + 20) = 0;
         Volatile.Write(ref rh[1], writeFrame + frames);
         Volatile.Write(ref rh[0], published + 1);
+    }
+
+    /// <summary>
+    /// Give up ownership (header pid 0, so another program may take the feed over) but stay mapped: for when a writer
+    /// may still be running (RadioPlayback.Dispose with StopAll timed out). The OS unmaps it at process exit.
+    /// </summary>
+    public void Abandon()
+    {
+        if (!_disposed) *(uint*)(_base + 24) = 0;
     }
 
     private bool _disposed;

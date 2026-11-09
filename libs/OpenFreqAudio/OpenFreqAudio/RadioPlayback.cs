@@ -2214,17 +2214,27 @@ public class RadioPlayback : IDisposable
 
     public void Dispose()
     {
-        StopAll().Wait(500);
-        // After StopAll the master stream (and its DSP callback) is gone, so nothing writes the feed any more.
-        HudTapeFeed? feed;
-        lock (_lock)
+        bool stopped = false;
+        try
         {
-            _feeding = false;
-            feed = _hudFeed;
-            _hudFeed = null;
+            stopped = StopAll().Wait(500);
         }
+        finally
+        {
+            HudTapeFeed? feed;
+            lock (_lock)
+            {
+                _feeding = false;
+                feed = _hudFeed;
+                _hudFeed = null;
+            }
 
-        feed?.Dispose();
+            // Unmap only once StopAll completed (master stream and its DSP callback gone): a callback still running
+            // would write through a raw pointer into an unmapped view and kill the process. Otherwise just give up
+            // ownership; the OS unmaps it at exit.
+            if (stopped) feed?.Dispose();
+            else feed?.Abandon();
+        }
     }
 
     // Lock-free SPSC ring buffer for sidetone.

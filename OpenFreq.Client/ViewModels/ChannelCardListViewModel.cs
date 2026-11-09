@@ -127,6 +127,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
     private readonly Lock _channelImportLock = new();
 
+    private readonly Lock _bmsPttLock = new();
+    private Task _bmsPttTail = Task.CompletedTask;
+
     // Last-logged BMS volume signature — dedupes the volume diagnostic so it only
     // logs when raw/gain values actually change (no per-poll spam).
     private string? _lastVolumeDiagSignature;
@@ -1238,16 +1241,49 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         var channel = FalconLocation.Channels.FirstOrDefault(c => c.BmsRadioType == e.RadioType);
         if (channel == null || channel.ConnectionStatus == Channel.ChannelConnectionStatus.Disconnected) return;
+
+        // Read the frequency now. A retune can change it before the queued start runs.
+        var frequencyKhz = channel.FrequencyKhz;
+        var slotId = channel.Id;
         switch (e)
         {
             // mute only the transmitting frequency
             case { OldPtt: false, NewPtt: true }:
-                var mutedFrequencies = new List<int> { channel.FrequencyKhz };
-                _openFreqService.StartTransmissionAsync(channel.FrequencyKhz, channel.Id, mutedFrequencies).Wait();
+                QueueBmsPtt(e.RadioType, "start",
+                    () => _openFreqService.StartTransmissionAsync(frequencyKhz, slotId, [frequencyKhz]));
                 break;
             case { OldPtt: true, NewPtt: false }:
-                _openFreqService.StopTransmissionAsync(channel.FrequencyKhz).Wait();
+                QueueBmsPtt(e.RadioType, "stop", () => _openFreqService.StopTransmissionAsync(frequencyKhz));
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Runs BMS PTT changes on the thread pool, one at a time, in the order that the RCC polling loop saw them
+    /// (upstream 5933a50). If the polling loop waited for each websocket send, it would read the next PTT change late.
+    /// </summary>
+    /// <remarks>
+    /// Each change waits until the previous change is complete, not only until it has started: if a start and a stop
+    /// overlap, their TransmissionStateChanged events can arrive in the wrong order and leave the card transmitting.
+    /// </remarks>
+    private void QueueBmsPtt(RadioType radioType, string action, Func<Task> change)
+    {
+        lock (_bmsPttLock)
+        {
+            var previous = _bmsPttTail;
+            _bmsPttTail = Task.Run(async () =>
+            {
+                // This never throws, because each change catches its own exception.
+                await previous;
+                try
+                {
+                    await change();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "BMS PTT {Action} on {RadioType} failed", action, radioType);
+                }
+            });
         }
     }
 
@@ -1314,20 +1350,25 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         }
 
         // Fallback - for some reason there is no channel on the old frequency, create a new one
-        lock (_channelImportLock)
-        {
-            _logger.LogWarning("OnBmsFrequencyChanged for an unknown frequency : {NewFrequencyKhz}", e.NewFrequencyKhz);
-            var channelIsPowerOn = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.IsOn ?? false;
+        _logger.LogWarning("OnBmsFrequencyChanged for an unknown frequency : {NewFrequencyKhz}", e.NewFrequencyKhz);
+        var radioIsOn = _falconRadioSharedMemoryService.GetRadioChannel(e.RadioType)?.IsOn ?? false;
 
-            var newChannel = Dispatcher.UIThread.InvokeAsync(() =>
+        // Post rather than wait (upstream d178e21). This runs on the RCC polling thread, and blocking it on the UI
+        // thread while holding _channelImportLock deadlocks with ImportBmsRadioChannels, which takes that lock on the
+        // UI thread. channel.Join() does the network join itself.
+        Dispatcher.UIThread.Post(() =>
+        {
+            lock (_channelImportLock)
             {
+                if (FalconLocation == null) return;
+
                 var channel = FalconLocation.CreateChannel(
                     e.NewFrequencyKhz,
                     BmsLocationName,
                     false);
 
                 // Only join if the radio is powered on AND it's not the 9999 parking frequency
-                if (channelIsPowerOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
+                if (radioIsOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
                 {
                     channel.Join();
                 }
@@ -1336,29 +1377,20 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                     channel.Leave();
                 }
 
-                return channel;
-            }).GetAwaiter().GetResult();
-
-            // Only call JoinFrequencyAsync if the radio is powered on and not 9999
-            if (channelIsPowerOn && e.NewFrequencyKhz != IFalconRadioSharedMemoryService.BmsRadioOffFrequency)
-            {
-                JoinFrequencyAsync(newChannel.FrequencyKhz, newChannel.Id, FalconLocation.RadioStationData)
-                    .Wait(TimeSpan.FromMilliseconds(500));
+                switch (e.RadioType)
+                {
+                    case RadioType.Radio1:
+                        channel.Pan = _settings.BmsRadio1Pan;
+                        break;
+                    case RadioType.Radio2:
+                        channel.Pan = _settings.BmsRadio2Pan;
+                        break;
+                    case RadioType.Guard:
+                        channel.Pan = _settings.BmsRadio1Pan;
+                        break;
+                }
             }
-
-            switch (e.RadioType)
-            {
-                case RadioType.Radio1:
-                    newChannel.Pan = _settings.BmsRadio1Pan;
-                    break;
-                case RadioType.Radio2:
-                    newChannel.Pan = _settings.BmsRadio2Pan;
-                    break;
-                case RadioType.Guard:
-                    newChannel.Pan = _settings.BmsRadio1Pan;
-                    break;
-            }
-        }
+        });
     }
 
 

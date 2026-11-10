@@ -127,7 +127,11 @@ public enum SatcomAcquisitionFailureReason
     OrderwireNotAcquired,
     RangingFailed,
     LoginTimeout,
-    NoServiceCapacity
+    NoServiceCapacity,
+
+    /// <summary>The link would be up but jamming (uplink, power robbing or a local downlink jammer) has taken it
+    /// below the tracking threshold.</summary>
+    Jammed
 }
 
 /// <summary>Provenance tag for every modeled parameter (spec's classification requirement),

@@ -181,8 +181,14 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     /// <summary>"JAMMED" (the jammer denies the link: J/S at or above the kill threshold) or "INTERFERENCE" (it is
     /// audible), from JammingService's per-slot max JNR against the current signal -- see
     /// JammingService.ClassifyBadge. Same placement and style as <see cref="SignalBlockedText"/>.</summary>
-    public string? JammingText =>
-        JammingService.ClassifyBadge(JammingStatus?.MaxJnrDb, CurrentSignalSnrDb, JammingStatus?.IsFm ?? false,
+    public string? JammingText => IsSatcomActive
+        ? SatcomJamState switch
+        {
+            "Jammed" => "JAMMED",
+            "Interference" => "INTERFERENCE",
+            _ => null
+        }
+        : JammingService.ClassifyBadge(JammingStatus?.MaxJnrDb, CurrentSignalSnrDb, JammingStatus?.IsFm ?? false,
                 JammingStatus?.HopHitFraction ?? 1.0) switch
         {
             JammingBadge.Jammed => "JAMMED",
@@ -197,6 +203,10 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     {
         get
         {
+            if (Settings?.DebugMode == true && IsSatcomActive && SatcomJamState != "None")
+                return $"JAM {SatcomJammerName}: SATCOM link -" +
+                       $"{SatcomJamDegradationDb.ToString("0.0", CultureInfo.InvariantCulture)} dB" +
+                       (SatcomOrderwireJammed ? ", DAMA orderwire jammed" : "");
             if (Settings?.DebugMode != true || JammingStatus?.MaxJnrDb is not { } jnr) return "";
             var js = CurrentSignalSnrDb is { } snr
                 ? $", J/S {(jnr - snr).ToString("+0;-0", CultureInfo.InvariantCulture)} dB"
@@ -207,6 +217,26 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     }
 
     public bool HasJammingDebugText => JammingDebugText.Length > 0;
+
+    /// <summary>SATCOM jamming from the server's link evaluation (phase 4): "None", "Interference" or "Jammed".
+    /// SATCOM jamming is computed server-side (uplink, power robbing, local downlink, DAMA orderwire); the
+    /// client's JammingService never touches SATCOM slots.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingText), nameof(HasJammingText), nameof(JammingDebugText),
+        nameof(HasJammingDebugText))]
+    public partial string SatcomJamState { get; set; } = "None";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingDebugText), nameof(HasJammingDebugText))]
+    public partial string? SatcomJammerName { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingDebugText), nameof(HasJammingDebugText))]
+    public partial double SatcomJamDegradationDb { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingDebugText), nameof(HasJammingDebugText))]
+    public partial bool SatcomOrderwireJammed { get; set; }
 
     [ObservableProperty] public partial bool IsEditing { get; set; }
 
@@ -638,7 +668,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSatcomAcquiring), nameof(IsSatcomActive), nameof(SatcomStatusText),
         nameof(FrequencyDisplayText), nameof(HasSatcomLinkStatusText), nameof(HasDamaStatusText),
-        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText))]
+        nameof(SatcomSubtitleText), nameof(HasSatcomSubtitleText), nameof(JammingText), nameof(HasJammingText),
+        nameof(JammingDebugText), nameof(HasJammingDebugText))]
     public partial SatcomState SatcomAcquisitionState { get; set; } = SatcomState.Normal;
 
     [ObservableProperty]

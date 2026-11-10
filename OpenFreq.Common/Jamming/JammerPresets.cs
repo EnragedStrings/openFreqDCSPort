@@ -43,6 +43,13 @@ public sealed record JammerPreset
     /// <summary>UHF SATCOM uplink jammer (phase 4).</summary>
     public bool SatcomUplink { get; init; }
 
+    /// <summary>Gain toward a SATCOM satellite, dBi. Null: the full antenna gain for a SATCOM uplink jammer, else
+    /// 0 dBi [E] (horizon-pointed tactical antennas have little gain at satellite elevations).</summary>
+    public double? SatcomAntennaGainDbi { get; init; }
+
+    /// <summary>The resolved gain toward a SATCOM satellite, dBi.</summary>
+    public double SkyGainDbi => SatcomAntennaGainDbi ?? (SatcomUplink ? AntennaGainDbi : 0.0);
+
     /// <summary>Auto mode: intercept receiver sensitivity, dBm [E: −110 typical; −120 for dedicated SIGINT
     /// platforms].</summary>
     public double DetectionSensitivityDbm { get; init; } = AutoTargetingDefaults.DetectionSensitivityDbm;
@@ -243,6 +250,7 @@ public static class JammerPresets
         r.TxPowerW ??= preset.TxPowerW;
         r.PowerAmplifiers ??= preset.PowerAmplifiers;
         r.AntennaGainDbi ??= preset.AntennaGainDbi;
+        r.SatcomAntennaGainDbi ??= preset.SkyGainDbi;
         r.Pattern ??= JammerAntennaPattern.Omni;
         r.AzimuthDeg ??= 0.0;
         r.BeamwidthDeg ??= DefaultBeamwidthDeg;

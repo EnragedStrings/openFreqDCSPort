@@ -177,7 +177,47 @@ JNR    = J_in − receiver sensitivity                                  (the sam
 
 The channel card shows **JAMMED** when the jammer is at or above the signal it would cover
 (J/S ≥ 0 dB AM, +3 dB FM; or JNR ≥ 20 dB with no signal), and **INTERFERENCE** when it is audible.
-Radios in SATCOM mode are not affected in phase 1.
+Radios in SATCOM mode are handled by the server instead (next section).
+
+## SATCOM (phase 4)
+
+Legacy UHF SATCOM is a hard-limited bent pipe with no processing gain, so it is jammed through the satellite, not at
+each receiver. The server works it out in the SATCOM link evaluation (every 500 ms per user); the client's own
+jamming computation skips SATCOM radios. No jammer setting is needed: any jammer **with a `latitude`/`longitude`**
+whose emissions overlap a SATCOM channel takes part. Jammers placed only by `dcsPosition`/`bmsPosition` cannot be
+placed relative to a satellite and are ignored for SATCOM.
+
+| Path | Who is hit | Model |
+|---|---|---|
+| **Uplink** (emission overlaps the net's `uplinkHz` ± bandwidth/2) | **Every user on that channel**, anywhere in the footprint | Jammer power at the satellite J = EIRP(sky) − FSPL(slant range) + footprint gain + the satellite's receive advantage (`satelliteEirpAdjustDb`), the same scale as a user's uplink. I0 = J/B is added to the uplink N0. The jammer must see the satellite (above its horizon, not Earth-occluded, inside the footprint). |
+| **Power robbing** | Same | The hard limiter gives the wanted signal S/(S+J+N) of the downlink power instead of S/(S+N), less a further 0–1 dB (noise) or 0–6 dB (tone, sweep, multi-tone) of weak-signal suppression. |
+| **Downlink** (emission overlaps the net's downlink) | Receivers within the jammer's radio horizon | J at the receiver in free space, 0 dBi receive antenna, −10 dB for an aircraft above the jammer (top-mounted antenna). The satellite downlink is weak, so this works out to long range with line of sight. Terrain is not modelled. |
+| **DAMA orderwire** (emission overlaps `orderwireUplinkHz`, default the net's uplink) | The whole DAMA network | Jammed when J at the satellite ≥ the control station's orderwire (`orderwireEirpDbw`, default 30 dBW) + `orderwireKillJsDb` (default 0). Channel requests are denied at once; after 1.5 frames (13.4 s on 5 kHz DAMA) terminals lose sync and must re-acquire once it clears. |
+
+The jammer's gain toward the satellite is `satcomAntennaGainDbi`. It defaults to 0 dBi for every preset except
+`tirada_uhf` (22 dBi dish): tactical comms jammers point their gain at the horizon. **Estimate.**
+
+What it means in practice (default net: 20 W terminal, 5 kHz, 2400 bit/s):
+
+| Jammer | Effect |
+|---|---|
+| `tirada_uhf` spot on the uplink | J/S ≈ +30 dB at the satellite: channel denied for everyone |
+| `r934b` spot (25 kHz) on the uplink | J/S ≈ +7 dB: channel denied for everyone (the "UHF pirates" case) |
+| `r934b` barrage 225–400 MHz | ≈ −30 dB at the satellite: about 1 dB lost; but it also covers the downlink, so aircraft inside its radio horizon (240–330 km at 3,000–6,000 m) lose the link |
+
+On the card: **JAMMED** when jamming took the link to Degraded or worse (or the DAMA orderwire is jammed),
+**INTERFERENCE** when it cost at least 1 dB. A link lost to jamming reports the failure reason `Jammed`; a DAMA
+network that lost sync to orderwire jamming reports `OrderwireNotAcquired`. With debug telemetry on, the SATCOM debug
+line shows uplink J/S, robbing loss and downlink J/N. The voice degrades through the existing SATCOM frame-error
+model (vocoder dropouts, then muting), with no extra audio.
+
+Net fields (in `satcom.nets[]`):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `orderwireUplinkHz` | the net's `uplinkHz` | DAMA control channel uplink frequency |
+| `orderwireEirpDbw` | 30 | Control station orderwire EIRP, dBW (estimate) |
+| `orderwireKillJsDb` | 0 | J/S at the satellite that takes the orderwire (estimate) |
 
 **Hopping radios (HAVE QUICK / SINCGARS).** The client hands playback the hop hit fraction instead of a constant
 jammer. It is μ = (channels of the radio's hopset the jammer covers) / N. A responsive jammer becomes a follower,

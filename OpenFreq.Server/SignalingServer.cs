@@ -181,7 +181,10 @@ public class SignalingServer
         _rtpTimeoutDuration = rtpTimeout ?? TimeSpan.FromMinutes(1);
         _watchdogInterval = watchdogInterval ?? TimeSpan.FromSeconds(30);
         _audioServer = audioServer ?? new AudioStreamServer(_channelManager, _clients, loggerFactory, config.AudioPort);
-        _satcom = config.SatcomEnabled ? new SatcomServerCoordinator(config.Satcom, loggerFactory) : null;
+        _satcom = config.SatcomEnabled
+            ? new SatcomServerCoordinator(config.Satcom, loggerFactory,
+                config.Jamming.Enabled ? () => _jamming?.SatcomSources ?? [] : null)
+            : null;
         _jamming = config.Jamming.Enabled
             ? new JammingCoordinator(config.Jamming, loggerFactory.CreateLogger<JammingCoordinator>())
             {

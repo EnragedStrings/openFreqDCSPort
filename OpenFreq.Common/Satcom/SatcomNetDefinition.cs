@@ -81,5 +81,17 @@ public sealed class SatcomNetDefinition
     /// declared Lost. GAMEPLAY_CONFIG.</summary>
     public double HoldoverSeconds { get; init; } = 4.0;
 
+    /// <summary>DAMA only: uplink frequency of the network's control (orderwire) channel, Hz. Null: the net's own
+    /// uplink channel (the orderwire shares the TDMA frame). Jamming it at the satellite denies channel assignment
+    /// to the whole network (docs/jamming/JAMMING_DESIGN.md phase 4).</summary>
+    public double? OrderwireUplinkHz { get; init; }
+
+    /// <summary>DAMA only: EIRP of the control station's orderwire, dBW. ESTIMATE (no public figure).</summary>
+    public double OrderwireEirpDbw { get; init; } = SatcomJamming.DefaultOrderwireEirpDbw;
+
+    /// <summary>DAMA only: jammer-to-orderwire ratio at the satellite at which the orderwire is lost, dB.
+    /// ESTIMATE.</summary>
+    public double OrderwireKillJsDb { get; init; } = SatcomJamming.DefaultOrderwireKillJsDb;
+
     public int FrameBits => (int)Math.Round(BitRateBps * FrameDurationSeconds);
 }

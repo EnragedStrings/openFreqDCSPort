@@ -71,6 +71,9 @@ public sealed record SatcomLinkResult
     public required SatcomAcquisitionFailureReason FailureReason { get; init; }
     public required string UnavailableReason { get; init; }
 
+    /// <summary>What jammers did to this link (phase 4); <see cref="SatcomJammingEffect.None"/> when nothing.</summary>
+    public SatcomJammingEffect Jamming { get; init; } = SatcomJammingEffect.None;
+
     public static SatcomLinkResult Unavailable(SatcomAcquisitionFailureReason reason, string message)
     {
         var emptyLeg = new SatcomLegResult(0, 0, 0, -100, 0, -999, 0, false, false, message);

@@ -1,7 +1,8 @@
 # OpenFreq Communications Jamming — Design
 
 Status: design agreed 2026-11-09. Phase 0, Phase 1 (scripted jammers from server config), Phase 2 (auto-targeting brain)
-and Phase 3 (HAVE QUICK + SINCGARS, see `HAVE_QUICK.md`) implemented; phases 4-6 pending. Phase 3 leaves for later:
+Phase 3 (HAVE QUICK + SINCGARS, see `HAVE_QUICK.md`) and Phase 4 (UHF SATCOM, see `JAMMING_CONFIG.md` § SATCOM)
+implemented; phases 5-6 pending. Phase 3 leaves for later:
 the KY-58 preamble-loss rule over HQ, a mission-date Hooks script, per-coalition comm plans, and in-DCS verification
 of the ARC-210 ECCM fields and the ARC-164 "A" knob index.
 Research behind every number here: `research-01-physics.md` (jamming equation, J/S thresholds, waveforms and
@@ -83,7 +84,10 @@ limiting gives power robbing to every user on that channel; DAMA orderwire jammi
     Implemented (phase 2) as `AutoTargetingBrain` + `JammerDetection` (Common, pure). The rules and defaults
     are in `JAMMING_CONFIG.md` § Auto targeting. No coalition filtering: the protected list is the only
     friend/foe control.
-- SATCOM: jammers flagged for SATCOM uplink add I0 to the affected channel's uplink leg.
+- SATCOM (phase 4, implemented): no flag — any located jammer whose emissions overlap a net's uplink channel adds
+  I0 at the satellite (`SatcomJamming`, Common), with power robbing on the downlink; one overlapping a downlink
+  channel jams receivers within its radio horizon; DAMA nets lose assignments and then sync when their orderwire
+  frequency is jammed. `SatcomLinkEngine` applies it each tick, fed by `JammingCoordinator.SatcomSources`.
 - SRS bridge: per SRS listener, compute J with FreeSpacePathModel and degrade `SrsAudioProcessor` output
   (same waveform generators, run server-side).
 - DCS hook intake (phase 6): authenticated message from the DCS server hook carrying mission jammers.

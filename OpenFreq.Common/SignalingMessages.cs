@@ -407,6 +407,27 @@ public class SatcomLinkStateMessage
     [JsonPropertyName("propagationSec")] public double PropagationLatencySeconds { get; set; }
     [JsonPropertyName("frameErrorRate")] public double FrameErrorRate { get; set; }
 
+    /// <summary>Jamming on this link (phase 4): "None", "Interference" or "Jammed".</summary>
+    [JsonPropertyName("jamState")] public string JamState { get; set; } = "None";
+
+    /// <summary>The jammer doing the most harm (null: none).</summary>
+    [JsonPropertyName("jammerName")] public string? JammerName { get; set; }
+
+    /// <summary>End-to-end C/N0 lost to jamming, dB.</summary>
+    [JsonPropertyName("jamDegradationDb")] public double JamDegradationDb { get; set; }
+
+    /// <summary>DAMA control (orderwire) channel jammed: no new channel assignments.</summary>
+    [JsonPropertyName("orderwireJammed")] public bool OrderwireJammed { get; set; }
+
+    /// <summary>Debug only: uplink J/S at the satellite, dB.</summary>
+    [JsonPropertyName("upJsDb")] public double? UplinkJsDb { get; set; }
+
+    /// <summary>Debug only: downlink power lost to the jammer at the transponder (robbing + suppression), dB.</summary>
+    [JsonPropertyName("robbingDb")] public double? DownlinkRobbingLossDb { get; set; }
+
+    /// <summary>Debug only: local downlink J/N at the receiver, dB.</summary>
+    [JsonPropertyName("downJnrDb")] public double? DownlinkJnrDb { get; set; }
+
     [JsonPropertyName("debug")] public bool DebugAuthorized { get; set; }
     [JsonPropertyName("cn0DbHz")] public double? CombinedCn0DbHz { get; set; }
     [JsonPropertyName("ebN0Db")] public double? EbN0Db { get; set; }

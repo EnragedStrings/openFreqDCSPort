@@ -43,6 +43,12 @@ public sealed class SatcomLinkEngine
         _selector = selector;
     }
 
+    /// <summary>The radiating jammers (phase 4), or null when jamming is off.</summary>
+    public Func<IReadOnlyList<SatcomJammerSource>>? JammerSources { get; set; }
+
+    /// <summary>A link this much worse than it would be without jammers, and lost, is reported as jammed, dB.</summary>
+    public const double JammedCauseDb = 3.0;
+
     public static string SessionKey(string clientId, string netId) => $"{clientId}:{netId}";
 
     public void UpdateGeometry(string clientId, string netId, SatcomTerminalState terminal, bool radioPowered,
@@ -119,6 +125,24 @@ public sealed class SatcomLinkEngine
         uplink = ApplyTerrainLos(uplink, txTerrainLos);
         downlink = ApplyTerrainLos(downlink, rxState.TerrainLosClear);
 
+        // Jamming (docs/jamming/JAMMING_DESIGN.md phase 4): uplink I0 and power robbing at the transponder, a local
+        // downlink jammer at this receiver, and (DAMA) the control channel.
+        var jamming = SatcomJammingEffect.None;
+        var jammers = JammerSources?.Invoke();
+        if (jammers is { Count: > 0 })
+        {
+            (uplink, downlink, jamming) = SatcomJamming.Apply(uplink, downlink, jammers, net, satellite,
+                satPos.Value, rxState.Terminal, uplinkHz, downlinkHz);
+            var orderwire = SatcomJamming.OrderwireJammed(jammers, net, satellite, satPos.Value);
+            if (orderwire.Jammed)
+                jamming = jamming with
+                {
+                    OrderwireJammed = true,
+                    DominantJammerId = jamming.DominantJammerId ?? orderwire.JammerId,
+                    DominantJammerName = jamming.DominantJammerName ?? orderwire.JammerName
+                };
+        }
+
         var ebN0Db = (uplink.Usable && downlink.Usable)
             ? SatcomLinkBudget.EbN0Db(SatcomLinkBudget.CombineCarrierToNoiseDensityDbHz(uplink.Cn0DbHz, downlink.Cn0DbHz), net.BitRateBps)
             : -999.0;
@@ -130,7 +154,15 @@ public sealed class SatcomLinkEngine
         }
         var qualityState = tracker.Update(ebN0Db, net, nowMs);
 
-        var result = SatcomLinkEngineCore.Combine(satellite.Id, satellite.DisplayName, uplink, downlink, net, qualityState);
+        var result = SatcomLinkEngineCore.Combine(satellite.Id, satellite.DisplayName, uplink, downlink, net, qualityState)
+            with { Jamming = jamming };
+        if (result.QualityState == SatcomLinkQualityState.Lost && uplink.Usable && downlink.Usable &&
+            jamming.DegradationDb >= JammedCauseDb)
+            return result with
+            {
+                FailureReason = SatcomAcquisitionFailureReason.Jammed,
+                UnavailableReason = $"jammed by {jamming.DominantJammerName ?? "a jammer"}"
+            };
         if (!uplink.Usable)
             return result with { FailureReason = ClassifyFailure(uplink, uplinkUnusableBeforeTerrain), UnavailableReason = uplink.UnavailableReason };
         if (!downlink.Usable)

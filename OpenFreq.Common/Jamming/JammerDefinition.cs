@@ -237,6 +237,11 @@ public sealed class JammerDefinition
 
     [JsonPropertyName("antennaGainDbi")]
     public double? AntennaGainDbi { get; set; }
+
+    /// <summary>Antenna gain toward a SATCOM satellite (high elevation), dBi. Tactical comms jammers point their gain
+    /// at the horizon, so it defaults to 0 dBi; a dedicated uplink jammer's dish to its full gain (phase 4).</summary>
+    [JsonPropertyName("satcomAntennaGainDbi")]
+    public double? SatcomAntennaGainDbi { get; set; }
     [JsonPropertyName("pattern")]
     public JammerAntennaPattern? Pattern { get; set; }
 

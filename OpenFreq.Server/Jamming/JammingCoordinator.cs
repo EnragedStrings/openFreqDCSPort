@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Common;
 using OpenFreq.Common.Jamming;
+using OpenFreq.Common.Satcom;
 
 namespace OpenFreqServer.Jamming;
 
@@ -45,6 +46,7 @@ public sealed class JammingCoordinator
     private readonly HashSet<string> _goneTransmitters = new(StringComparer.Ordinal);
     private DateTimeOffset _start;
     private string? _lastPublishedSignature;
+    private IReadOnlyList<SatcomJammerSource> _satcomSources = [];
 
     public JammingCoordinator(JammingServerConfig config, ILogger logger, Func<DateTimeOffset>? clock = null)
     {
@@ -68,6 +70,11 @@ public sealed class JammingCoordinator
             lock (_lock) return _jammers.ToList();
         }
     }
+
+    /// <summary>The radiating, geodetically located jammers as of the last <see cref="Snapshot"/> (refreshed every
+    /// broadcast tick), for the SATCOM link engine (phase 4). Jammers placed only by DCS/BMS coordinates are not
+    /// included: the server cannot place them relative to a satellite.</summary>
+    public IReadOnlyList<SatcomJammerSource> SatcomSources => Volatile.Read(ref _satcomSources);
 
     /// <summary>Replaces the jammer set with <paramref name="definitions"/> (resolved against their presets) and
     /// restarts schedules and auto brains.</summary>
@@ -112,6 +119,7 @@ public sealed class JammingCoordinator
             }
 
             _lastPublishedSignature = null;
+            _satcomSources = [];
             count = _jammers.Count;
         }
 
@@ -219,6 +227,12 @@ public sealed class JammingCoordinator
                     AutoTargetsKhz = brain?.TargetsKhz.ToList()
                 };
             }).ToList();
+
+            Volatile.Write(ref _satcomSources, entries
+                .Where(e => e.Active && e.Definition.Latitude != null && e.Definition.Longitude != null)
+                .Select(e => new SatcomJammerSource(e.Definition, e.Definition.Latitude!.Value,
+                    e.Definition.Longitude!.Value, JammerDetection.AntennaAltitudeMeters(e.Definition), e.Emissions))
+                .ToList());
 
             // Ended keyings have now been seen by every brain.
             _ended.Clear();

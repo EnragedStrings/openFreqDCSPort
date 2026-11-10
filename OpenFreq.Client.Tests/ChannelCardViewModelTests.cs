@@ -74,4 +74,19 @@ public class ChannelCardViewModelTests
         Assert.Equal(Freq, vm.FrequencyKhz);
         Assert.Equal($"{Freq / 1000d:F3} MHz", vm.FrequencyDisplayText);
     }
+
+    [Fact]
+    public void SatcomJamStateFromTheServerDrivesTheBadgeOnlyWhileSatcomIsActive()
+    {
+        var vm = CreateVm();
+        vm.SatcomJamState = "Jammed";
+        Assert.Null(vm.JammingText); // not in SATCOM: the line-of-sight jamming path owns the badge
+
+        vm.SatcomAcquisitionState = OpenFreq.Client.Services.Satcom.SatcomState.Ready;
+        Assert.Equal("JAMMED", vm.JammingText);
+        vm.SatcomJamState = "Interference";
+        Assert.Equal("INTERFERENCE", vm.JammingText);
+        vm.SatcomJamState = "None";
+        Assert.Null(vm.JammingText);
+    }
 }

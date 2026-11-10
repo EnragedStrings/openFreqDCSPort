@@ -30,14 +30,18 @@ public sealed class SatcomServerCoordinator : IDisposable
     private readonly ConcurrentDictionary<(string ClientId, string NetId), bool> _seenFirstGeometryUpdate = new();
     private readonly ConcurrentDictionary<(string ClientId, string NetId), string> _lastLoggedEvalSummary = new();
 
-    public SatcomServerCoordinator(SatcomServerConfig config, ILoggerFactory loggerFactory)
+    /// <summary>A link that lost at least this much to jamming shows INTERFERENCE, dB.</summary>
+    public const double InterferenceDb = 1.0;
+
+    public SatcomServerCoordinator(SatcomServerConfig config, ILoggerFactory loggerFactory,
+        Func<IReadOnlyList<SatcomJammerSource>>? jammerSources = null)
     {
         _config = config;
         _netsById = config.Nets.ToDictionary(n => n.NetId);
         _logger = loggerFactory.CreateLogger("Satcom");
         _ephemeris = new SatcomEphemerisService(config.Satellites, config, _logger);
         _selector = new SatcomSatelliteSelector();
-        _linkEngine = new SatcomLinkEngine(config.Satellites, _ephemeris, _selector);
+        _linkEngine = new SatcomLinkEngine(config.Satellites, _ephemeris, _selector) { JammerSources = jammerSources };
         _dama = new DamaNetworkController();
     }
 
@@ -85,14 +89,17 @@ public sealed class SatcomServerCoordinator : IDisposable
         var pttPressed = txClientId == clientId;
         var receivingCarrier = txClientId != null && txClientId != clientId;
 
-        var damaState = _dama.Update(clientId, net, loginReady, link, pttPressed, receivingCarrier, priority, nowMs);
+        var damaState = _dama.Update(clientId, net, loginReady, link, pttPressed, receivingCarrier, priority, nowMs,
+            link.Jamming.OrderwireJammed);
+        var jamState = ClassifyJamming(link);
 
         var key = (clientId, netId);
         var debugAuthorized = debugRequested && _config.DebugTelemetryEnabled;
 
         var evalSummary = $"available={link.LinkAvailable} satellite={(string.IsNullOrEmpty(link.SatelliteId) ? "(none)" : link.SatelliteId)} " +
                           $"failureReason={link.FailureReason} quality={link.QualityState} dama={damaState} " +
-                          $"ebN0={link.EbN0Db:F1}dB";
+                          $"ebN0={link.EbN0Db:F1}dB jam={jamState}" +
+                          (link.Jamming.OrderwireJammed ? " orderwire=jammed" : "");
         if (!_lastLoggedEvalSummary.TryGetValue(key, out var lastEvalSummary) || lastEvalSummary != evalSummary)
         {
             _logger.LogInformation("SATCOM link eval for {ClientId}/{NetId}: {Summary}", clientId, netId, evalSummary);
@@ -103,7 +110,9 @@ public sealed class SatcomServerCoordinator : IDisposable
         {
             ChannelKey = _channelKeys.GetValueOrDefault(key, ""),
             Available = link.LinkAvailable,
-            FailureReason = link.FailureReason.ToString(),
+            FailureReason = (link.Jamming.OrderwireJammed && damaState == DamaState.LostSync
+                ? SatcomAcquisitionFailureReason.OrderwireNotAcquired
+                : link.FailureReason).ToString(),
             SatelliteId = link.SatelliteId,
             SatelliteName = link.SatelliteName,
             QualityState = link.QualityState.ToString(),
@@ -112,6 +121,10 @@ public sealed class SatcomServerCoordinator : IDisposable
             DamaSlot = _dama.CurrentSlot(clientId, netId),
             PropagationLatencySeconds = link.PropagationLatencySeconds,
             FrameErrorRate = link.FrameErrorRate,
+            JamState = jamState,
+            JammerName = jamState == "None" ? null : link.Jamming.DominantJammerName,
+            JamDegradationDb = link.Jamming.DegradationDb,
+            OrderwireJammed = link.Jamming.OrderwireJammed,
             DebugAuthorized = debugAuthorized
         };
 
@@ -127,6 +140,9 @@ public sealed class SatcomServerCoordinator : IDisposable
             message.DownlinkElevationDeg = link.Downlink.ElevationDeg;
             message.DownlinkAzimuthDeg = link.Downlink.AzimuthDeg;
             message.DownlinkRangeMeters = link.Downlink.SlantRangeMeters;
+            message.UplinkJsDb = link.Jamming.UplinkJsDb;
+            message.DownlinkRobbingLossDb = link.Jamming.Any ? link.Jamming.DownlinkRobbingLossDb : null;
+            message.DownlinkJnrDb = link.Jamming.DownlinkJnrDb;
 
             // DEBUG-ONLY antenna-model breakdown -- see SatcomLinkStateMessage's own doc comment.
             message.UplinkTiltDeg = link.Uplink.TiltDeg;
@@ -143,6 +159,19 @@ public sealed class SatcomServerCoordinator : IDisposable
             message.FrameDispositions = BuildDispositionBatch(key, net, link, nowMs);
 
         return message;
+    }
+
+    /// <summary>"Jammed" when jamming took the link down (or below Marginal by ≥3 dB) or the DAMA orderwire is
+    /// jammed; "Interference" when jamming cost at least <see cref="InterferenceDb"/>; else "None".</summary>
+    public static string ClassifyJamming(SatcomLinkResult link)
+    {
+        var j = link.Jamming;
+        if (j.OrderwireJammed || link.FailureReason == SatcomAcquisitionFailureReason.Jammed ||
+            (j.DegradationDb >= SatcomLinkEngine.JammedCauseDb &&
+             link.QualityState is SatcomLinkQualityState.Degraded or SatcomLinkQualityState.Holdover
+                 or SatcomLinkQualityState.Lost))
+            return "Jammed";
+        return j.DegradationDb >= InterferenceDb ? "Interference" : "None";
     }
 
     private List<SatcomFrameDispositionDto> BuildDispositionBatch(

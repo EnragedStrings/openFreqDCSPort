@@ -1045,6 +1045,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             channel.SatcomFailureReason = Enum.TryParse<SatcomAcquisitionFailureReason>(msg.FailureReason, out var fr)
                 ? fr : SatcomAcquisitionFailureReason.None;
             channel.DamaState = Enum.TryParse<DamaState>(msg.DamaState, out var ds) ? ds : DamaState.Offline;
+            channel.SatcomJamState = msg.JamState;
+            channel.SatcomJammerName = msg.JammerName;
+            channel.SatcomJamDegradationDb = msg.JamDegradationDb;
+            channel.SatcomOrderwireJammed = msg.OrderwireJammed;
 
             // DEBUG-ONLY: satellite position/geometry/antenna readout for a user tuned to a SATCOM
             // frequency with DebugMode on -- lets them see connection quality AND aspect to the
@@ -1090,6 +1094,11 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
 
         return $"C/N0 {msg.CombinedCn0DbHz:F1} dBHz | Eb/N0 {msg.EbN0Db:F1} dB | rawBER {msg.RawBer:E1} | " +
                $"postFEC BER {msg.PostFecBer:E1} | frame {msg.DamaFrameIndex} slot {msg.DamaSlot}\n" +
+               (msg.JamState != "None" || msg.UplinkJsDb != null || msg.DownlinkJnrDb != null
+                   ? $"jam {msg.JamState} ({msg.JammerName}) -{msg.JamDegradationDb:F1}dB | up J/S={msg.UplinkJsDb:F1}dB " +
+                     $"robbing={msg.DownlinkRobbingLossDb:F1}dB | down J/N={msg.DownlinkJnrDb:F1}dB" +
+                     $"{(msg.OrderwireJammed ? " | ORDERWIRE JAMMED" : "")}\n"
+                   : "") +
                $"own hdg={headingDeg:F0} pitch={pitchDeg:F0} bank={bankDeg:F0} | antenna={_arc210SatcomAntennaSelector.Selection}\n" +
                $"sat {msg.SatelliteName} @ lat={satPos?.LatitudeDeg:F2} lon={satPos?.LongitudeDeg:F2} " +
                $"alt={satPos?.AltitudeMeters / 1000.0:F0}km{(satPos?.IsStale == true ? " (STALE)" : "")}\n" +

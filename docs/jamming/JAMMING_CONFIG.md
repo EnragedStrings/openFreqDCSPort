@@ -49,6 +49,8 @@ Every physical field is optional when `presetId` is set: what you leave out come
 | `id` | Unique id (also seeds the jammer's sound, so everyone hears the same thing). |
 | `presetId` | One of the presets below. Unknown or missing → a generic 100 W, 2 dBi jammer. |
 | `enabled`, `alive` | `false` silences the jammer (it stays in the catalog). |
+| `template` | `true`: never radiated itself, only copied onto DCS units named `JAM:@<id>` (see [MISSION_JAMMERS.md](MISSION_JAMMERS.md)). |
+| `satcomAntennaGainDbi` | Gain toward a SATCOM satellite (default 0 dBi; `tirada_uhf` 22). |
 | `latitude`, `longitude`, `altitudeMeters` | Geodetic position. Without `altitudeMeters` the antenna is `heightAglMeters` above the ground (preset mast height). DCS clients convert it to map coordinates through their own DCS (`coord.LLtoLO`). |
 | `dcsPosition` `{x, y, z}` | DCS mission coordinates (x north, y altitude MSL, z east, metres). Used directly by DCS clients. |
 | `bmsPosition` `{x, y, z}` | Falcon BMS theater coordinates, feet (as in BMS shared memory). |

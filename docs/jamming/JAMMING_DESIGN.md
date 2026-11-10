@@ -1,8 +1,8 @@
 # OpenFreq Communications Jamming — Design
 
 Status: design agreed 2026-11-09. Phase 0, Phase 1 (scripted jammers from server config), Phase 2 (auto-targeting brain)
-Phase 3 (HAVE QUICK + SINCGARS, see `HAVE_QUICK.md`) and Phase 4 (UHF SATCOM, see `JAMMING_CONFIG.md` § SATCOM)
-implemented; phases 5-6 pending. Phase 3 leaves for later:
+Phase 3 (HAVE QUICK + SINCGARS, see `HAVE_QUICK.md`), Phase 4 (UHF SATCOM, see `JAMMING_CONFIG.md` § SATCOM) and
+Phase 6 (DCS mission jammers, see `MISSION_JAMMERS.md`) implemented; Phase 5 (SRS bridge) skipped for now. Phase 3 leaves for later:
 the KY-58 preamble-loss rule over HQ, a mission-date Hooks script, per-coalition comm plans, and in-DCS verification
 of the ARC-210 ECCM fields and the ARC-164 "A" knob index.
 Research behind every number here: `research-01-physics.md` (jamming equation, J/S thresholds, waveforms and
@@ -140,11 +140,13 @@ Implemented in phase 3 as described in `HAVE_QUICK.md`. Where the result differs
   ECCM readings against a stock install.
 - SINCGARS: net ID, hopset with lockout bands, sync time; same hop engine.
 
-### DCS mission jammers (phase 6)
-- `Scripts/Hooks/OpenFreqJamming.lua` (GameGUI hook) on the **DCS server**: scans mission groups/units whose name
-  matches `JAM:<preset>[;key=value...]` (e.g. `JAM:r934b;mode=auto;band=225-400`), tracks alive/position,
-  sends them to the OpenFreq server (configured endpoint + server password). Unit death or removal turns the
-  jammer off. Installer adds the hook alongside the existing export script.
+### DCS mission jammers (phase 6, implemented)
+- The `jamming` module of `DCS/Server/OpenFreq-ServerGameGUI.lua` (the same server hook as auto-connect, config in
+  the `jamming` section of `Config\OpenFreq.json`) scans mission units, statics and groups named
+  `JAM:<preset>[;key=value...]` or `JAM:@<configId>[...]` (e.g. `JAM:r934b;mode=auto;band=225-400`) through
+  `net.dostring_in("server", ...)`, and sends their position and alive state every 2 s as an HMAC-SHA256-signed
+  UDP datagram to the OpenFreq server's `jamming.dcsHook` intake (`MissionJammerIntake`). Unit death, removal or
+  mission end turns the jammer off; a silent hook times them out. Full spec: `MISSION_JAMMERS.md`.
 
 ## Phases
 

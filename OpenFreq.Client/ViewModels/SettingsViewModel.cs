@@ -161,6 +161,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         linear <= 0.0001 ? MinDisplayableDb : 20.0 * Math.Log10(linear);
     private static double DbToLinearGain(double db) => Math.Pow(10.0, db / 20.0);
     [ObservableProperty] public partial double SidetoneVolume { get; set; } = 0.4;
+    [ObservableProperty] public partial bool MicClickEnabled { get; set; } = true;
+    [ObservableProperty] public partial double MicClickVolume { get; set; } = 1.0;
     [ObservableProperty] public partial double AmbientNoiseVolume { get; set; } = 1.0;
     [ObservableProperty] public partial bool AutoRecordInGameMode { get; set; } = false;
     [ObservableProperty] public partial string RecordingPath { get; set; } = AppDataPaths.ClientRecordingDirectory;
@@ -595,6 +597,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     partial void OnInputGainChanged(double value) => _openFreqService.InputGain = value;
 
     partial void OnSidetoneVolumeChanged(double value) => _openFreqService.SidetoneVolume = value;
+    partial void OnMicClickEnabledChanged(bool value) => _openFreqService.MicClickEnabled = value;
+    partial void OnMicClickVolumeChanged(double value) => _openFreqService.MicClickVolume = value;
 
     partial void OnAmbientNoiseVolumeChanged(double value) => _openFreqService.AmbientNoiseVolume = value;
 
@@ -765,6 +769,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         MonitorAllFrequenciesEnabled = settings.MonitorAllFrequenciesEnabled;
         InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
+        MicClickEnabled = settings.MicClickEnabled;
+        MicClickVolume = Math.Clamp(settings.MicClickVolume, 0.0, 1.0);
         MinimizeOnConnect = settings.MinimizeOnConnect;
         _loadingSettings = true;
         try
@@ -1010,6 +1016,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MonitorAllFrequenciesEnabled = MonitorAllFrequenciesEnabled,
             InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
+            MicClickEnabled = MicClickEnabled,
+            MicClickVolume = MicClickVolume,
             MinimizeOnConnect = MinimizeOnConnect,
             AutoConnectEnabled = AutoConnectEnabled,
             AutoLaunchEnabled = AutoLaunchEnabled,

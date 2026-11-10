@@ -30,6 +30,8 @@ public interface IOpenFreqService : IDisposable
     double InputGain { get; set; }
     bool DcsLineOfSightEnabled { get; set; }
     double SidetoneVolume { get; set; }
+    bool MicClickEnabled { get; set; }
+    double MicClickVolume { get; set; }
     double MasterVolume { get; set; }
     double AmbientNoiseVolume { get; set; }
 

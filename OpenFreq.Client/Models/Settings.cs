@@ -78,6 +78,12 @@ public class OpenFreqSettings
     public bool MonitorAllFrequenciesEnabled { get; set; } = false;
     public double InputGain { get; set; } = 1.0;
     public double SidetoneVolume { get; set; } = 0.4;
+
+    /// <summary>Ownship mic click at PTT key-down / key-up (headset + HUD tape / recording). On by default.</summary>
+    public bool MicClickEnabled { get; set; } = true;
+
+    /// <summary>Mic click level, 1 = as recorded.</summary>
+    public double MicClickVolume { get; set; } = 1.0;
     public double MasterVolume { get; set; } = 1.0;
     public double AmbientNoiseVolume { get; set; } = 1.0;
     public bool AutoRecordInGameMode { get; set; } = false;

@@ -51,6 +51,12 @@ public interface IPlaybackService
     void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes);
     void PlayTxTone();
 
+    /// <summary>Ownship mic click (see RadioPlayback.PlayMicClick).</summary>
+    bool MicClickEnabled { get; set; }
+    float MicClickVolume { get; set; }
+    void SetMicClickAssets(byte[]? keyDownWavBytes, byte[]? keyUpWavBytes);
+    void PlayMicClick(bool keyDown);
+
     /// <summary>Replaces the jammers this slot currently receives (empty = none). See docs/jamming.</summary>
     void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions);
 
@@ -132,6 +138,11 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public void SetEncryptionToneAssets(byte[]? txWavBytes, byte[]? rxWavBytes)
         => _inner.SetEncryptionToneAssets(txWavBytes, rxWavBytes);
     public void PlayTxTone() => _inner.PlayTxTone();
+    public bool MicClickEnabled { get => _inner.MicClickEnabled; set => _inner.MicClickEnabled = value; }
+    public float MicClickVolume { get => _inner.MicClickVolume; set => _inner.MicClickVolume = value; }
+    public void SetMicClickAssets(byte[]? keyDownWavBytes, byte[]? keyUpWavBytes)
+        => _inner.SetMicClickAssets(keyDownWavBytes, keyUpWavBytes);
+    public void PlayMicClick(bool keyDown) => _inner.PlayMicClick(keyDown);
     public void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions)
         => _inner.SetSlotInterference(frequencyKhz, slotId, contributions);
     public void SetSlotHopNet(int frequencyKhz, Guid slotId, OpenFreqAudio.Eccm.HopSlotState? hopNet)

@@ -286,6 +286,21 @@
                                                 IsSnapToTickEnabled="True"
                                                 Margin="0,0,0,12" />
 
+                                        <CheckBox Content="Mic click"
+                                                  IsChecked="{Binding Settings.MicClickEnabled}"
+                                                  ToolTip.Tip="A click when you key (pick-up) and unkey (put-down) the radio, in your headset and on the HUD tape / session recording. Not transmitted: the people receiving you already hear their radio's own click."
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.MicClickEnabled}" Margin="0,0,0,12">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.MicClickVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.MicClickVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                        </StackPanel>
+
                                         <CheckBox Content="Sidetone"
                                                   IsChecked="{Binding Settings.SidetoneEnabled}"
                                                   Margin="0,0,0,4" />
@@ -718,6 +733,21 @@
                                                 IsSnapToTickEnabled="True"
                                                 Margin="0,0,0,12" />
 
+                                        <CheckBox Content="Mic click"
+                                                  IsChecked="{Binding Settings.MicClickEnabled}"
+                                                  ToolTip.Tip="A click when you key (pick-up) and unkey (put-down) the radio, in your headset and on the HUD tape / session recording. Not transmitted: the people receiving you already hear their radio's own click."
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.MicClickEnabled}" Margin="0,0,0,12">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.MicClickVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.MicClickVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                        </StackPanel>
+
                                         <CheckBox Content="Sidetone"
                                                   IsChecked="{Binding Settings.SidetoneEnabled}"
                                                   Margin="0,0,0,4" />
@@ -999,6 +1029,21 @@
                                                 TickFrequency="0.05"
                                                 IsSnapToTickEnabled="True"
                                                 Margin="0,0,0,12" />
+
+                                        <CheckBox Content="Mic click"
+                                                  IsChecked="{Binding Settings.MicClickEnabled}"
+                                                  ToolTip.Tip="A click when you key (pick-up) and unkey (put-down) the radio, in your headset and on the HUD tape / session recording. Not transmitted: the people receiving you already hear their radio's own click."
+                                                  Margin="0,0,0,4" />
+                                        <StackPanel IsVisible="{Binding Settings.MicClickEnabled}" Margin="0,0,0,12">
+                                            <TextBlock Classes="InputLabel" Margin="0,4,0,4">
+                                                <Run Text="Volume: " />
+                                                <Run Text="{Binding Settings.MicClickVolume, StringFormat={}{0:P0}}" />
+                                            </TextBlock>
+                                            <Slider Minimum="0" Maximum="1"
+                                                    Value="{Binding Settings.MicClickVolume}"
+                                                    TickFrequency="0.05"
+                                                    IsSnapToTickEnabled="True" />
+                                        </StackPanel>
 
                                         <CheckBox Content="Sidetone"
                                                   IsChecked="{Binding Settings.SidetoneEnabled}"

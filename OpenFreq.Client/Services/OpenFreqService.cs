@@ -303,6 +303,28 @@ public class OpenFreqService : IOpenFreqService
         }
     } = 0.4;
 
+    /// <summary>Ownship mic click at PTT key-down / key-up, in the headset and on the capture. On by default.</summary>
+    public bool MicClickEnabled
+    {
+        get => field;
+        set
+        {
+            field = value;
+            if (_playbackService != null) _playbackService.MicClickEnabled = value;
+        }
+    } = true;
+
+    /// <summary>Mic click level, 1 = as recorded.</summary>
+    public double MicClickVolume
+    {
+        get => field;
+        set
+        {
+            field = value;
+            if (_playbackService != null) _playbackService.MicClickVolume = (float)value;
+        }
+    } = 1.0;
+
     public double MasterVolume
     {
         get => field;
@@ -518,6 +540,11 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.SetEncryptionToneAssets(
             LoadEmbeddedAudioAsset("AudioEffects/KY_58_TX.wav"),
             LoadEmbeddedAudioAsset("AudioEffects/KY_58_RX.wav"));
+        _playbackService.MicClickEnabled = MicClickEnabled;
+        _playbackService.MicClickVolume = (float)MicClickVolume;
+        _playbackService.SetMicClickAssets(
+            LoadEmbeddedAudioAsset("AudioEffects/RADIO_TRANS_START_163.wav"),
+            LoadEmbeddedAudioAsset("AudioEffects/RADIO_TRANS_END_163.wav"));
         _isInitialized = true;
 
         _falconSharedMemoryService.FlyingStateChanged += OnFlyingStateChanged;
@@ -998,6 +1025,7 @@ public class OpenFreqService : IOpenFreqService
         // On the idle → transmitting edge, mark the start time and arm sidetone monitoring.
         if (wasIdle)
         {
+            _playbackService?.PlayMicClick(keyDown: true); // ownship mic click: pick-up
             _client.MarkTransmitStartTime();
             if (_playbackService != null) _playbackService.SidetoneEnabled = SidetoneEnabled;
             _ = EnsureMicDeliveringAsync(frequencyKhz);
@@ -1018,7 +1046,7 @@ public class OpenFreqService : IOpenFreqService
         if (_client == null) return;
 
         // Remove from active transmissions
-        _activeTransmissionsAndMutedFrequencies.TryRemove(frequencyKhz, out var mutedFrequencies);
+        bool wasTransmitting = _activeTransmissionsAndMutedFrequencies.TryRemove(frequencyKhz, out var mutedFrequencies);
         _activeTransmissionSlots.TryRemove(frequencyKhz, out _);
         if (mutedFrequencies != null)
         {
@@ -1033,6 +1061,8 @@ public class OpenFreqService : IOpenFreqService
             {
                 _playbackService.SidetoneEnabled = SidetoneEnabled;
                 _playbackService.ClearSidetone();
+                // Ownship mic click: put-down, on the last radio released (not on a stop for a radio that wasn't keyed).
+                if (wasTransmitting) _playbackService.PlayMicClick(keyDown: false);
             }
 
             UpdateMicCaptureState();

@@ -415,6 +415,29 @@ public class RadioPlayback : IDisposable
     public void PushSidetone(ReadOnlySpan<float> samples) => _sidetoneBuffer.Write(samples);
     public void ClearSidetone() => _sidetoneBuffer.Clear();
 
+    // --- Ownship mic click (see MicClickPlayer): pick-up at key-down, put-down at key-up. Headset and capture
+    // (HUD tape / session recording), never transmitted. Rendered once per callback, before the capture frame. ---
+    private readonly MicClickPlayer _micClick = new();
+    private float[] _micClickScratch = [];
+    private int _micClickFrames; // DSP thread: samples of _micClickScratch carrying the click this callback
+
+    /// <summary>Ownship mic click on/off.</summary>
+    public bool MicClickEnabled { get; set; } = true;
+
+    /// <summary>Mic click level, 1 = the samples as recorded.</summary>
+    public float MicClickVolume { get; set; } = 1.0f;
+
+    /// <summary>The pick-up (key-down) and put-down (key-up) click WAVs: mono 16-bit PCM at 48 kHz. Null disables one.</summary>
+    public void SetMicClickAssets(byte[]? keyDownWavBytes, byte[]? keyUpWavBytes) =>
+        _micClick.SetSamples(keyDownWavBytes != null ? DecodePcm16MonoWav(keyDownWavBytes) : null,
+            keyUpWavBytes != null ? DecodePcm16MonoWav(keyUpWavBytes) : null);
+
+    /// <summary>Play the mic click for a PTT edge: <paramref name="keyDown"/> true at key-down, false at key-up.</summary>
+    public void PlayMicClick(bool keyDown)
+    {
+        if (MicClickEnabled) _micClick.Trigger(keyDown);
+    }
+
     // --- Encryption PTT tones (KY_58_TX / KY_58_RX): short one-shot cues, decoded once at load
     // time into float buffers and mixed directly into the master output (see MixOneShotTone). ---
     private float[]? _txToneSamples;
@@ -1813,6 +1836,18 @@ public class RadioPlayback : IDisposable
             // is added back rendered through the radio FX (CaptureRecordingFrame).
             // The capture limiter delays the capture by as much as the output limiter delays playback, so the HUD
             // feed's "heard" stamp needs no correction.
+            // Ownship mic click: this callback's slice, for the capture (below) and the headset (with the tones).
+            if (_micClickScratch.Length < samples) _micClickScratch = new float[samples];
+            if (MicClickEnabled)
+            {
+                _micClickFrames = _micClick.Render(_micClickScratch.AsSpan(0, samples), MicClickVolume);
+            }
+            else
+            {
+                _micClick.Stop();
+                _micClickFrames = 0;
+            }
+
             if (capturing && !_wasCapturing)
                 _captureLimiter.Reset();
             _wasCapturing = capturing;
@@ -1854,6 +1889,14 @@ public class RadioPlayback : IDisposable
             {
                 MixOneShotTone(ref _txTonePosition, _txToneSamples, samples);
                 MixOneShotTone(ref _rxTonePosition, _rxToneSamples, samples);
+            }
+
+            // Ownship mic click in the headset: centred, like the tones (its level is MicClickVolume alone).
+            for (int i = 0; i < _micClickFrames; ++i)
+            {
+                float s = _micClickScratch[i];
+                _stereoBuffer[i * 2] += s;
+                _stereoBuffer[i * 2 + 1] += s;
             }
 
             // Sidetone and tones can't clip alone, but can add to loud receive audio. A clamp touches only the samples
@@ -2047,6 +2090,18 @@ public class RadioPlayback : IDisposable
             for (int i = 0; i < samples; i++)
             {
                 float s = ownGain * _ownVoiceScratch[i];
+                _recordStereo[i * 2] += s;
+                _recordStereo[i * 2 + 1] += s;
+            }
+        }
+
+        // Ownship mic click: centred at own voice's gain, so it sits with our voice on the tape / recording.
+        if (_micClickFrames > 0)
+        {
+            float clickGain = 0.70710678f * MasterVolume;
+            for (int i = 0; i < _micClickFrames; i++)
+            {
+                float s = clickGain * _micClickScratch[i];
                 _recordStereo[i * 2] += s;
                 _recordStereo[i * 2 + 1] += s;
             }

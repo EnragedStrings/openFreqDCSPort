@@ -1,0 +1,37 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="OpenFreqClient.Views.AutoConnectDialog"
+    xmlns:viewModels="clr-namespace:OpenFreqClient.ViewModels"
+    x:DataType="viewModels:AutoConnectDialogViewModel">
+
+    <StackPanel Width="380" Spacing="16">
+        <TextBlock Text="{Binding Title}" Classes="Headline6" />
+
+        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+
+        <TextBox PlaceholderText="Password"
+                 PasswordChar="*"
+                 Text="{Binding Password}"
+                 IsVisible="{Binding ShowPassword}" />
+
+        <CheckBox Content="{Binding CheckboxText}"
+                  IsChecked="{Binding IsChecked}"
+                  IsVisible="{Binding ShowCheckbox}" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="{Binding CancelText}"
+                    Classes="Flat"
+                    IsCancel="True"
+                    Command="{Binding CancelCommand}" />
+            <Button Content="{Binding SecondaryText}"
+                    Classes="Flat"
+                    IsVisible="{Binding ShowSecondary}"
+                    Command="{Binding SecondaryCommand}" />
+            <Button Content="{Binding PrimaryText}"
+                    Classes="Flat"
+                    IsDefault="True"
+                    Command="{Binding PrimaryCommand}" />
+        </StackPanel>
+    </StackPanel>
+</UserControl>

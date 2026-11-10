@@ -633,13 +633,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                 return;
             }
 
-            // Initialize service with settings
-            await _openFreqService.Initialize(Settings.GetSettings(),
-                _audioService.GetRecordingBassIndex(Settings.RecordingDeviceIndex),
-                _audioService.GetPlaybackBassIndex(Settings.PlaybackDeviceIndex));
-
-            // Connect to server (channels will auto-join when authenticated)
-            await _openFreqService.ConnectAsync();
+            // Initialize with the saved settings and connect (channels auto-join when authenticated)
+            await ConnectWithSettingsAsync(Settings.GetSettings(), null, automatic: false);
 
             if (Settings.ConnectionMode == IOpenFreqService.Mode.GCI)
             {
@@ -700,11 +695,52 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         // Never join BMS while another radio client owns the radio shared memory.
         if (IsBmsConflictBlocking) return;
 
-        await _openFreqService.Initialize(Settings.GetSettings(),
+        await ConnectWithSettingsAsync(Settings.GetSettings(), connectTimeout, automatic: false);
+    }
+
+    /// <summary>"host:port" of the current (or last attempted) connection -- from the settings
+    /// object the connection was made with, which for DCS auto-connect is a per-session snapshot
+    /// rather than the saved address.</summary>
+    public string? CurrentServerAddress { get; private set; }
+
+    /// <summary>True when the current connection was made by DCS auto-connect.</summary>
+    public bool CurrentConnectionIsAutomatic { get; private set; }
+
+    /// <summary>The one Initialize + ConnectAsync sequence every connect path shares. The
+    /// settings object is used as-is: auto-connect passes a snapshot with the advertised address
+    /// and never writes the saved settings.</summary>
+    private async Task ConnectWithSettingsAsync(OpenFreqSettings settings, TimeSpan? connectTimeout, bool automatic)
+    {
+        CurrentServerAddress = settings.OpenFreqServerAddress;
+        CurrentConnectionIsAutomatic = automatic;
+
+        await _openFreqService.Initialize(settings,
             _audioService.GetRecordingBassIndex(Settings.RecordingDeviceIndex),
             _audioService.GetPlaybackBassIndex(Settings.PlaybackDeviceIndex));
 
         await _openFreqService.ConnectAsync(connectTimeout);
+    }
+
+    /// <summary>DCS auto-connect entry point (DcsAutoConnectHost). Throws like ConnectAsync so the
+    /// auto-connect policy can tell a wrong password from a network failure.</summary>
+    public async Task ConnectAutomaticAsync(OpenFreqSettings sessionSnapshot, TimeSpan connectTimeout)
+    {
+        if (Settings.ConnectionMode != IOpenFreqService.Mode.DCS)
+            throw new InvalidOperationException("DCS auto-connect is only used in DCS mode.");
+        await ConnectWithSettingsAsync(sessionSnapshot, connectTimeout, automatic: true);
+    }
+
+    /// <summary>DCS auto-connect: also stops an inner reconnect that IsConnected doesn't report.</summary>
+    public async Task DisconnectFromServerAsync()
+    {
+        try
+        {
+            await _openFreqService.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Disconnect failed: {ex.Message}");
+        }
     }
 
     [RelayCommand]
@@ -851,9 +887,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
                     ShowError("Lost connection to server");
                 SettingsDrawerOpened = true;
 
+                // An auto-made connection retries on its own; don't pop the window over a
+                // full-screen DCS on every drop.
                 var window = ((IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!)
                     .MainWindow!;
-                if (window.WindowState == WindowState.Minimized)
+                if (window.WindowState == WindowState.Minimized && !CurrentConnectionIsAutomatic)
                     window.WindowState = WindowState.Normal;
             });
         }

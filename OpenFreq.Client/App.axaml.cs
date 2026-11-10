@@ -74,6 +74,29 @@ public partial class App : Application
                 DataContext = mainViewModel,
             };
 
+            // Started by the DCS hook: come up minimized and without taking focus from DCS.
+            if (Program.LaunchedByDcs)
+            {
+                desktop.MainWindow.ShowActivated = false;
+                desktop.MainWindow.WindowState = Avalonia.Controls.WindowState.Minimized;
+            }
+
+            // A second launch (not from DCS) asks this instance to show its window.
+            Program.InstanceGuard?.ListenForShow(() => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                var window = desktop.MainWindow;
+                if (window == null) return;
+                if (window.WindowState == Avalonia.Controls.WindowState.Minimized)
+                    window.WindowState = Avalonia.Controls.WindowState.Normal;
+                window.Show();
+                window.Activate();
+            }));
+
+            // DCS multiplayer auto-connect: endpoint, policy and client.json for the DCS hook.
+            var autoConnect = serviceProvider.GetRequiredService<OpenFreqClient.Services.AutoConnect.DcsAutoConnectService>();
+            autoConnect.Start();
+            _services.Add(autoConnect);
+
             // Auto-update: after the window is actually up, never blocking/delaying it from
             // appearing. Order matters -- show "what changed" for an update THIS launch just
             // applied before kicking off a check for the NEXT one, so they can't race into a

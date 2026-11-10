@@ -436,6 +436,42 @@
                                         Height="40"
                                         Classes="accent" />
 
+                                <!-- DCS multiplayer auto-connect (docs/autoconnect/CLIENT.md) -->
+                                <controls:Card>
+                                    <StackPanel Margin="16">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                            <avalonia:MaterialIcon Kind="LanConnect"
+                                                                   Width="16" Height="16"
+                                                                   Margin="0,0,8,0"
+                                                                   Foreground="{DynamicResource PrimaryHueMidBrush}" />
+                                            <TextBlock Text="DCS multiplayer" Classes="SectionHeader" Margin="0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Auto-connect when a DCS server offers OpenFreq"
+                                                  IsChecked="{Binding Settings.AutoConnectEnabled}" />
+                                        <CheckBox Content="Start OpenFreq from DCS when needed"
+                                                  IsChecked="{Binding Settings.AutoLaunchEnabled}"
+                                                  IsEnabled="{Binding Settings.AutoConnectEnabled}" />
+                                        <CheckBox Content="Reconnect automatically while in the DCS server"
+                                                  IsChecked="{Binding Settings.AutoReconnectEnabled}" />
+                                        <CheckBox Content="Disconnect after leaving the DCS server"
+                                                  IsChecked="{Binding Settings.DisconnectOnServerLeave}" />
+                                        <CheckBox Content="Switch servers without asking"
+                                                  IsChecked="{Binding Settings.AllowAutomaticServerSwitching}" />
+                                        <CheckBox Content="Close OpenFreq after leaving (only if DCS started it)"
+                                                  IsChecked="{Binding Settings.CloseAppOnServerLeave}" />
+                                        <TextBlock Classes="InputLabel" Margin="0,8,0,0" TextWrapping="Wrap"
+                                                   FontStyle="Italic"
+                                                   Text="Auto-connect uses the server the DCS server advertises for that session only: your saved address and password above are never changed. Only connections made by auto-connect are disconnected or switched automatically; slot changes, respawns and mission changes never disconnect." />
+                                        <TextBlock Classes="InputLabel" Margin="0,8,0,0" TextWrapping="Wrap"
+                                                   Text="{Binding Settings.AutoConnectStatus}" />
+                                        <Button Content="Forget remembered server passwords"
+                                                Classes="Flat"
+                                                Margin="0,8,0,0"
+                                                IsVisible="{Binding Settings.HasAutoConnectServerPasswords}"
+                                                Command="{Binding Settings.ForgetAutoConnectServerPasswordsCommand}" />
+                                    </StackPanel>
+                                </controls:Card>
+
                                 <controls:Card>
                                     <StackPanel Margin="16">
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">

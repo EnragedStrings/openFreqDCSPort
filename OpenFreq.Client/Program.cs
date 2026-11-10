@@ -17,6 +17,14 @@ sealed class Program
 {
     public static IServiceProvider? ServiceProvider { get; private set; }
     public static string Version { get; private set; } = "unknown";
+
+    /// <summary>Started by the DCS auto-connect hook (constant "--launched-by-dcs" flag; the
+    /// hook never passes anything else). Only CloseAppOnServerLeave and window activation
+    /// look at it.</summary>
+    public static bool LaunchedByDcs { get; private set; }
+
+    /// <summary>Held for the whole process lifetime; see SingleInstanceGuard.</summary>
+    public static SingleInstanceGuard? InstanceGuard { get; private set; }
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
@@ -110,6 +118,24 @@ sealed class Program
             ?.InformationalVersion ?? "unknown";
         Log.Information("OpenFreq Client {Version} starting", Version);
 
+        // Single instance per profile (after --profile, before the staged-update check, so a
+        // second launch never tries to apply an update under a running copy).
+        LaunchedByDcs = Array.IndexOf(args, "--launched-by-dcs") >= 0;
+        var instanceName = SingleInstanceGuard.NameFor(AppDataPaths.ProfileSuffix);
+        InstanceGuard = SingleInstanceGuard.TryAcquire(instanceName);
+        if (InstanceGuard == null)
+        {
+            // Started by DCS while already running: stay invisible so DCS keeps focus.
+            var shown = !LaunchedByDcs && SingleInstanceGuard.SignalShow(instanceName);
+            Log.Information("OpenFreq is already running ({Mode}); this launch exits",
+                LaunchedByDcs ? "launched by DCS" : shown ? "asked it to show its window" : "could not signal it");
+            Log.CloseAndFlush();
+            return;
+        }
+
+        if (LaunchedByDcs)
+            Log.Information("Started by the DCS auto-connect hook");
+
         // A previous session may have silently downloaded a newer version in the background (see
         // IUpdateService/OpenFreqSettings.AutoUpdateEnabled) and staged it here, ready to apply.
         // Checked before anything else (DI, window) so this only adds a brief relaunch on the one
@@ -129,6 +155,8 @@ sealed class Program
 
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);
+
+        InstanceGuard?.Dispose();
     }
 
     /// <summary>Returns true (having already run the requested action and set
@@ -216,6 +244,9 @@ sealed class Program
 
         Log.Information("Applying background-staged update to {Version}", marker.Version);
         SelfUpdateStager.WriteAppliedMarker(stagingDir, marker.Version, marker.ReleaseNotes);
+        // Release the single-instance mutex first: the relaunched copy must be able to take it.
+        InstanceGuard?.Dispose();
+        InstanceGuard = null;
         SelfUpdateLauncher.LaunchApplyAndRestart(currentExePath, marker.ExePath, Environment.ProcessId, args,
             stagingDir);
         Log.CloseAndFlush();

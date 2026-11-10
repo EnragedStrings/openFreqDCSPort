@@ -220,13 +220,15 @@ public class DcsAutoConnectEndpointTests
         """{"type":"openfreq.dcs.autoconnect","v":1,"token":""" + "\"" + token + "\",\"seq\":" + seq +
         ""","action":"connect","session":{"id":"abc123","dcsServer":"203.0.113.5:10308"},"target":{"host":"voice.example.com","port":9987}}""");
 
+    // Synchronous on purpose: an async test moves the xUnit runner thread, and
+    // RadioOverlayViewModelTests depend on staying on the thread Avalonia's dispatcher bound to.
     [Fact] // T10: real loopback socket, token check, ack, duplicate seq
-    public async Task ValidRequest_IsAcked_DuplicatesAreReAckedNotReprocessed_WrongTokenGetsNoAnswer()
+    public void ValidRequest_IsAcked_DuplicatesAreReAckedNotReprocessed_WrongTokenGetsNoAnswer()
     {
         var calls = 0;
         using var endpoint = new DcsAutoConnectEndpoint(Token, _ =>
         {
-            calls++;
+            Interlocked.Increment(ref calls);
             return AutoConnectAckState.Connecting;
         }, NullLogger.Instance, port: 0);
         Assert.True(endpoint.Start());
@@ -234,8 +236,8 @@ public class DcsAutoConnectEndpointTests
         using var client = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
         var target = new IPEndPoint(IPAddress.Loopback, endpoint.BoundPort);
 
-        await client.SendAsync(Datagram(5), target);
-        var ack = await ReceiveAsync(client);
+        client.Send(Datagram(5), target);
+        var ack = Receive(client);
         Assert.NotNull(ack);
         using (var doc = JsonDocument.Parse(ack!))
         {
@@ -243,12 +245,12 @@ public class DcsAutoConnectEndpointTests
             Assert.Equal("connecting", doc.RootElement.GetProperty("state").GetString());
         }
 
-        await client.SendAsync(Datagram(5), target);
-        Assert.NotNull(await ReceiveAsync(client));
+        client.Send(Datagram(5), target);
+        Assert.NotNull(Receive(client));
         Assert.Equal(1, calls);
 
-        await client.SendAsync(Datagram(6, "ffffffffffffffffffffffffffffffff"), target);
-        Assert.Null(await ReceiveAsync(client, 300));
+        client.Send(Datagram(6, "ffffffffffffffffffffffffffffffff"), target);
+        Assert.Null(Receive(client, 300));
         Assert.Equal(1, calls);
     }
 
@@ -270,14 +272,15 @@ public class DcsAutoConnectEndpointTests
         Assert.Contains(port.ToString(), endpoint.ListenerError);
     }
 
-    private static async Task<byte[]?> ReceiveAsync(UdpClient client, int timeoutMs = 3000)
+    private static byte[]? Receive(UdpClient client, int timeoutMs = 3000)
     {
-        using var cts = new CancellationTokenSource(timeoutMs);
+        client.Client.ReceiveTimeout = timeoutMs;
         try
         {
-            return (await client.ReceiveAsync(cts.Token)).Buffer;
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            return client.Receive(ref from);
         }
-        catch (OperationCanceledException)
+        catch (SocketException)
         {
             return null;
         }

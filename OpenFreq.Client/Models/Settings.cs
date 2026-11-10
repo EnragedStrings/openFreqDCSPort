@@ -107,6 +107,41 @@ public class OpenFreqSettings
     /// controls win.</summary>
     public bool DcsManualRadioControlOverride { get; set; } = false;
 
+    // DCS multiplayer auto-connect (docs/autoconnect/AUTOCONNECT_DESIGN.md section 10). A DCS
+    // server's advert is only ever acted on in DCS mode; these never change the saved
+    // OpenFreqServerAddress/OpenFreqPassword above.
+
+    /// <summary>Connect to the OpenFreq server a joined DCS server advertises. Off until the
+    /// user consents (Settings or the one-time prompt on the first advert).</summary>
+    public bool AutoConnectEnabled { get; set; } = false;
+
+    /// <summary>Let the DCS hook start this app when an advert arrives and it isn't running.
+    /// Off until the user consents. Mirrored into the hook's client.json.</summary>
+    public bool AutoLaunchEnabled { get; set; } = false;
+
+    /// <summary>Retry an auto-made connection with exponential back-off while still in the same
+    /// DCS server.</summary>
+    public bool AutoReconnectEnabled { get; set; } = true;
+
+    /// <summary>Disconnect an auto-made connection after leaving the DCS server (grace period;
+    /// never on slot change, respawn, loading screen or mission rotation). Never applies to a
+    /// manual connection.</summary>
+    public bool DisconnectOnServerLeave { get; set; } = true;
+
+    /// <summary>Switch an auto-made connection to a different advertised server without asking.
+    /// A manual connection is always protected by a prompt.</summary>
+    public bool AllowAutomaticServerSwitching { get; set; } = false;
+
+    /// <summary>Close the app after leaving the DCS server, only when DCS started it.</summary>
+    public bool CloseAppOnServerLeave { get; set; } = false;
+
+    /// <summary>Internal: the one-time consent prompt has been answered.</summary>
+    public bool AutoConnectConsentAsked { get; set; } = false;
+
+    /// <summary>Passwords for advertised servers, keyed by "host:port". Written only when the
+    /// user ticks "Remember" in the password prompt.</summary>
+    public Dictionary<string, string> AutoConnectServerPasswords { get; set; } = [];
+
     // Radio overlay (always-on-top window showing tuned radios + TX/RX -- see RadioOverlayWindow)
     public bool OverlayEnabled { get; set; } = false;
     public int? OverlayLeft { get; set; }

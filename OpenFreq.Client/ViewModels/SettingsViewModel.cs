@@ -182,6 +182,21 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial bool IsDarkMode { get; set; }
     [ObservableProperty] public partial bool MinimizeOnConnect { get; set; } = true;
 
+    // DCS multiplayer auto-connect -- see the OpenFreqSettings properties of the same names.
+    [ObservableProperty] public partial bool AutoConnectEnabled { get; set; } = false;
+    [ObservableProperty] public partial bool AutoLaunchEnabled { get; set; } = false;
+    [ObservableProperty] public partial bool AutoReconnectEnabled { get; set; } = true;
+    [ObservableProperty] public partial bool DisconnectOnServerLeave { get; set; } = true;
+    [ObservableProperty] public partial bool AllowAutomaticServerSwitching { get; set; } = false;
+    [ObservableProperty] public partial bool CloseAppOnServerLeave { get; set; } = false;
+    [ObservableProperty] public partial bool AutoConnectConsentAsked { get; set; } = false;
+
+    /// <summary>Last DCS auto-connect event, shown in the DCS multiplayer card.</summary>
+    [ObservableProperty] public partial string AutoConnectStatus { get; set; } = "Waiting for a DCS server that offers OpenFreq.";
+
+    private Dictionary<string, string> _autoConnectServerPasswords = new(StringComparer.OrdinalIgnoreCase);
+    private bool _loadingSettings;
+
     public bool IsWindowsPlatform { get; } = OperatingSystem.IsWindows();
 
     private readonly ILogger<SettingsViewModel> _logger;
@@ -639,6 +654,54 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     partial void OnBmsRadio2PanChanged(int value) { }
 
+    // Auto-connect consent and policy must survive a crash: save right away (not only on a
+    // clean exit), but not while LoadFromSettings is still restoring them.
+    partial void OnAutoConnectEnabledChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnAutoLaunchEnabledChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnAutoReconnectEnabledChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnDisconnectOnServerLeaveChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnAllowAutomaticServerSwitchingChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnCloseAppOnServerLeaveChanged(bool value) => PersistAutoConnectSetting();
+    partial void OnAutoConnectConsentAskedChanged(bool value) => PersistAutoConnectSetting();
+
+    private void PersistAutoConnectSetting()
+    {
+        if (!_loadingSettings)
+            PersistImmediately?.Invoke(this, EventArgs.Empty);
+    }
+
+    public string? GetAutoConnectServerPassword(string address)
+    {
+        lock (_autoConnectServerPasswords)
+            return _autoConnectServerPasswords.GetValueOrDefault(address);
+    }
+
+    /// <summary>Only called when the user ticked "Remember" in the auto-connect password prompt.</summary>
+    public void RememberAutoConnectServerPassword(string address, string password)
+    {
+        lock (_autoConnectServerPasswords)
+            _autoConnectServerPasswords[address] = password;
+        OnPropertyChanged(nameof(HasAutoConnectServerPasswords));
+        PersistAutoConnectSetting();
+    }
+
+    public bool HasAutoConnectServerPasswords
+    {
+        get
+        {
+            lock (_autoConnectServerPasswords) return _autoConnectServerPasswords.Count > 0;
+        }
+    }
+
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private void ForgetAutoConnectServerPasswords()
+    {
+        lock (_autoConnectServerPasswords)
+            _autoConnectServerPasswords.Clear();
+        OnPropertyChanged(nameof(HasAutoConnectServerPasswords));
+        PersistAutoConnectSetting();
+    }
+
     private void OnMicLevelChanged(object? sender, MicLevelChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(() => MicInputLevel = e.Peak);
@@ -697,6 +760,30 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         InputGain = settings.InputGain <= 0 ? 1.0 : settings.InputGain;
         SidetoneVolume = settings.SidetoneVolume;
         MinimizeOnConnect = settings.MinimizeOnConnect;
+        _loadingSettings = true;
+        try
+        {
+            AutoConnectEnabled = settings.AutoConnectEnabled;
+            AutoLaunchEnabled = settings.AutoLaunchEnabled;
+            AutoReconnectEnabled = settings.AutoReconnectEnabled;
+            DisconnectOnServerLeave = settings.DisconnectOnServerLeave;
+            AllowAutomaticServerSwitching = settings.AllowAutomaticServerSwitching;
+            CloseAppOnServerLeave = settings.CloseAppOnServerLeave;
+            AutoConnectConsentAsked = settings.AutoConnectConsentAsked;
+            lock (_autoConnectServerPasswords)
+            {
+                _autoConnectServerPasswords.Clear();
+                foreach (var (address, password) in settings.AutoConnectServerPasswords ?? [])
+                    _autoConnectServerPasswords[address] = password;
+            }
+
+            OnPropertyChanged(nameof(HasAutoConnectServerPasswords));
+        }
+        finally
+        {
+            _loadingSettings = false;
+        }
+
         AmbientNoiseVolume = settings.AmbientNoiseVolume;
         AutoRecordInGameMode = settings.AutoRecordInGameMode;
         // Manual volume/squelch override always starts off, regardless of the saved value --
@@ -916,6 +1003,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             InputGain = InputGain,
             SidetoneVolume = SidetoneVolume,
             MinimizeOnConnect = MinimizeOnConnect,
+            AutoConnectEnabled = AutoConnectEnabled,
+            AutoLaunchEnabled = AutoLaunchEnabled,
+            AutoReconnectEnabled = AutoReconnectEnabled,
+            DisconnectOnServerLeave = DisconnectOnServerLeave,
+            AllowAutomaticServerSwitching = AllowAutomaticServerSwitching,
+            CloseAppOnServerLeave = CloseAppOnServerLeave,
+            AutoConnectConsentAsked = AutoConnectConsentAsked,
+            AutoConnectServerPasswords = CopyAutoConnectServerPasswords(),
             AmbientNoiseVolume = AmbientNoiseVolume,
             AutoRecordInGameMode = AutoRecordInGameMode,
             DcsManualRadioControlOverride = DcsManualRadioControlOverride,
@@ -937,6 +1032,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MaximizedScreenX = _maximizedScreenX,
             MaximizedScreenY = _maximizedScreenY
         };
+    }
+
+    private Dictionary<string, string> CopyAutoConnectServerPasswords()
+    {
+        lock (_autoConnectServerPasswords)
+            return new Dictionary<string, string>(_autoConnectServerPasswords, StringComparer.OrdinalIgnoreCase);
     }
 
     public int GetDcsRadioPan(string radioId) =>

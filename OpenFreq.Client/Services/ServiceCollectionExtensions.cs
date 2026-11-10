@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<ChannelCardListViewModel>();
         services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<OpenFreqClient.Services.AutoConnect.DcsAutoConnectService>();
 
         return services;
     }

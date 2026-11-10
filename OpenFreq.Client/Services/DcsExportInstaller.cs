@@ -11,6 +11,9 @@ using Microsoft.Extensions.Logging;
 
 namespace OpenFreqClient.Services;
 
+/// <summary>Contents of the auto-connect hook's client.json (see DcsExportInstaller).</summary>
+public sealed record AutoConnectClientConfig(int Port, string Token, string? ExePath, bool AutoConnect, bool AutoLaunch);
+
 public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logger)
 {
     private const string ResourceRoot = "DCS/OpenFreqDCS/";
@@ -118,6 +121,7 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
             foreach (var savedGamesDirectory in DetectSavedGamesDirectories())
             {
                 RemoveExportHook(Path.Combine(savedGamesDirectory, "Scripts", "Export.lua"));
+                RemoveAutoConnectHook(savedGamesDirectory);
 
                 var serviceRoot = Path.Combine(savedGamesDirectory, "Mods", "Services", "OpenFreqDCS");
                 if (Directory.Exists(serviceRoot))
@@ -141,9 +145,149 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
 
         ExtractExportResources(serviceRoot);
         EnsureExportHook(Path.Combine(savedGamesDirectory, "Scripts", "Export.lua"));
+        EnsureAutoConnectHook(savedGamesDirectory);
+        if (AppDataPaths.ProfileSuffix.Length == 0)
+            RefreshAutoConnectExePath(savedGamesDirectory, Environment.ProcessPath);
 
         logger.LogInformation("OpenFreq DCS export is configured in {SavedGamesDirectory}", savedGamesDirectory);
     }
+
+    /// <summary>Copies the auto-connect GameGUI loader hook into Scripts\Hooks (byte-compared, so
+    /// an unchanged file is never rewritten). It is a separate file from other tools' hooks
+    /// (DCS-SRS etc.); nothing else in Scripts\Hooks is touched.</summary>
+    private void EnsureAutoConnectHook(string savedGamesDirectory)
+    {
+        var bytes = ReadResource(ResourceRoot + AutoConnectHookResource);
+        if (bytes == null)
+            return;
+        var target = Path.Combine(savedGamesDirectory, "Scripts", "Hooks", AutoConnectHookFileName);
+        if (File.Exists(target) && File.ReadAllBytes(target).SequenceEqual(bytes))
+            return;
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllBytes(target, bytes);
+        logger.LogInformation("Installed DCS auto-connect hook {TargetPath}", target);
+    }
+
+    private static byte[]? ReadResource(string logicalName)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        foreach (var resourceName in assembly.GetManifestResourceNames())
+        {
+            if (!resourceName.Replace('\\', '/').EndsWith(logicalName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream == null)
+                return null;
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return memory.ToArray();
+        }
+
+        return null;
+    }
+
+#endif
+
+    /// <summary>Writes client.json (exe path, port, token, consent flags) into every DCS Saved
+    /// Games folder. Called by DcsAutoConnectService on every app start and whenever the
+    /// auto-connect/auto-launch settings change.</summary>
+    public void WriteAutoConnectClientConfig(AutoConnectClientConfig config)
+    {
+#if WINDOWS
+        if (!OperatingSystem.IsWindows())
+            return;
+        try
+        {
+            foreach (var savedGamesDirectory in GetDcsSavedGamesDirectories())
+                WriteClientConfigFile(savedGamesDirectory, config);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to write the DCS auto-connect client.json");
+        }
+#endif
+    }
+
+    public const string AutoConnectHookFileName = "OpenFreq-ClientGameGUI.lua";
+    private const string AutoConnectHookResource = "Hooks/" + AutoConnectHookFileName;
+    private const string AutoConnectHookMarker = "OpenFreqAutoConnectGameGUI.lua";
+
+    internal static string ClientConfigPath(string savedGamesDirectory) => Path.Combine(savedGamesDirectory,
+        "Mods", "Services", "OpenFreqDCS", "AutoConnect", "client.json");
+
+    /// <summary>The hook's client.json. Only this app writes it; the hook only reads it.</summary>
+    internal static string BuildClientConfigJson(AutoConnectClientConfig config)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new System.Text.Json.Utf8JsonWriter(buffer, new System.Text.Json.JsonWriterOptions
+               {
+                   Indented = true,
+                   // Raw UTF-8 for non-ASCII paths instead of \u escapes.
+                   Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+               }))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteNumber("port", config.Port);
+            writer.WriteString("token", config.Token);
+            writer.WriteString("exe", config.ExePath ?? "");
+            writer.WriteBoolean("autoConnect", config.AutoConnect);
+            writer.WriteBoolean("autoLaunch", config.AutoLaunch);
+            writer.WriteString("profile", "");
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    internal static void WriteClientConfigFile(string savedGamesDirectory, AutoConnectClientConfig config)
+    {
+        var path = ClientConfigPath(savedGamesDirectory);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, BuildClientConfigJson(config), new UTF8Encoding(false));
+        File.Move(temp, path, overwrite: true);
+    }
+
+    /// <summary>Re-points an existing client.json at this exe (a moved portable copy, or the
+    /// installer's "--dcs-export install" step), keeping its port, token and consent flags.
+    /// Never creates one: that is the running app's job.</summary>
+    internal static void RefreshAutoConnectExePath(string savedGamesDirectory, string? exePath)
+    {
+        var path = ClientConfigPath(savedGamesDirectory);
+        if (string.IsNullOrEmpty(exePath) || !File.Exists(path))
+            return;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            var current = root.TryGetProperty("exe", out var exe) ? exe.GetString() : null;
+            if (string.Equals(current, exePath, StringComparison.Ordinal))
+                return;
+            WriteClientConfigFile(savedGamesDirectory, new AutoConnectClientConfig(
+                root.GetProperty("port").GetInt32(),
+                root.GetProperty("token").GetString() ?? "",
+                exePath,
+                root.TryGetProperty("autoConnect", out var ac) && ac.ValueKind == System.Text.Json.JsonValueKind.True,
+                root.TryGetProperty("autoLaunch", out var al) && al.ValueKind == System.Text.Json.JsonValueKind.True));
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or InvalidOperationException
+                                       or KeyNotFoundException or UnauthorizedAccessException)
+        {
+            // A broken file is rewritten by the app's next start.
+        }
+    }
+
+    /// <summary>Deletes Scripts\Hooks\OpenFreq-ClientGameGUI.lua only if it is our loader (it
+    /// names our module); never any other hook.</summary>
+    internal static void RemoveAutoConnectHook(string savedGamesDirectory)
+    {
+        var path = Path.Combine(savedGamesDirectory, "Scripts", "Hooks", AutoConnectHookFileName);
+        if (File.Exists(path) && File.ReadAllText(path).Contains(AutoConnectHookMarker, StringComparison.Ordinal))
+            File.Delete(path);
+    }
+
+#if WINDOWS
 
     private void ExtractExportResources(string serviceRoot)
     {
@@ -157,6 +301,10 @@ public sealed partial class DcsExportInstaller(ILogger<DcsExportInstaller> logge
 
             var relativePath = normalizedName[(rootIndex + ResourceRoot.Length)..];
             if (string.IsNullOrWhiteSpace(relativePath))
+                continue;
+
+            // The GameGUI loader goes to Scripts\Hooks (EnsureAutoConnectHook), not under Mods.
+            if (relativePath.StartsWith("Hooks/", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var targetPath = Path.Combine(

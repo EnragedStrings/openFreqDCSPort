@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "autoConnect": {
+    "enabled": true,
+    "host": "voice.example.com",
+    "port": 9987,
+    "sid": "example-main",
+    "auth": true,
+    "chat_command": "-openfreq"
+  }
+}

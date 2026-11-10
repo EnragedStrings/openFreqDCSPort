@@ -1,6 +1,7 @@
 # OpenFreq Communications Jamming — Design
 
-Status: design agreed 2026-11-09. Phase 0 and Phase 1 (scripted jammers from server config) implemented; phases 2-6 pending.
+Status: design agreed 2026-11-09. Phase 0, Phase 1 (scripted jammers from server config) and Phase 2 (auto-targeting brain)
+implemented; phases 3-6 pending.
 Research behind every number here: `research-01-physics.md` (jamming equation, J/S thresholds, waveforms and
 sounds), `research-02-eccm.md` (HAVE QUICK, SINCGARS, SATCOM, Link-16, hop model), `research-03-systems.md`
 (real jammers, preset table, doctrine), `research-04-codebase-map.md` (integration points, file:line).
@@ -77,6 +78,9 @@ limiting gives power robbing to every user on that channel; DAMA orderwire jammi
     detection range (presence positions + LOS oracle when available); score by activity; pick up to N spots;
     dwell with look-through; when a target net changes frequency, reacquire after a delay; never the protected
     list (guard 121.5/243.0 by default). Deterministic for tests (injectable clock/random).
+    Implemented (phase 2) as `AutoTargetingBrain` + `JammerDetection` (Common, pure). The rules and defaults
+    are in `JAMMING_CONFIG.md` § Auto targeting. No coalition filtering: the protected list is the only
+    friend/foe control.
 - SATCOM: jammers flagged for SATCOM uplink add I0 to the affected channel's uplink leg.
 - SRS bridge: per SRS listener, compute J with FreeSpacePathModel and degrade `SrsAudioProcessor` output
   (same waveform generators, run server-side).

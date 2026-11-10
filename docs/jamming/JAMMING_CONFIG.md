@@ -1,4 +1,4 @@
-# Configuring communications jammers (phase 1: scripted)
+# Configuring communications jammers (scripted and auto)
 
 Jamming is off by default. Turn it on in `OpenFreq.Server.json` with a `jamming` section. The server
 broadcasts the jammers to every client (on change, every `broadcastIntervalSeconds`, and on connect);
@@ -65,8 +65,75 @@ Every physical field is optional when `presetId` is set: what you leave out come
 | `targeting.bands` | Barrage / partial-band ranges; power is spread across the band (≈ −38 dB per channel for 225–400 MHz). |
 | `targeting.protectGuard` | Default `true`: 121.5 and 243.0 MHz are notched out of bands. A spot listed on guard is still jammed. |
 | `targeting.protectedFrequenciesKhz` | Own nets: notched out of bands and never spot-jammed. |
-| `targeting.mode` | `Scripted` (phase 1). `Auto` is reserved for phase 2 and radiates nothing yet. |
+| `targeting.mode` | `Scripted` (default) or `Auto` (see [Auto targeting](#auto-targeting)). Scripted spots and bands are radiated in both modes. |
+| `targeting.autoBands` | Auto: only pick frequencies inside these ranges (default: the whole tuning range). |
+| `targeting.autoMaxSpots` | Auto: most auto spots at once (default: the preset's spots, less the scripted spots). |
+| `targeting.detectionSensitivityDbm` | Auto: weakest transmission the intercept receiver hears (preset: −110; Compass Call −120). |
+| `targeting.activityHalfLifeSeconds` | Auto: half-life of the activity score (default 60). |
+| `targeting.dropAfterSeconds` | Auto: silence after which a target is dropped (default 30). |
+| `targeting.reacquireDelaySeconds` | Auto: search/DF/set-on time before a newly heard frequency is jammed (preset: 10; Compass Call 5). |
 | `schedule` | `startDelaySeconds`, then `onSeconds` on / `offSeconds` off, until `stopAfterSeconds`; counted from server start. |
+
+## Auto targeting
+
+An auto jammer behaves like a real one (research-03 §6): it listens, locates, spot-jams the busiest
+frequencies it hears, pauses to listen, and goes looking again when a net goes quiet or moves.
+
+```json
+{
+  "id": "sinitsa-auto",
+  "presetId": "r934b",
+  "latitude": 42.18,
+  "longitude": 42.48,
+  "lookThroughPeriodMs": 1000,
+  "lookThroughDuty": 0.1,
+  "targeting": {
+    "mode": "Auto",
+    "autoBands": [ { "startKhz": 225000, "endKhz": 400000 } ],
+    "autoMaxSpots": 2,
+    "protectedFrequenciesKhz": [ 262000, 270500 ],
+    "reacquireDelaySeconds": 10,
+    "dropAfterSeconds": 30
+  }
+}
+```
+
+**It jams any frequency it hears, whichever side is talking.** Radio can't tell friend from foe, so the
+jammer doesn't either. List your own side's frequencies in `protectedFrequenciesKhz`. Guard (121.5 / 243.0)
+is protected unless `protectGuard` is `false`.
+
+How it works (on the server; the catalog shows each auto jammer's emissions, plus `autoState`
+`Searching`/`Jamming` and `autoTargetsKhz`; changes go out within 1 s):
+
+1. **Detect.** It hears a transmission when the transmitter's position is known, the frequency is inside
+   the tuning range and `autoBands` and isn't protected, and the link budget clears the sensitivity:
+   `P_tx − FSPL(d, f) ≥ detectionSensitivityDbm`. P_tx is assumed to be 10 W VHF/UHF (100 W HF), with
+   0 dBi antennas. Beyond the 4/3-earth radio horizon of the two antenna heights it hears nothing. When a
+   DCS client can check terrain line of sight, a blocked path is not heard. When nobody can check, only
+   the horizon applies. Transmitter positions come from the position sent with the transmission, the
+   client's DCS presence, or the SRS player's position for bridged SRS users. If no position is known,
+   the transmitter can't be detected. The jammer itself needs `latitude`/`longitude`.
+2. **Score.** Each frequency gets keyed seconds plus 1 per key-down, decaying with `activityHalfLifeSeconds`.
+3. **Reacquire delay.** A frequency becomes a target only `reacquireDelaySeconds` after it was first heard.
+4. **Select.** Free spots go to the highest scores. When all spots are full, a waiting frequency takes a
+   spot from a target in two cases. Either the target has been silent for the reacquire delay and the
+   new frequency was heard more recently (the net moved), or the new frequency scores 1.25× the weakest
+   target. Auto and scripted spots share the power amplifiers (power ÷ targets beyond the PA count).
+5. **Look-through.** While it jams a frequency, it only hears that frequency during the silent part of
+   each `lookThroughPeriodMs`. With a period of 0, a separate receiver listens all the time. A target with
+   no detected activity for `dropAfterSeconds` is dropped, and it must be found again (step 3) before the
+   jammer comes back to it.
+
+**Counter-measures for the players:**
+- **Brevity.** Short, rare calls keep the score low. With look-through, a short call can fall entirely
+  inside a jamming period and not be heard.
+- **QSY / CHATTERMARK.** Changing frequency costs the jammer at least the reacquire delay (10 s by default)
+  before it finds the new net. Changing again, or alternating between briefed frequencies, keeps it
+  behind you.
+- **Burn-through.** Close the range to the other station, or kill the jammer.
+- **Make yourself hard to hear.** Terrain masking, or low altitude, which shortens your radio horizon to
+  the jammer.
+- **HAVE QUICK / SINCGARS** (phase 3) frequency hopping beats a spot jammer outright.
 
 ## Presets
 

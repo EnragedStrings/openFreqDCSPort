@@ -173,6 +173,7 @@ public class OpenFreqService : IOpenFreqService
     // Pre-allocated sidetone conversion buffer — reused every recording callback (single-threaded).
     private float[] _sidetonePushBuffer = new float[4800]; // 100ms @ 48kHz, grows if needed
     private readonly MicLevelNormalizer _micNormalizer = new(OpenFreqRtcClient.SAMPLE_RATE);
+    private readonly HotMicTap _hotMicTap = new(OpenFreqRtcClient.SAMPLE_RATE); // mic callback thread only
     private bool _wasTransmitting; // whether the last record callback was transmitting, to see a talk-spurt start
     private DateTime _lastMicLevelEventUtc = DateTime.MinValue;
     private DateTime _nextEmptyTransmissionWarningUtc = DateTime.MinValue;
@@ -351,9 +352,25 @@ public class OpenFreqService : IOpenFreqService
         }
     }
 
+    /// <summary>
+    /// Hot mic on the HUD tape: while the HUD Recorder feed runs, the pilot's mic is on the feed all the time, not
+    /// only during transmissions (the radio copy replaces it while transmitting, crossfaded at PTT). Feed only: not
+    /// sent, not in sidetone, the session recording or the monitor. On by default.
+    /// </summary>
+    public bool HudTapeHotMicEnabled
+    {
+        get => field;
+        set
+        {
+            field = value;
+            if (_playbackService != null) _playbackService.HotMicEnabled = value;
+        }
+    } = true;
+
     private void ApplyHudTapeFeed()
     {
         if (_playbackService == null) return;
+        _playbackService.HotMicEnabled = HudTapeHotMicEnabled;
         if (HudTapeFeedEnabled && OperatingSystem.IsWindows()) _playbackService.StartHudTapeFeed();
         else _playbackService.StopHudTapeFeed();
     }
@@ -1389,6 +1406,24 @@ public class OpenFreqService : IOpenFreqService
                     }
                 }
 
+                // HUD Recorder hot mic: the mic goes on the feed while not transmitting (and the radio copy's
+                // release fade, if one is still running, goes to the capture).
+                if (_playbackService is { WantsHotMic: true } hotPlayback)
+                {
+                    unsafe
+                    {
+                        var idle = new ReadOnlySpan<short>((void*)buffer, length / sizeof(short));
+                        var (hot, radioCopy) = _hotMicTap.Process(idle, ReadOnlySpan<float>.Empty,
+                            transmitting: false, MicNormalizationEnabled, InputGain);
+                        hotPlayback.PushHotMicForFeed(hot.Span);
+                        hotPlayback.PushOwnVoiceForRecording(radioCopy.Span); // silence once the fade is done
+                    }
+                }
+                else
+                {
+                    _hotMicTap.Reset();
+                }
+
                 return true;
             }
 
@@ -1402,6 +1437,11 @@ public class OpenFreqService : IOpenFreqService
             // Copy audio data once
             short[] audioData = new short[length / 2];
             Marshal.Copy(buffer, audioData, 0, audioData.Length);
+
+            // HUD Recorder hot mic: keep the raw block, before the transmit chain changes it in place.
+            var hotPlaybackTx = _playbackService is { WantsHotMic: true } p ? p : null;
+            short[]? hotRaw = hotPlaybackTx != null ? (short[])audioData.Clone() : null;
+            if (hotPlaybackTx == null) _hotMicTap.Reset();
 
             // Speech-to-text capture: the truest possible source audio, before normalization/gain/
             // tone-substitution below touch it -- see WhisperSpeechTranscriber and
@@ -1443,7 +1483,18 @@ public class OpenFreqService : IOpenFreqService
                     _sidetonePushBuffer[i] = audioData[i] / (float)short.MaxValue;
                 var span = _sidetonePushBuffer.AsSpan()[..n];
                 if (wantSidetone) _playbackService!.PushSidetone(span);
-                if (wantRecord) _playbackService!.PushOwnVoiceForRecording(span);
+                if (hotPlaybackTx != null && hotRaw != null)
+                {
+                    // Key-up crossfade: the hot mic fades out of the feed while the radio copy fades in.
+                    var (hot, radioCopy) = _hotMicTap.Process(hotRaw, span, transmitting: true,
+                        MicNormalizationEnabled, InputGain);
+                    hotPlaybackTx.PushHotMicForFeed(hot.Span);
+                    hotPlaybackTx.PushOwnVoiceForRecording(radioCopy.Span);
+                }
+                else if (wantRecord)
+                {
+                    _playbackService!.PushOwnVoiceForRecording(span);
+                }
             }
 
             // Send to ALL active frequencies
@@ -1537,18 +1588,7 @@ public class OpenFreqService : IOpenFreqService
         }
     }
 
-    private void ApplyInputGain(short[] samples)
-    {
-        var gain = InputGain;
-        if (Math.Abs(gain - 1.0d) < 0.0001d)
-            return;
-
-        for (var i = 0; i < samples.Length; i++)
-        {
-            var scaled = (int)Math.Round(samples[i] * gain);
-            samples[i] = (short)Math.Clamp(scaled, short.MinValue + 1, short.MaxValue);
-        }
-    }
+    private void ApplyInputGain(short[] samples) => HotMicTap.ApplyGain(samples, InputGain);
 
     private void PublishMicLevel(ReadOnlySpan<short> samples, double previewGain = 1.0d)
     {

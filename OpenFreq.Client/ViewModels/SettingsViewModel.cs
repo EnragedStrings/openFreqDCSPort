@@ -176,6 +176,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial double OwnVoiceSfxVolume { get; set; } = 1.0;
     /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
     [ObservableProperty] public partial bool HudTapeFeedEnabled { get; set; }
+    [ObservableProperty] public partial bool HudTapeHotMicEnabled { get; set; } = true;
     /// <summary>List index into <see cref="PlaybackDeviceNames"/> for the monitor/stream output device.</summary>
     [ObservableProperty] public partial int MonitorDeviceIndex { get; set; }
     [ObservableProperty] public partial string MonitorDeviceName { get; set; } = string.Empty;
@@ -611,6 +612,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     partial void OnOwnVoiceSfxVolumeChanged(double value) => _openFreqService.OwnVoiceSfxVolume = value;
 
     partial void OnHudTapeFeedEnabledChanged(bool value) => _openFreqService.HudTapeFeedEnabled = value;
+    partial void OnHudTapeHotMicEnabledChanged(bool value) => _openFreqService.HudTapeHotMicEnabled = value;
 
     partial void OnMonitorDeviceIndexChanged(int value)
     {
@@ -794,6 +796,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             RecordingPath = settings.RecordingPath;
         StreamToDevice = settings.CaptureSink == IOpenFreqService.CaptureSink.Device;
         OwnVoiceSfxVolume = settings.OwnVoiceSfxVolume;
+        HudTapeHotMicEnabled = settings.HudTapeHotMicEnabled;
         HudTapeFeedEnabled = settings.HudTapeFeedEnabled && IsWindowsPlatform;
         if (settings.DarkMode.HasValue)
         {
@@ -1021,6 +1024,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             MonitorDeviceName = MonitorDeviceName,
             OwnVoiceSfxVolume = OwnVoiceSfxVolume,
             HudTapeFeedEnabled = HudTapeFeedEnabled,
+            HudTapeHotMicEnabled = HudTapeHotMicEnabled,
             DarkMode = IsDarkMode,
             Left = _left,
             Top = _top,

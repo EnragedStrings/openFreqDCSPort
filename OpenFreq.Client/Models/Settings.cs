@@ -99,6 +99,9 @@ public class OpenFreqSettings
     }
     /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Off by default.</summary>
     public bool HudTapeFeedEnabled { get; set; } = false;
+
+    /// <summary>Hot mic on the HUD tape (only while <see cref="HudTapeFeedEnabled"/>). On by default.</summary>
+    public bool HudTapeHotMicEnabled { get; set; } = true;
     public bool? DarkMode { get; set; }
     public bool MinimizeOnConnect { get; set; } = true;
 

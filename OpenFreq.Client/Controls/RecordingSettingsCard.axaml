@@ -80,6 +80,12 @@
                 IsVisible="{Binding Settings.IsWindowsPlatform}"
                 ToolTip.Tip="Puts the radios (as heard, plus your own voice with radio SFX) on HUD Recorder's DCS HUD tapes, in sync. Local shared memory only, nothing leaves this PC. Runs whenever OpenFreq plays audio, independent of recording/streaming. The tape level follows Master Volume."
                 Margin="0,0,0,4" />
+      <CheckBox Content="Hot mic on the HUD tape"
+                IsChecked="{Binding Settings.HudTapeHotMicEnabled}"
+                IsEnabled="{Binding Settings.HudTapeFeedEnabled}"
+                IsVisible="{Binding Settings.IsWindowsPlatform}"
+                ToolTip.Tip="Your mic is on the HUD tape the whole time, not only while you transmit. While you transmit the tape has your voice as the radio sends it instead, with a short crossfade at the PTT. HUD tape only: never transmitted, not in sidetone, the session recording or the stream. Needs Feed HUD Recorder."
+                Margin="20,0,0,4" />
 
 
     </StackPanel>

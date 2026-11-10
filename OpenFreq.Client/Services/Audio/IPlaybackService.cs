@@ -28,6 +28,12 @@ public interface IPlaybackService
     bool IsFeedingHudTape { get; }
     bool WantsOwnVoice { get; }
 
+    /// <summary>Hot mic on the HUD Recorder feed (see RadioPlayback.HotMicEnabled).</summary>
+    bool HotMicEnabled { get; set; }
+
+    /// <summary>The HUD feed runs with the hot mic on.</summary>
+    bool WantsHotMic { get; }
+
     void Initialize();
     void EnsureMasterStreamRunning();
     void ChangeOutputDevice(int newDeviceIndex);
@@ -73,6 +79,7 @@ public interface IPlaybackService
 
     void PushSidetone(ReadOnlySpan<float> samples);
     void PushOwnVoiceForRecording(ReadOnlySpan<float> samples);
+    void PushHotMicForFeed(ReadOnlySpan<float> samples);
 }
 
 /// <summary>Adapter forwarding <see cref="IPlaybackService"/> to a real <see cref="RadioPlayback"/>.</summary>
@@ -157,6 +164,9 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
 
     public void PushSidetone(ReadOnlySpan<float> samples) => _inner.PushSidetone(samples);
     public void PushOwnVoiceForRecording(ReadOnlySpan<float> samples) => _inner.PushOwnVoiceForRecording(samples);
+    public bool HotMicEnabled { get => _inner.HotMicEnabled; set => _inner.HotMicEnabled = value; }
+    public bool WantsHotMic => _inner.WantsHotMic;
+    public void PushHotMicForFeed(ReadOnlySpan<float> samples) => _inner.PushHotMicForFeed(samples);
 }
 
 /// <summary>

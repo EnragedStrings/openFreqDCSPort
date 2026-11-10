@@ -523,11 +523,31 @@ public class RadioPlayback : IDisposable
     private readonly PeakLimiter _captureLimiter = new(SampleRate, channels: 2);
     private bool _wasCapturing;
     private bool _feeding;          // HUD Recorder feed active (local shared memory, see HudTapeFeed)
+    // Hot mic (HUD feed only): the pilot's mic outside transmissions, crossfaded at PTT by the mic callback
+    // (HotMicCrossfader). Mixed into the feed's own copy of the capture frame, under its own limiter, so the
+    // session recording and monitor never get it.
+    private readonly SidetoneSpscBuffer _hotMicBuffer = new(8192);
+    private readonly PeakLimiter _feedLimiter = new(SampleRate, channels: 2);
+    private float[] _feedStereo = [];
+    private float[] _hotMicScratch = [];
+    private bool _wasFeedingHotMic;
     private HudTapeFeed? _hudFeed;  // created on the first start, kept until Dispose (the DSP thread may hold it)
     private long _outputLatencyTicks; // DSP callback -> heard, Stopwatch ticks (re-read at every master stream start)
 
     // Any sink active: the DSP thread builds the capture frame and owns an own-voice renderer.
     private bool Capturing => _recording || _monitoring || _feeding;
+
+    /// <summary>Hot mic on the HUD Recorder feed (only while the feed runs). On by default.</summary>
+    public bool HotMicEnabled { get; set; } = true;
+
+    /// <summary>The feed runs with the hot mic on: the mic callback should push <see cref="PushHotMicForFeed"/>.</summary>
+    public bool WantsHotMic => _feeding && HotMicEnabled;
+
+    /// <summary>Feed hot-mic samples (mono, 48 kHz, [-1,1], already crossfaded) for the HUD Recorder feed only.</summary>
+    public void PushHotMicForFeed(ReadOnlySpan<float> samples)
+    {
+        if (WantsHotMic) _hotMicBuffer.Write(samples);
+    }
 
     /// <summary>Feed own mic samples (mono, 48kHz, [-1,1]) for the outgoing side of the capture.</summary>
     public void PushOwnVoiceForRecording(ReadOnlySpan<float> samples)
@@ -1522,6 +1542,7 @@ public class RadioPlayback : IDisposable
             int monitorStream;
             OwnVoiceRadioRenderer? ownVoiceRenderer;
             HudTapeFeed? hudFeed;
+            bool hotMic;
             long callbackQpc = Stopwatch.GetTimestamp();
             lock (_lock)
             {
@@ -1533,6 +1554,7 @@ public class RadioPlayback : IDisposable
                 monitorStream = _monitorStream;
                 ownVoiceRenderer = _ownVoiceRenderer;
                 hudFeed = _feeding ? _hudFeed : null;
+                hotMic = _feeding && HotMicEnabled;
 
                 // Build freq → tuned-slots index from _slots snapshot
                 tunedSlotsByFreq = new Dictionary<int, List<RadioConfig>>();
@@ -1795,7 +1817,7 @@ public class RadioPlayback : IDisposable
                 _captureLimiter.Reset();
             _wasCapturing = capturing;
             if (capturing)
-                CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer, hudFeed,
+                CaptureRecordingFrame(samples, recorder, monitorStream, ownVoiceRenderer, hudFeed, hotMic,
                     callbackQpc + _outputLatencyTicks);
 
             // Several radios at once and high volume settings can add up past full scale. Clipping there makes loud,
@@ -1997,7 +2019,7 @@ public class RadioPlayback : IDisposable
     /// the DSP thread; the Opus encode itself happens on the recorder's own thread.
     /// </summary>
     private void CaptureRecordingFrame(int samples, OggOpusRecorder? recorder, int monitorStream,
-        OwnVoiceRadioRenderer? renderer, HudTapeFeed? hudFeed, long heardQpc)
+        OwnVoiceRadioRenderer? renderer, HudTapeFeed? hudFeed, bool hotMic, long heardQpc)
     {
         int stereo = samples * 2;
         if (_recordStereo.Length < stereo) _recordStereo = new float[stereo];
@@ -2030,6 +2052,27 @@ public class RadioPlayback : IDisposable
             }
         }
 
+        // HUD feed with the hot mic: its own copy of the frame, the hot mic mixed in centre at own voice's gain
+        // BEFORE a limiter of its own (same lookahead as the capture limiter, so the "heard" stamp still holds).
+        bool feedHotMic = hudFeed != null && hotMic;
+        if (feedHotMic)
+        {
+            if (!_wasFeedingHotMic) _feedLimiter.Reset();
+            if (_hotMicScratch.Length < samples) _hotMicScratch = new float[samples];
+            if (_feedStereo.Length < stereo) _feedStereo = new float[stereo];
+            int hotAvail = Math.Min(_hotMicBuffer.Available, samples);
+            int hotRead = hotAvail > 0 ? _hotMicBuffer.Read(_hotMicScratch.AsSpan()[..hotAvail]) : 0;
+            for (int i = hotRead; i < samples; i++) _hotMicScratch[i] = 0f;
+            HudFeedMix.Build(_recordStereo.AsSpan(0, stereo), _hotMicScratch.AsSpan(0, samples),
+                0.70710678f * MasterVolume, _feedLimiter, _feedStereo.AsSpan(0, stereo));
+        }
+        else if (_wasFeedingHotMic)
+        {
+            _hotMicBuffer.Clear();
+        }
+
+        _wasFeedingHotMic = feedHotMic;
+
         // In case multiple RX channels plus our own voice make us clip (upstream b4e67d7 / 74b46f0).
         _captureLimiter.Process(_recordStereo.AsSpan(0, stereo));
 
@@ -2039,7 +2082,7 @@ public class RadioPlayback : IDisposable
         if (monitorStream != 0)
             Bass.StreamPutData(monitorStream, _recordStereo, stereo * sizeof(float));
         // HUD Recorder feed: copied into its shared memory now, stamped with when this block is heard.
-        hudFeed?.WriteHeard(_recordStereo.AsSpan(0, stereo), heardQpc);
+        hudFeed?.WriteHeard(feedHotMic ? _feedStereo.AsSpan(0, stereo) : _recordStereo.AsSpan(0, stereo), heardQpc);
     }
 
     public async Task StopAll()

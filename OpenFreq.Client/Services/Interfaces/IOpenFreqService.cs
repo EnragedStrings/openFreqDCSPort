@@ -52,6 +52,7 @@ public interface IOpenFreqService : IDisposable
     double OwnVoiceSfxVolume { get; set; }
     /// <summary>When true, the capture mix is fed to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
     bool HudTapeFeedEnabled { get; set; }
+    bool HudTapeHotMicEnabled { get; set; }
     /// <summary>Directory recordings are written to. Created if missing. Blank → "recordings" next to the executable.</summary>
     string RecordingPath { get; set; }
     /// <summary>True while a capture (file or device) is in progress.</summary>

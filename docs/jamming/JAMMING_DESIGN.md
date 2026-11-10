@@ -1,6 +1,6 @@
 # OpenFreq Communications Jamming — Design
 
-Status: design agreed 2026-11-09, implementation not started.
+Status: design agreed 2026-11-09. Phase 0 and Phase 1 (scripted jammers from server config) implemented; phases 2-6 pending.
 Research behind every number here: `research-01-physics.md` (jamming equation, J/S thresholds, waveforms and
 sounds), `research-02-eccm.md` (HAVE QUICK, SINCGARS, SATCOM, Link-16, hop model), `research-03-systems.md`
 (real jammers, preset table, doctrine), `research-04-codebase-map.md` (integration points, file:line).
@@ -108,9 +108,19 @@ limiting gives power robbing to every user on that channel; DAMA orderwire jammi
 - TRANSEC gate: two radios communicate only if WOD, net and TOD match within the sync window; otherwise the
   listener hears nothing (or hop-collision noise). Replaces the `HqOn` equality at RadioPlayback's gate.
 - Wire: `FrequencyTransmission` gains HQ/SINCGARS net identity (net, WOD hash — never raw WOD — and TOD epoch).
-- DCS export: per-module investigation of what each radio exposes (ARC-164 in A-10C II / F-16C / F-15E / F-5E,
-  ARC-210 in A-10C II / F/A-18C / AV-8B / F-15E, SINCGARS-capable radios); where a module doesn't simulate HQ,
-  the OpenFreq channel card provides manual WOD/net entry and a "TOD from GPS / from net" action.
+- DCS export (research-05-dcs-hq-export.md): only the **A-10C II ARC-210** simulates HQ/SINCGARS readably —
+  its ECCM page (`list_indication(18)`) gives the active type (HQI/HQII/SG), net (`Net_ID_left_part` +
+  `Net_ID_right_part`) and readiness (`active_eccm_channel_HQI_status`: empty = ready, "NO TIME" = TOD not
+  synced, "NO WOD", "NO MWOD", "NO OPER DAY", "INVALID NET ID"). WOD contents are only on menu pages, so the
+  WOD/MWOD net plan lives in OpenFreq (keyed by mission date). Everything else is unsimulated or a shell
+  (F-16C DED labels static; F-15E/AH-64D "not modelled"/N/I; ARC-164 has an "A" knob position but no logic):
+  those get a "virtual HQ" (ARC-164: knob at "A" + digits = net) or manual net entry on the channel card.
+  TOD = DCS mission time (LoGetMissionStartTime + LoGetModelTime, common across an MP server) with a per-radio
+  todValid; the mission date (day of month for MWOD) needs a Hooks script (`DCS.getCurrentMission()`).
+- **Known bug to fix in phase 3:** `getArc210ComsecState` treats the KY submode "CT-TD" as HAVE QUICK (copied
+  from DCS-SRS); CT-TD is most likely KY-58 time-delay. Use the ECCM page fields instead.
+- The local A-10C II install carries 163rd vFS modifications to ARC-210 files (HQ fill, TOD); verify the
+  ECCM readings against a stock install.
 - SINCGARS: net ID, hopset with lockout bands, sync time; same hop engine.
 
 ### DCS mission jammers (phase 6)

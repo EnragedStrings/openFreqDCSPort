@@ -38,7 +38,11 @@ public sealed class JammingCoordinator
     private readonly Func<DateTimeOffset> _clock;
     private readonly ILogger _logger;
     private readonly Lock _lock = new();
-    private readonly List<JammerDefinition> _jammers = [];
+    private readonly List<JammerDefinition> _jammers = []; // config (non-template) + mission jammers
+    private readonly List<JammerDefinition> _configJammers = [];
+    private readonly List<JammerDefinition> _missionJammers = [];
+    private readonly Dictionary<string, JammerDefinition> _configById = new(StringComparer.Ordinal); // raw, templates too
+    private DateTimeOffset? _missionUpdatedAt;
     private readonly Dictionary<string, AutoTargetingBrain> _brains = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Tx, int Khz), Keying> _active = [];
     private readonly List<Keying> _ended = [];
@@ -59,6 +63,10 @@ public sealed class JammingCoordinator
     /// <summary>Periodic re-broadcast interval.</summary>
     public TimeSpan BroadcastInterval { get; init; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Mission jammers are dropped when <see cref="SetMissionJammers"/> was not called for this long
+    /// (the DCS hook went quiet). Null: never.</summary>
+    public TimeSpan? MissionStaleAfter { get; set; }
+
     /// <summary>Terrain line of sight for the auto brain's detection (null = horizon only).</summary>
     public LineOfSightProvider? LineOfSight { get; set; }
 
@@ -76,14 +84,88 @@ public sealed class JammingCoordinator
     /// included: the server cannot place them relative to a satellite.</summary>
     public IReadOnlyList<SatcomJammerSource> SatcomSources => Volatile.Read(ref _satcomSources);
 
-    /// <summary>Replaces the jammer set with <paramref name="definitions"/> (resolved against their presets) and
-    /// restarts schedules and auto brains.</summary>
+    /// <summary>A server-config jammer by id (templates included), unresolved, or null.</summary>
+    public JammerDefinition? FindConfigJammer(string id)
+    {
+        lock (_lock) return _configById.GetValueOrDefault(id)?.Clone();
+    }
+
+    /// <summary>
+    /// Replaces the mission jammers (DCS hook, docs/jamming/MISSION_JAMMERS.md) with <paramref name="definitions"/>,
+    /// resolved against their presets. Unlike <see cref="Load"/> this keeps the config jammers, and keeps the auto
+    /// brain of every mission jammer whose id is still present, so a moving or re-reported unit keeps its targets.
+    /// An id that clashes with a config jammer is ignored.
+    /// </summary>
+    public void SetMissionJammers(IReadOnlyList<JammerDefinition> definitions)
+    {
+        var now = _clock();
+        lock (_lock)
+        {
+            _missionUpdatedAt = now;
+            var configIds = _configJammers.Select(j => j.Id).ToHashSet(StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var wasAlive = _missionJammers.ToDictionary(j => j.Id, j => j.Alive, StringComparer.Ordinal);
+            _missionJammers.Clear();
+            foreach (var definition in definitions)
+            {
+                if (string.IsNullOrWhiteSpace(definition.Id) || configIds.Contains(definition.Id) ||
+                    !seen.Add(definition.Id))
+                    continue;
+                var resolved = JammerPresets.Resolve(definition);
+                _missionJammers.Add(resolved);
+                if (!wasAlive.TryGetValue(resolved.Id, out var alive))
+                    _logger.LogInformation("Jamming: mission jammer {Id} ({Preset}) {State}", resolved.Id,
+                        resolved.PresetId ?? "template", resolved.Alive ? "active" : "present but not alive");
+                else if (alive != resolved.Alive)
+                    _logger.LogInformation("Jamming: mission jammer {Id} {State}", resolved.Id,
+                        resolved.Alive ? "is alive again" : "destroyed or deactivated; it stops jamming");
+                if (resolved.Targeting.Mode == JammerTargetingMode.Auto)
+                {
+                    if (!_brains.ContainsKey(resolved.Id)) _brains[resolved.Id] = new AutoTargetingBrain(now);
+                }
+                else
+                {
+                    _brains.Remove(resolved.Id);
+                }
+            }
+
+            foreach (var id in _brains.Keys.Where(id => !configIds.Contains(id) && !seen.Contains(id)).ToList())
+                _brains.Remove(id);
+            RebuildJammerList();
+        }
+    }
+
+    /// <summary>Removes every mission jammer (mission ended, or the DCS hook went quiet).</summary>
+    public void ClearMissionJammers()
+    {
+        lock (_lock) ClearMissionJammersLocked();
+    }
+
+    private void ClearMissionJammersLocked()
+    {
+        foreach (var j in _missionJammers) _brains.Remove(j.Id);
+        _missionJammers.Clear();
+        _missionUpdatedAt = null;
+        RebuildJammerList();
+    }
+
+    private void RebuildJammerList()
+    {
+        _jammers.Clear();
+        _jammers.AddRange(_configJammers);
+        _jammers.AddRange(_missionJammers);
+    }
+
+    /// <summary>Replaces the config jammer set with <paramref name="definitions"/> (resolved against their presets)
+    /// and restarts schedules and auto brains. Templates (<see cref="JammerDefinition.Template"/>) are kept only for
+    /// mission jammers to copy. Mission jammers are kept.</summary>
     public void Load(IEnumerable<JammerDefinition> definitions)
     {
         int count;
         lock (_lock)
         {
-            _jammers.Clear();
+            _configJammers.Clear();
+            _configById.Clear();
             _brains.Clear();
             var ids = new HashSet<string>(StringComparer.Ordinal);
             var index = 0;
@@ -100,6 +182,9 @@ public sealed class JammingCoordinator
                     continue;
                 }
 
+                _configById[resolved.Id] = definition.Clone();
+                if (definition.Template) continue;
+
                 if (definition.PresetId != null && JammerPresets.Find(definition.PresetId) == null)
                     _logger.LogWarning("Jamming: jammer {Id} names unknown preset {Preset}; using generic values",
                         resolved.Id, definition.PresetId);
@@ -115,12 +200,15 @@ public sealed class JammingCoordinator
                     _brains[resolved.Id] = new AutoTargetingBrain(_start);
                 }
 
-                _jammers.Add(resolved);
+                _configJammers.Add(resolved);
             }
 
+            foreach (var j in _missionJammers.Where(j => j.Targeting.Mode == JammerTargetingMode.Auto))
+                _brains[j.Id] = new AutoTargetingBrain(_start);
+            RebuildJammerList();
             _lastPublishedSignature = null;
             _satcomSources = [];
-            count = _jammers.Count;
+            count = _configJammers.Count;
         }
 
         _logger.LogInformation("Jamming: {Count} jammer(s) loaded", count);
@@ -206,6 +294,13 @@ public sealed class JammingCoordinator
             var now = _clock();
             var elapsed = now - _start;
             ExpireStaleKeyings(now);
+            if (MissionStaleAfter is { } staleAfter && _missionUpdatedAt is { } updated && now - updated > staleAfter)
+            {
+                _logger.LogWarning("Jamming: no mission-jammer update from the DCS hook for {Seconds:F0} s; " +
+                                   "removing {Count} mission jammer(s)", (now - updated).TotalSeconds,
+                    _missionJammers.Count);
+                ClearMissionJammersLocked();
+            }
 
             var entries = _jammers.Select(j =>
             {
@@ -299,6 +394,11 @@ public sealed class JammingCoordinator
             var d = entry.Definition;
             sb.Append(d.Id).Append('|').Append(entry.Active).Append('|').Append(d.Enabled).Append('|')
                 .Append(d.Alive).Append('|').Append(entry.AutoState);
+            // Mission jammers move (aircraft): rebroadcast when one moves more than ~10 m.
+            if (d.Latitude is { } lat && d.Longitude is { } lon)
+                sb.Append('|').Append(Math.Round(lat, 4).ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                    .Append(Math.Round(lon, 4).ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                    .Append((Math.Round((d.AltitudeMeters ?? 0) / 10.0) * 10.0).ToString("R", CultureInfo.InvariantCulture));
             foreach (var e in entry.Emissions)
                 sb.Append('|').Append(e.CenterKhz.ToString("R", CultureInfo.InvariantCulture)).Append(':')
                     .Append(e.BandwidthKhz.ToString("R", CultureInfo.InvariantCulture)).Append(':')

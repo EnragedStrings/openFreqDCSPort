@@ -10,6 +10,7 @@ namespace OpenFreqServer.Json;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ServerConfig))]
 [JsonSerializable(typeof(JammingServerConfig))]
+[JsonSerializable(typeof(OpenFreqServer.Jamming.MissionJammerReport))]
 [JsonSerializable(typeof(OpenFreq.Common.Eccm.EccmFill))]
 public partial class ServerJsonContext : JsonSerializerContext
 {

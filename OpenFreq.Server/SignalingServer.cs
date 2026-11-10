@@ -29,6 +29,8 @@ public class SignalingServer
     private readonly ILogger<SignalingServer> _logger;
     private readonly SatcomServerCoordinator? _satcom;
     private readonly JammingCoordinator? _jamming;
+    private MissionJammerIntake? _missionJammerIntake;
+    private readonly ILogger? _missionJammerLogger;
     private CancellationTokenSource _cts = new();
 
     // Jammer catalog: checked for changes this often, re-broadcast at least every BroadcastInterval.
@@ -191,6 +193,7 @@ public class SignalingServer
                 BroadcastInterval = TimeSpan.FromSeconds(Math.Max(1.0, config.Jamming.BroadcastIntervalSeconds))
             }
             : null;
+        _missionJammerLogger = loggerFactory.CreateLogger<MissionJammerIntake>();
         LosOracle = new LosOracleService(this, _clients, loggerFactory.CreateLogger<LosOracleService>());
         if (_jamming != null)
         {
@@ -289,7 +292,29 @@ public class SignalingServer
         }
 
         if (_jamming != null)
+        {
             _ = JammingBroadcastLoopAsync(_cts.Token);
+            if (_config.Jamming.DcsHook.Enabled)
+            {
+                _missionJammerIntake = new MissionJammerIntake(_config.Jamming.DcsHook, _jamming,
+                    _missionJammerLogger!);
+                try
+                {
+                    if (!_missionJammerIntake.Start())
+                    {
+                        _missionJammerIntake.Dispose();
+                        _missionJammerIntake = null;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Jamming: could not start the mission-jammer intake on UDP {Port}",
+                        _config.Jamming.DcsHook.Port);
+                    _missionJammerIntake.Dispose();
+                    _missionJammerIntake = null;
+                }
+            }
+        }
     }
 
     private int? ResolveBoundPort()
@@ -1156,6 +1181,7 @@ public class SignalingServer
         // Stop audio server first
         _audioServer.Stop();
         _satcom?.Dispose();
+        _missionJammerIntake?.Dispose();
 
         // Notify connected clients before cancelling so they receive a proper close frame.
         // CloseAsync (full handshake) ensures the frame is transmitted before we return —

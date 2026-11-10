@@ -93,6 +93,39 @@ public class JammingServerConfig
 
     [JsonPropertyName("jammers")]
     public List<JammerDefinition> Jammers { get; set; } = [];
+
+    /// <summary>Mission jammers from the DCS server hook (docs/jamming/MISSION_JAMMERS.md).</summary>
+    [JsonPropertyName("dcsHook")]
+    public DcsJammerHookConfig DcsHook { get; set; } = new();
+}
+
+/// <summary>UDP intake for mission jammers sent by OpenFreq-ServerGameGUI.lua on the DCS server.</summary>
+public class DcsJammerHookConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("bindAddress")]
+    public string BindAddress { get; set; } = "0.0.0.0";
+
+    [JsonPropertyName("port")]
+    public int Port { get; set; } = 9989;
+
+    /// <summary>Shared HMAC secret, at least 16 characters (the intake refuses to start otherwise).</summary>
+    [JsonPropertyName("secret")]
+    public string Secret { get; set; } = string.Empty;
+
+    /// <summary>Mission jammers are removed when no datagram was accepted for this long, seconds.</summary>
+    [JsonPropertyName("staleAfterSeconds")]
+    public double StaleAfterSeconds { get; set; } = 30.0;
+
+    /// <summary>Most mission jammers taken from one datagram.</summary>
+    [JsonPropertyName("maxJammers")]
+    public int MaxJammers { get; set; } = 200;
+
+    /// <summary>Unit-name prefix that marks a jammer (must match the hook's).</summary>
+    [JsonPropertyName("prefix")]
+    public string Prefix { get; set; } = "JAM:";
 }
 
 /// <summary>

@@ -197,6 +197,11 @@ public sealed class JammerDefinition
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
 
+    /// <summary>A template for mission jammers (docs/jamming/MISSION_JAMMERS.md): never radiated on its own, only
+    /// through DCS units named <c>JAM:@&lt;id&gt;</c>.</summary>
+    [JsonPropertyName("template")]
+    public bool Template { get; set; }
+
     /// <summary>Unit alive (DCS hook, phase 6). A dead jammer radiates nothing.</summary>
     [JsonPropertyName("alive")]
     public bool Alive { get; set; } = true;

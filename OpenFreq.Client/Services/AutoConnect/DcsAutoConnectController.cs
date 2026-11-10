@@ -67,6 +67,7 @@ public sealed class DcsAutoConnectController : IDisposable
     // At most one connect/switch/consent workflow at a time.
     private int _workId;
     private int _activeWorkId;
+    private AutoConnectRequest? _deferred;
     private bool _promptOpen;
 
     private CancellationTokenSource? _graceCts;
@@ -211,7 +212,12 @@ public sealed class DcsAutoConnectController : IDisposable
             }
 
             if (_activeWorkId != 0)
+            {
+                // Re-evaluated when the running workflow ends (it may belong to an earlier
+                // session, or be a prompt the user has not answered yet).
+                _deferred = request;
                 return _promptOpen ? AutoConnectAckState.PendingConsent : AutoConnectAckState.Connecting;
+            }
 
             var policy = _host.GetPolicy();
             if (!policy.AutoConnectEnabled && !_consentOnceForSession)
@@ -328,6 +334,7 @@ public sealed class DcsAutoConnectController : IDisposable
             return;
         }
 
+        bool proceed;
         lock (_gate)
         {
             _host.ApplyConsent(
@@ -336,13 +343,15 @@ public sealed class DcsAutoConnectController : IDisposable
             _logger.LogInformation("DCS auto-connect: consent answer {Answer} (auto-launch {Launch})",
                 result.Answer, result.EnableAutoLaunch);
             EndWorkLocked(workId);
-            if (result.Answer == AutoConnectConsentAnswer.No || !IsCurrentLocked(request.SessionId))
-                return;
+            proceed = result.Answer != AutoConnectConsentAnswer.No && IsCurrentLocked(request.SessionId);
             // Covers "Always" too: the settings change may reach the host asynchronously.
-            _consentOnceForSession = true;
+            if (proceed)
+                _consentOnceForSession = true;
         }
 
-        HandleConnect(request);
+        if (proceed)
+            HandleConnect(request);
+        ReplayDeferred();
     }
 
     private async Task ConnectWorkflowAsync(int workId, string sessionId, AutoConnectTarget target,
@@ -691,6 +700,23 @@ public sealed class DcsAutoConnectController : IDisposable
     private void EndWork(int workId)
     {
         lock (_gate) EndWorkLocked(workId);
+        ReplayDeferred();
+    }
+
+    /// <summary>Handles the newest request that arrived while a workflow was running, if its
+    /// session is still current. Already-connected targets make this a no-op.</summary>
+    private void ReplayDeferred()
+    {
+        AutoConnectRequest? request;
+        lock (_gate)
+        {
+            request = _deferred;
+            if (request == null || _activeWorkId != 0) return;
+            _deferred = null;
+            if (!IsCurrentLocked(request.SessionId)) return;
+        }
+
+        HandleConnect(request);
     }
 
     private void EndWorkLocked(int workId)

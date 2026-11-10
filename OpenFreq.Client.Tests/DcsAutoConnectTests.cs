@@ -457,6 +457,20 @@ public class DcsAutoConnectControllerTests
         Assert.Contains(h.Host.Statuses, s => s.Contains("auto-connect is off"));
     }
 
+    [Fact]
+    public void RequestDuringOpenPrompt_IsReplayedForTheNewSession()
+    {
+        var h = new Harness();
+        h.Host.Policy = new AutoConnectPolicy();
+        var gate = new TaskCompletionSource<AutoConnectConsentResult>();
+        h.Host.ConsentGate = gate;
+        Assert.Equal(AutoConnectAckState.PendingConsent, h.Controller.HandleConnect(Connect()));
+        Assert.Equal(AutoConnectAckState.PendingConsent, h.Controller.HandleConnect(Connect(session: "s2")));
+        Assert.Equal(1, h.Host.ConsentPrompts);
+        Task.Run(() => gate.SetResult(new AutoConnectConsentResult(AutoConnectConsentAnswer.Always, false))).Wait();
+        Assert.Equal("voice.example.com:9937", Assert.Single(h.Host.Connects).OpenFreqServerAddress);
+    }
+
     [Fact] // T10: private address from a public DCS server
     public void PrivateTargetFromPublicServer_IsRejected()
     {
@@ -837,9 +851,13 @@ public class DcsAutoConnectControllerTests
             return Task.CompletedTask;
         }
 
+        public TaskCompletionSource<AutoConnectConsentResult>? ConsentGate { get; set; }
+
         public Task<AutoConnectConsentResult> PromptConsentAsync(string dcsServer, AutoConnectTarget target)
         {
             ConsentPrompts++;
+            if (ConsentGate != null)
+                return ConsentGate.Task;
             return Task.FromResult(ConsentAnswers.Count > 0
                 ? ConsentAnswers.Dequeue()
                 : new AutoConnectConsentResult(AutoConnectConsentAnswer.No, false));

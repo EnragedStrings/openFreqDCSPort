@@ -497,7 +497,10 @@ function M.create(deps)
     local cb = {}
 
     function cb.onNetConnect(localPlayerID)
-        if not isMultiplayerClient() then
+        -- onNetConnect itself means a multiplayer join; only the hosting player (a server) is
+        -- excluded here, in case isMultiplayer() is not yet true at this moment [unverified].
+        -- onChatMessage still requires isMultiplayer() and not isServer().
+        if DCS == nil or call(DCS.isServer) == true then
             return
         end
         session = { id = newSessionId(), dcsServer = serverHost(), since = os.time(), seq = 0, seen = {} }

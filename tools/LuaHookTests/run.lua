@@ -535,6 +535,17 @@ test("client: leave is sent on onNetDisconnect only", function()
     restoreGlobals()
 end)
 
+test("client: session starts even if isMultiplayer() is not yet true at onNetConnect", function()
+    local e, cb = newClient({ mp = false })
+    cb.onNetConnect(7)
+    cb.onChatMessage(ADVERT, 1)
+    eq(#e.sent, 0, "not forwarded while isMultiplayer() is false")
+    e.mp = true
+    cb.onChatMessage(ADVERT, 1)
+    eq(#e.sent, 1, "forwarded once multiplayer")
+    restoreGlobals()
+end)
+
 test("client: rejoin creates a new session id", function()
     local e, cb = newClient()
     cb.onNetConnect(7)

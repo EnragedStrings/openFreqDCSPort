@@ -39,6 +39,10 @@ internal class ReceivedCarrier
     public bool Enc { get; set; }
     public int EncKey { get; set; }
     public bool HqOn { get; set; }
+
+    // HAVE QUICK / SINCGARS net identity of the transmitting radio (null: single channel / older client),
+    // updated per-packet; matched against the slot's in the TRANSEC gate (Eccm.TransecGate).
+    public Eccm.HopNetIdentity? Eccm { get; set; }
 }
 
 /// <summary>
@@ -141,12 +145,13 @@ internal sealed class SlotReceiver
         int samples = output.Length;
         var result = new SlotReceiveResult();
 
-        // TRANSEC gate: HAVE QUICK on/off must match for this slot to see a
-        // transmitter's RF at all. DCS only exposes a binary "HQ selected"
-        // flag (no real WOD/TOD), so this is a straight match/no-match gate.
+        // TRANSEC gate: a hopping slot sees a transmitter's RF only when net, fill fingerprint and TOD match
+        // (HAVE QUICK / SINCGARS); hopping and single-channel radios never meet; radios with only the legacy
+        // HqOn flag match on the flag. See Eccm.TransecGate.
+        var hopNet = slot.HopNet;
         _transec.Clear();
         for (int k = 0; k < transmitting.Count; ++k)
-            if (transmitting[k].HqOn == slot.HqOn)
+            if (Eccm.TransecGate.CanHear(hopNet, slot.HqOn, transmitting[k].Eccm, transmitting[k].HqOn))
                 _transec.Add(transmitting[k]);
         var dominant = _transec.Count > 0 ? _transec[0] : null;
         bool carrierPresent = dominant != null;
@@ -246,7 +251,7 @@ internal sealed class SlotReceiver
 
         // Jammers: render this callback's waveforms (SATCOM slots skip them). Responsive jammers key on
         // any wanted transmission that got through TRANSEC, whatever COMSEC then makes of it.
-        int numJammers = slot.IsSatcomActive ? 0 : RenderJammers(slot, samples, _transec.Count > 0);
+        int numJammers = slot.IsSatcomActive ? 0 : RenderJammers(slot, samples, _transec.Count > 0, HopTimingFor(slot, samples));
         bool fmJammed = numJammers > 0 && slot.Modulation == ModulationType.FM;
 
         if (slot.IsSatcomActive)
@@ -581,7 +586,44 @@ internal sealed class SlotReceiver
     /// Render every jammer on the slot into _jamI/_jamQ (one row each) and its capture-block powers. Creates
     /// state for new ids and drops state for ids no longer listed. Returns how many rows were rendered.
     /// </summary>
-    private int RenderJammers(RadioPlayback.RadioConfig slot, int samples, bool wantedPresent)
+    /// <summary>
+    /// Net time in seconds since the Unix epoch: the shared hop clock's reference. Every listener on a net derives
+    /// the same hop index from it (plus its radio's TOD offset), so all of them hear the same hops hit. Tests
+    /// replace it with a deterministic clock.
+    /// </summary>
+    public Func<double> NetTimeSeconds { get; set; } = () => DateTime.UtcNow.Subtract(DateTime.UnixEpoch).TotalSeconds;
+
+    /// <summary>Re-anchor the hop clock to <see cref="NetTimeSeconds"/> when it drifts further than this.</summary>
+    internal const double HopClockResyncSeconds = 0.05;
+
+    /// <summary>
+    /// This callback's position on the slot's hop clock, or null for a single-channel slot. Between re-anchors the
+    /// clock advances exactly by samples, so hop edges stay sample-accurate whatever the callback timing.
+    /// </summary>
+    internal HopTiming? HopTimingFor(RadioPlayback.RadioConfig slot, int samples)
+    {
+        var hop = slot.HopNet;
+        if (hop is not { Identity.IsHopping: true })
+        {
+            slot.HopClockValid = false;
+            return null;
+        }
+
+        double now = NetTimeSeconds();
+        if (!slot.HopClockValid || !double.IsFinite(slot.HopClockSeconds) ||
+            Math.Abs(slot.HopClockSeconds - now) > HopClockResyncSeconds)
+        {
+            slot.HopClockSeconds = now;
+            slot.HopClockValid = true;
+        }
+
+        double rate = hop.EffectiveHopRateHz;
+        double radioTime = slot.HopClockSeconds + hop.Identity.TodOffsetMs / 1000.0;
+        slot.HopClockSeconds += (double)samples / SampleRate;
+        return new HopTiming(hop.Identity.Seed, radioTime * rate, rate / SampleRate);
+    }
+
+    private int RenderJammers(RadioPlayback.RadioConfig slot, int samples, bool wantedPresent, HopTiming? hopTiming)
     {
         var jammers = slot.Jammers;
         var states = slot.JammerStates;
@@ -610,7 +652,7 @@ internal sealed class SlotReceiver
             waveform.LastFrame = _frame;
 
             waveform.Render(c, wantedPresent, _jamI[count].AsSpan(0, samples), _jamQ[count].AsSpan(0, samples),
-                _jamBlockPower[count].AsSpan(0, blocks), CaptureBlockSamples);
+                _jamBlockPower[count].AsSpan(0, blocks), CaptureBlockSamples, hopTiming);
             _jamNoiseLike[count] = JammerWaveform.IsNoiseLike(c.Technique);
             count++;
         }

@@ -28,6 +28,10 @@ public static class SignalingMessageTypes
     /// <summary>Server -&gt; all clients: jammer catalog + live state -- see JammerCatalogUpdateMessage.</summary>
     public const string JammerCatalogUpdate = "jammer-catalog-update";
 
+    /// <summary>Server -&gt; all clients: the mission's HAVE QUICK / SINCGARS comm plan (fingerprints only) --
+    /// see EccmCommPlanUpdateMessage.</summary>
+    public const string EccmCommPlanUpdate = "eccm-comm-plan-update";
+
     /// <summary>Client -&gt; server: the transmitting client's own local speech-to-text result for
     /// one completed PTT session -- see TransmissionTranscriptMessage.</summary>
     public const string TransmissionTranscript = "transmission-transcript";

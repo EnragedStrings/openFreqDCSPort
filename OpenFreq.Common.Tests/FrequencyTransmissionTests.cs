@@ -78,4 +78,39 @@ public class FrequencyTransmissionTests
         Assert.Equal(4, ft.EncKey);
         Assert.True(ft.HqOn);
     }
+
+    [Fact]
+    public void EccmIdentity_RoundTripsOnTheWire_AndIsOmittedWhenNull()
+    {
+        var metadata = new AudioPacketMetadata
+        {
+            ClientId = "a",
+            Frequencies =
+            [
+                new FrequencyTransmission(237325, 10, 0, null, null, true, hqOn: true)
+                {
+                    Eccm = new OpenFreqAudio.Eccm.HopNetIdentity(OpenFreqAudio.Eccm.HopMode.HaveQuick, "A12.325",
+                        "0123456789abcdef", true, -20)
+                },
+                new FrequencyTransmission(251000, 10, 0, null, null, true)
+            ]
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(metadata, OpenFreqJsonContext.Default.AudioPacketMetadata);
+        Assert.Contains("\"eccm\":{\"mode\":\"HaveQuick\",\"net\":\"A12.325\"", json);
+        Assert.Equal(1, json.Split("\"eccm\"").Length - 1);
+
+        var back = System.Text.Json.JsonSerializer.Deserialize(json, OpenFreqJsonContext.Default.AudioPacketMetadata)!;
+        var id = back.Frequencies[0].Eccm!;
+        Assert.Equal(OpenFreqAudio.Eccm.HopMode.HaveQuick, id.Mode);
+        Assert.Equal("0123456789abcdef", id.KeyFingerprint);
+        Assert.True(id.TodValid);
+        Assert.Equal(-20, id.TodOffsetMs);
+        Assert.Null(back.Frequencies[1].Eccm);
+
+        // An older client's packet (no eccm) still parses, as single channel / legacy HqOn.
+        var old = System.Text.Json.JsonSerializer.Deserialize("{\"id\":\"o\",\"frequencies\":[{\"khz\":251000,\"hqOn\":true}]}",
+            OpenFreqJsonContext.Default.AudioPacketMetadata)!;
+        Assert.Null(old.Frequencies[0].Eccm);
+        Assert.True(old.Frequencies[0].HqOn);
+    }
 }

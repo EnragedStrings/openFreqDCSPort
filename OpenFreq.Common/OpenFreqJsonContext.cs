@@ -37,6 +37,9 @@ namespace OpenFreq.Common;
 [JsonSerializable(typeof(TranscriptDeliveryMessage))]
 [JsonSerializable(typeof(JammerCatalogEntryDto))]
 [JsonSerializable(typeof(JammerCatalogUpdateMessage))]
+[JsonSerializable(typeof(EccmCommPlanUpdateMessage))]
+[JsonSerializable(typeof(Eccm.EccmCommPlan))]
+[JsonSerializable(typeof(OpenFreqAudio.Eccm.HopNetIdentity))]
 
 public partial class OpenFreqJsonContext : JsonSerializerContext
 {

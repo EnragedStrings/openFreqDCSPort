@@ -360,6 +360,17 @@ public class JammerCatalogUpdateMessage
     [JsonPropertyName("jammers")] public List<JammerCatalogEntryDto> Jammers { get; set; } = [];
 }
 
+/// <summary>
+/// Server -&gt; all clients: the mission's ECCM comm plan (docs/jamming/HAVE_QUICK.md), the "fill" for HAVE QUICK
+/// (MWOD fingerprints per day, FMT list, hop rate, sync windows) and SINCGARS (key fingerprint, lockouts). Sent to
+/// each client right after it authenticates. Never contains WOD digits or the TRANSEC key. A null plan means the
+/// server has none: clients fall back to manual entry.
+/// </summary>
+public class EccmCommPlanUpdateMessage
+{
+    [JsonPropertyName("plan")] public Eccm.EccmCommPlan? Plan { get; set; }
+}
+
 /// <summary>One upcoming encoded SATCOM voice frame's server-decided disposition and scheduled
 /// local playback arrival time (Unix ms, client clock domain -- see SatcomLinkStateMessage remarks).</summary>
 public class SatcomFrameDispositionDto

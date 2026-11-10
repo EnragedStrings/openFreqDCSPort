@@ -460,6 +460,7 @@ public class OpenFreqService : IOpenFreqService
         _client.SatcomLinkStateReceived += OnClientSatcomLinkStateReceived;
         _client.SatelliteEphemerisReceived += OnClientSatelliteEphemerisReceived;
         _client.JammerCatalogReceived += OnClientJammerCatalogReceived;
+        _client.EccmCommPlanReceived += OnClientEccmCommPlanReceived;
         _client.DcsLosOracleRequestReceived += OnClientDcsLosOracleRequestReceived;
 
         RecordingDeviceIndex = recordingDeviceIndex;
@@ -615,6 +616,7 @@ public class OpenFreqService : IOpenFreqService
                 _client.SatcomLinkStateReceived -= OnClientSatcomLinkStateReceived;
                 _client.SatelliteEphemerisReceived -= OnClientSatelliteEphemerisReceived;
                 _client.JammerCatalogReceived -= OnClientJammerCatalogReceived;
+                _client.EccmCommPlanReceived -= OnClientEccmCommPlanReceived;
                 _client.DcsLosOracleRequestReceived -= OnClientDcsLosOracleRequestReceived;
 
                 _logger.LogDebug("Disconnecting client: {ClientHashCode}", _client.GetHashCode());
@@ -866,6 +868,8 @@ public class OpenFreqService : IOpenFreqService
 
         // Set up local audio state BEFORE sending the join to the server
         _tunedSlots.TryAdd((frequencyKhz, slotId), new TunedFrequencyData(radioStationData, true));
+        if (_slotEccm.TryGetValue(slotId, out var eccm))
+            _playbackService?.SetSlotHopNet(frequencyKhz, slotId, eccm.State);
         // The GCI scanner's silent joins aren't a place we'd ever transmit from.
         if (!isObserver) SetOwnVoiceStation(radioStationData, frequencyKhz, onlyIfUnset: true);
         _signalStrengthTracker.SetSquelchState(frequencyKhz, false);
@@ -1500,7 +1504,7 @@ public class OpenFreqService : IOpenFreqService
                 return true;
             }
 
-            _client?.SendAudio(audioData, frequenciesData);
+            _client?.SendAudio(audioData, frequenciesData, TransmitEccmIdentities(frequenciesData.Select(f => f.frequencyKhz)));
 
             // Clean up any frequencies which might have been disabled in the meantime
             foreach (var disabledFrequency in disabledFrequencies)
@@ -1979,7 +1983,8 @@ public class OpenFreqService : IOpenFreqService
 
             // Push audio data immediately
             _playbackService?.PushAudioData(streamId, e.AudioData, ambientNoiseType,
-                frequencyTransmission.Enc, frequencyTransmission.EncKey, frequencyTransmission.HqOn);
+                frequencyTransmission.Enc, frequencyTransmission.EncKey, frequencyTransmission.HqOn,
+                frequencyTransmission.Eccm);
         }
     }
 
@@ -2495,10 +2500,46 @@ public class OpenFreqService : IOpenFreqService
                 GetOwnGeodeticPosition(frequencyKhz, slotId),
                 GetReceiverSensitivityDb(frequencyKhz, data),
                 _satcomActiveFrequencies.ContainsKey(frequencyKhz),
-                data.IsEnabled));
+                data.IsEnabled,
+                _slotEccm.TryGetValue(slotId, out var eccm) && eccm.IsHopping ? eccm : null));
         }
 
         return slots;
+    }
+
+    // ------------------------------------------------------------------ HAVE QUICK / SINCGARS
+
+    // Each slot's resolved ECCM state (docs/jamming/HAVE_QUICK.md), by slot id: it follows the radio across
+    // frequency changes and is re-applied to playback whenever the slot is tuned.
+    private readonly ConcurrentDictionary<Guid, OpenFreq.Common.Eccm.EccmResolution> _slotEccm = new();
+
+    public event EventHandler<EccmCommPlanUpdateMessage>? EccmCommPlanReceived;
+
+    private void OnClientEccmCommPlanReceived(object? sender, EccmCommPlanUpdateMessage args) =>
+        EccmCommPlanReceived?.Invoke(this, args);
+
+    public void SetSlotEccm(int frequencyKhz, Guid slotId, OpenFreq.Common.Eccm.EccmResolution resolution)
+    {
+        if (resolution.IsHopping) _slotEccm[slotId] = resolution;
+        else _slotEccm.TryRemove(slotId, out _);
+        _playbackService?.SetSlotHopNet(frequencyKhz, slotId, resolution.State);
+    }
+
+    public OpenFreq.Common.Eccm.EccmResolution? GetSlotEccm(Guid slotId) =>
+        _slotEccm.TryGetValue(slotId, out var eccm) ? eccm : null;
+
+    /// <summary>The net identity each transmitting frequency's slot stamps on its audio (hopping slots only).</summary>
+    private Dictionary<int, OpenFreqAudio.Eccm.HopNetIdentity>? TransmitEccmIdentities(IEnumerable<int> frequenciesKhz)
+    {
+        if (_slotEccm.IsEmpty) return null;
+        Dictionary<int, OpenFreqAudio.Eccm.HopNetIdentity>? result = null;
+        foreach (var frequencyKhz in frequenciesKhz)
+        {
+            _activeTransmissionSlots.TryGetValue(frequencyKhz, out var txSlotId);
+            if (_slotEccm.TryGetValue(txSlotId, out var eccm) && eccm.State is { } state)
+                (result ??= new())[frequencyKhz] = state.Identity;
+        }
+        return result;
     }
 
     private void OnClientSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs args) =>

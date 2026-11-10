@@ -34,6 +34,7 @@ public class OpenFreqRtcClient : IRtcClient
     public event EventHandler<SatcomLinkStateEventArgs>? SatcomLinkStateReceived;
     public event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
     public event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
+    public event EventHandler<EccmCommPlanUpdateMessage>? EccmCommPlanReceived;
     public event EventHandler<DcsLosOracleRequestEventArgs>? DcsLosOracleRequestReceived;
     public event EventHandler<TranscriptReceivedEventArgs>? TranscriptReceived;
 
@@ -518,7 +519,8 @@ public class OpenFreqRtcClient : IRtcClient
         _rtpSender?.MarkTransmitStartTime();
     }
 
-    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn, double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies)
+    public void SendAudio(Memory<short> pcmData, List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity, Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn, double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies,
+        IReadOnlyDictionary<int, OpenFreqAudio.Eccm.HopNetIdentity>? eccmByFrequencyKhz = null)
     {
         var frequencyTransmissions = new List<FrequencyTransmission>();
         foreach (var freq in frequencies)
@@ -538,7 +540,12 @@ public class OpenFreqRtcClient : IRtcClient
                 latitudeDeg: freq.latitudeDeg,
                 longitudeDeg: freq.longitudeDeg,
                 altitudeMeters: freq.altitudeMeters
-            ));
+            )
+            {
+                Eccm = eccmByFrequencyKhz != null && eccmByFrequencyKhz.TryGetValue(freq.frequencyKhz, out var eccm)
+                    ? eccm
+                    : null
+            });
         }
 
         _rtpSender?.SendAudio(pcmData, frequencyTransmissions);
@@ -788,6 +795,13 @@ public class OpenFreqRtcClient : IRtcClient
                         SignalingMessageFactory.DeserializePayload<JammerCatalogUpdateMessage>(message.Payload);
                     if (jammerCatalog != null)
                         JammerCatalogReceived?.Invoke(this, new JammerCatalogEventArgs(jammerCatalog));
+                    break;
+
+                case SignalingMessageTypes.EccmCommPlanUpdate:
+                    var commPlan =
+                        SignalingMessageFactory.DeserializePayload<EccmCommPlanUpdateMessage>(message.Payload);
+                    if (commPlan != null)
+                        EccmCommPlanReceived?.Invoke(this, commPlan);
                     break;
 
                 case SignalingMessageTypes.DcsLosOracleRequest:

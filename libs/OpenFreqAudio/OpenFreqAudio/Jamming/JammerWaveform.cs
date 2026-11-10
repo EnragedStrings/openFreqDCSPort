@@ -88,6 +88,8 @@ internal sealed class JammerWaveform
     private Gate _responsive;
     private Gate _hop;
     private bool _hopHit;
+    private long _hopIndex = long.MinValue;
+    private readonly ulong _idHash;
     private long _wantedSamples = -1;
 
     // Noise filling (Noise, RandomPulse): white Gaussian through the receiver's IF, scaled to unit power.
@@ -116,6 +118,7 @@ internal sealed class JammerWaveform
         Id = id;
         _rng = JammerRng.For(seed, id, 1);
         _hopRng = JammerRng.For(seed, id, 2);
+        _idHash = Eccm.HopSequence.Hash(id);
         CarrierPhase = _rng.NextDouble() * TwoPi;
         _audioPhase = _rng.NextDouble() * TwoPi;
     }
@@ -146,8 +149,11 @@ internal sealed class JammerWaveform
     /// <param name="c">This jammer's current contribution.</param>
     /// <param name="wantedPresent">Whether a wanted transmission (after TRANSEC) is on the slot this callback,
     /// for responsive jamming.</param>
+    /// <param name="hopTiming">The slot's shared hop clock (hopping slots): hop hits are then a pure function of
+    /// (net seed, hop index, jammer id), identical for every listener on the net. Null: a per-listener seeded
+    /// Bernoulli per 10 ms block (single-channel slots never gate, their HopHitFraction is 1).</param>
     public void Render(JammerContribution c, bool wantedPresent, Span<float> outI, Span<float> outQ,
-        Span<float> blockPower, int blockSize)
+        Span<float> blockPower, int blockSize, HopTiming? hopTiming = null)
     {
         int samples = outI.Length;
         var p = c.Params;
@@ -195,9 +201,14 @@ internal sealed class JammerWaveform
         if (wantedPresent && _wantedSamples < 0) _wantedSamples = 0;
         if (!wantedPresent) _wantedSamples = -1;
 
-        // Hop hits: per hop-sized block, a seeded Bernoulli(HopHitFraction).
-        float hopFraction = float.IsFinite(c.HopHitFraction) ? c.HopHitFraction : 1f;
+        // Hop hits: per hop, a Bernoulli(HopHitFraction) drawn from the net's shared hop clock (or, without one,
+        // per 10 ms block from this jammer's own PRNG). A follower instead covers the tail of every dwell.
+        float hopFraction = float.IsFinite(c.HopHitFraction) ? Math.Clamp(c.HopHitFraction, 0f, 1f) : 1f;
         bool hopping = hopFraction < 1f;
+        bool follower = c.HopFollower;
+        ulong hopSeed = hopTiming is { } ht ? ht.Seed ^ _idHash : 0;
+        double hopsAt = hopTiming?.HopsAtStart ?? 0;
+        double hopsPerSample = hopTiming?.HopsPerSample ?? 0;
 
         PrepareTechnique(technique, p, carrierOffset);
 
@@ -238,9 +249,29 @@ internal sealed class JammerWaveform
             // appears keys up over 2 ms instead of clicking in.
             bool ltOn = ltPeriod == 0 || clock % ltPeriod < ltOnSamples;
             bool respOn = !c.Responsive || (_wantedSamples >= 0 && _wantedSamples + n >= reaction);
-            if (hopping && clock % HopBlockSamples == 0)
-                _hopHit = _hopRng.NextDouble() < hopFraction;
-            bool hopOn = !hopping || _hopHit;
+            bool hopOn = true;
+            if (hopping)
+            {
+                double hopPhase;
+                if (hopTiming.HasValue)
+                {
+                    double h = hopsAt + hopsPerSample * n;
+                    long hopIndex = (long)Math.Floor(h);
+                    hopPhase = h - hopIndex;
+                    if (!follower && hopIndex != _hopIndex)
+                    {
+                        _hopIndex = hopIndex;
+                        _hopHit = Eccm.HopSequence.Uniform(hopSeed, hopIndex, 3) < hopFraction;
+                    }
+                }
+                else
+                {
+                    hopPhase = (double)(clock % HopBlockSamples) / HopBlockSamples;
+                    if (!follower && clock % HopBlockSamples == 0)
+                        _hopHit = _hopRng.NextDouble() < hopFraction;
+                }
+                hopOn = follower ? hopPhase >= 1.0 - hopFraction : _hopHit;
+            }
             double gate = _lookThrough.Step(ltOn, gateInc) * _responsive.Step(respOn, gateInc) * _hop.Step(hopOn, hopInc);
 
             double amp = (ampStart + ampSlope * (n + 1)) * gate;

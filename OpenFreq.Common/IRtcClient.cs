@@ -56,6 +56,10 @@ public interface IRtcClient : IDisposable
     /// <summary>The server's jammer catalog + live state (docs/jamming) -- see JammerCatalogUpdateMessage.</summary>
     event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
 
+    /// <summary>The server's HAVE QUICK / SINCGARS comm plan (docs/jamming/HAVE_QUICK.md) -- see
+    /// EccmCommPlanUpdateMessage.</summary>
+    event EventHandler<EccmCommPlanUpdateMessage>? EccmCommPlanReceived;
+
     /// <summary>The server is asking this client to referee a remote terrain-LOS check via its own
     /// live DCS instance -- see DcsLosOracleRequestMessage's own doc comment. Answer with
     /// SendDcsLosOracleResponseAsync, echoing the same RequestId.</summary>
@@ -117,7 +121,8 @@ public interface IRtcClient : IDisposable
         Memory<short> pcmData,
         List<(int frequencyKhz, double txPowerWatts, double ppm, Vector3? position, Vector3? velocity,
             Vector3? dcsPosition, AmbientNoiseType ambientNoiseType, bool enc, int encKey, bool hqOn,
-            double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies);
+            double? latitudeDeg, double? longitudeDeg, double? altitudeMeters)> frequencies,
+        IReadOnlyDictionary<int, OpenFreqAudio.Eccm.HopNetIdentity>? eccmByFrequencyKhz = null);
 }
 
 /// <summary>

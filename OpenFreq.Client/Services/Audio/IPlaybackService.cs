@@ -48,12 +48,15 @@ public interface IPlaybackService
     /// <summary>Replaces the jammers this slot currently receives (empty = none). See docs/jamming.</summary>
     void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions);
 
+    /// <summary>Sets a slot's HAVE QUICK / SINCGARS net (null = single channel). See docs/jamming/HAVE_QUICK.md.</summary>
+    void SetSlotHopNet(int frequencyKhz, Guid slotId, OpenFreqAudio.Eccm.HopSlotState? hopNet) { }
+
     void AddTransmittingFrequencies(IEnumerable<int> frequencies);
     void RemoveTransmittingFrequencies(IEnumerable<int> frequencies);
 
     void StartPushStream(string streamId, int sampleRate, int channels, AudioParams audioParams);
     bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None,
-        bool enc = false, int encKey = 0, bool hqOn = false);
+        bool enc = false, int encKey = 0, bool hqOn = false, OpenFreqAudio.Eccm.HopNetIdentity? eccm = null);
     void UpdateStreamParams(string streamId, AudioParams newParams);
     void ClearStreamBuffer(string streamId);
     Task StopStream(string streamId);
@@ -124,6 +127,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public void PlayTxTone() => _inner.PlayTxTone();
     public void SetSlotInterference(int frequencyKhz, Guid slotId, IReadOnlyList<JammerContribution> contributions)
         => _inner.SetSlotInterference(frequencyKhz, slotId, contributions);
+    public void SetSlotHopNet(int frequencyKhz, Guid slotId, OpenFreqAudio.Eccm.HopSlotState? hopNet)
+        => _inner.SetSlotHopNet(frequencyKhz, slotId, hopNet);
 
     public void AddTransmittingFrequencies(IEnumerable<int> frequencies)
         => _inner.AddTransmittingFrequencies(frequencies);
@@ -133,8 +138,8 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public void StartPushStream(string streamId, int sampleRate, int channels, AudioParams audioParams)
         => _inner.StartPushStream(streamId, sampleRate, channels, audioParams);
     public bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None,
-        bool enc = false, int encKey = 0, bool hqOn = false)
-        => _inner.PushAudioData(streamId, audioData, ambientNoise, enc, encKey, hqOn);
+        bool enc = false, int encKey = 0, bool hqOn = false, OpenFreqAudio.Eccm.HopNetIdentity? eccm = null)
+        => _inner.PushAudioData(streamId, audioData, ambientNoise, enc, encKey, hqOn, eccm);
     public void UpdateStreamParams(string streamId, AudioParams newParams)
         => _inner.UpdateStreamParams(streamId, newParams);
     public void ClearStreamBuffer(string streamId) => _inner.ClearStreamBuffer(streamId);

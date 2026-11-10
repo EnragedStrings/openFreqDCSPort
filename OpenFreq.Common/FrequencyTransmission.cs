@@ -46,6 +46,12 @@ public class FrequencyTransmission
     [JsonPropertyName("hqOn")]
     public bool HqOn { get; set; }
 
+    /// <summary>HAVE QUICK / SINCGARS net identity of the transmitting radio (net, WOD/key fingerprint, TOD) --
+    /// never the WOD itself. Null for single-channel radios and for older clients, which receivers then treat
+    /// by <see cref="HqOn"/> alone (see TransecGate). Omitted from the JSON when null.</summary>
+    [JsonPropertyName("eccm")]
+    public OpenFreqAudio.Eccm.HopNetIdentity? Eccm { get; set; }
+
     /// <summary>Geodetic position of the transmitter, when known. Unlike <see cref="DcsPosition"/>
     /// (DCS mission-local X/Y/Z, only meaningful within one live DCS instance's own coordinate
     /// frame), these are plain lat/lon/alt -- comparable across any two transmitters regardless of

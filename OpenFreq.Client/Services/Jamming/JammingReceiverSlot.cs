@@ -13,6 +13,7 @@ namespace OpenFreq.Client.Services.Jamming;
 /// terrain signal calculator; null when unknown.</param>
 /// <param name="DcsLocalPosition">DCS mission-local position (x north, y altitude, z east), DCS slots only.</param>
 /// <param name="Geodetic">Latitude, longitude, altitude MSL, when known (DCS slots).</param>
+/// <param name="Eccm">The slot's HAVE QUICK / SINCGARS state when hopping (its hopset sets the hop hit fraction).</param>
 public sealed record JammingReceiverSlot(
     int FrequencyKhz,
     Guid SlotId,
@@ -22,4 +23,5 @@ public sealed record JammingReceiverSlot(
     (double LatitudeDeg, double LongitudeDeg, double AltitudeMeters)? Geodetic,
     double ReceiverSensitivityDbm,
     bool IsSatcomActive,
-    bool IsEnabled);
+    bool IsEnabled,
+    OpenFreq.Common.Eccm.EccmResolution? Eccm = null);

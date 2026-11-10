@@ -111,6 +111,17 @@ public interface IOpenFreqService : IDisposable
     /// <summary>The server's jammer catalog + live state (docs/jamming); consumed by JammingService.</summary>
     event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
 
+    /// <summary>The server's HAVE QUICK / SINCGARS comm plan (docs/jamming/HAVE_QUICK.md); consumed by EccmService.</summary>
+    event EventHandler<OpenFreq.Common.EccmCommPlanUpdateMessage>? EccmCommPlanReceived;
+
+    /// <summary>Sets a radio slot's resolved HAVE QUICK / SINCGARS state: what it stamps on its transmissions, how
+    /// the TRANSEC gate treats what it receives, and the hopset the jamming model uses. Kept per slot id across
+    /// frequency changes.</summary>
+    void SetSlotEccm(int frequencyKhz, Guid slotId, OpenFreq.Common.Eccm.EccmResolution resolution);
+
+    /// <summary>A slot's resolved ECCM state (null when single channel).</summary>
+    OpenFreq.Common.Eccm.EccmResolution? GetSlotEccm(Guid slotId);
+
     /// <summary>Every tuned receiver slot with its position and sensitivity, for the jamming model.</summary>
     IReadOnlyList<OpenFreq.Client.Services.Jamming.JammingReceiverSlot> GetJammingReceiverSlots();
 

@@ -86,6 +86,9 @@ public sealed record JammerWaveformParams
 /// <param name="ReactionMs">Reaction delay for responsive jamming, ms.</param>
 /// <param name="HopHitFraction">For hopping receivers (HAVE QUICK / SINCGARS): fraction of hops this jammer hits
 /// (μ, or the follower's per-dwell fraction). 1 for single-channel receivers.</param>
+/// <param name="HopFollower">A follower (responsive) jammer against a hopping receiver: instead of hitting a
+/// fraction of hops, it hits every hop for the last <paramref name="HopHitFraction"/> of the dwell (it arrives
+/// T_delay late on each new hop).</param>
 public sealed record JammerContribution(
     string JammerId,
     float JnrDb,
@@ -94,4 +97,11 @@ public sealed record JammerContribution(
     JammerWaveformParams Params,
     bool Responsive = false,
     float ReactionMs = 0f,
-    float HopHitFraction = 1f);
+    float HopHitFraction = 1f,
+    bool HopFollower = false);
+
+/// <summary>
+/// Where a callback sits on a hopping slot's shared hop clock: hop index (with fraction) at its first sample, and
+/// hops per sample. With the net's seed it fixes, for every listener on the net alike, which hops a jammer hits.
+/// </summary>
+internal readonly record struct HopTiming(ulong Seed, double HopsAtStart, double HopsPerSample);

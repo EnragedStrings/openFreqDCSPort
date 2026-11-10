@@ -235,7 +235,7 @@ public sealed class RtpSourceContext : IDisposable
                     enc: freq.Enc,
                     encKey: freq.EncKey,
                     hqOn: freq.HqOn
-                ));
+                ) { Eccm = freq.Eccm });
             }
         }
 

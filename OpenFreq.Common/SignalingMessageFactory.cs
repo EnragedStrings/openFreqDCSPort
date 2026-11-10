@@ -274,6 +274,17 @@ public static class SignalingMessageFactory
         };
     }
 
+    public static SignalingMessage CreateEccmCommPlanUpdate(Eccm.EccmCommPlan? plan)
+    {
+        return new SignalingMessage
+        {
+            Type = SignalingMessageTypes.EccmCommPlanUpdate,
+            Payload = JsonSerializer.SerializeToElement(
+                new EccmCommPlanUpdateMessage { Plan = plan },
+                OpenFreqJsonContext.Default.EccmCommPlanUpdateMessage)
+        };
+    }
+
     public static SignalingMessage CreateSatcomLinkState(SatcomLinkStateMessage message)
     {
         return new SignalingMessage

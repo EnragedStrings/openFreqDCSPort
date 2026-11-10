@@ -148,6 +148,15 @@ public class RadioPlayback : IDisposable
         // same ids carries on where the last one left off. DSP thread only (see SlotReceiver).
         public Dictionary<string, JammerWaveform> JammerStates { get; } = new();
 
+        // HAVE QUICK / SINCGARS: the slot's hopping net (null = single channel), set by SetSlotHopNet. The DSP
+        // reads the reference; a new state replaces it wholesale.
+        public Eccm.HopSlotState? HopNet { get; set; }
+
+        // The shared hop clock (net time, s, at the start of the next callback), advanced by samples and
+        // re-anchored to the wall clock when it drifts (SlotReceiver.HopTimingFor). DSP thread only.
+        public double HopClockSeconds;
+        public bool HopClockValid;
+
         // True while this slot's receiver state is non-finite and being reset,
         // so that's logged once per run instead of every callback. DSP thread only.
         public bool WasNonFinite { get; set; }
@@ -834,7 +843,7 @@ public class RadioPlayback : IDisposable
     // enc/encKey/hqOn describe the transmitting radio's KY-58/COMSEC and HAVE QUICK state and
     // are consumed per-slot in the DSP loop (see KySecureReceiveState).
     public bool PushAudioData(string streamId, Memory<short> audioData, AmbientNoiseType ambientNoise = AmbientNoiseType.None,
-        bool enc = false, int encKey = 0, bool hqOn = false)
+        bool enc = false, int encKey = 0, bool hqOn = false, Eccm.HopNetIdentity? eccm = null)
     {
         lock (_lock)
         {
@@ -861,6 +870,7 @@ public class RadioPlayback : IDisposable
             stream.Enc = enc;
             stream.EncKey = encKey;
             stream.HqOn = hqOn;
+            stream.Eccm = eccm;
 
             if (audioData.IsEmpty) return false;
 
@@ -1229,6 +1239,22 @@ public class RadioPlayback : IDisposable
             // The DSP thread reads this reference without the lock, so it must be a list nobody mutates later
             // (each call passes a new one). Per-jammer waveform state survives by JammerId.
             slot.Jammers = contributions ?? [];
+        }
+    }
+
+    /// <summary>Sets (or clears, with null) a slot's HAVE QUICK / SINCGARS net: the TRANSEC gate matches it
+    /// against each transmitter's identity, and jammer hop hits follow its shared hop clock.</summary>
+    public void SetSlotHopNet(int frequencyKHz, Guid slotId, Eccm.HopSlotState? hopNet)
+    {
+        lock (_lock)
+        {
+            var key = (frequencyKHz, slotId);
+            if (!_slots.TryGetValue(key, out var slot))
+            {
+                slot = new RadioConfig(frequencyKHz) { SlotId = slotId };
+                _slots[key] = slot;
+            }
+            slot.HopNet = hopNet;
         }
     }
 

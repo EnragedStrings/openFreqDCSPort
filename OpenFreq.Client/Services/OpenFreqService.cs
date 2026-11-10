@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Models.Dcs;
 using OpenFreq.Client.Services.Interfaces;
 using OpenFreq.Client.Models;
+using OpenFreq.Client.Services.Jamming;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreq.Utilities;
@@ -458,6 +459,7 @@ public class OpenFreqService : IOpenFreqService
         _client.ErrorOccurred += OnClientErrorOccurred;
         _client.SatcomLinkStateReceived += OnClientSatcomLinkStateReceived;
         _client.SatelliteEphemerisReceived += OnClientSatelliteEphemerisReceived;
+        _client.JammerCatalogReceived += OnClientJammerCatalogReceived;
         _client.DcsLosOracleRequestReceived += OnClientDcsLosOracleRequestReceived;
 
         RecordingDeviceIndex = recordingDeviceIndex;
@@ -612,6 +614,7 @@ public class OpenFreqService : IOpenFreqService
                 _client.ErrorOccurred -= OnClientErrorOccurred;
                 _client.SatcomLinkStateReceived -= OnClientSatcomLinkStateReceived;
                 _client.SatelliteEphemerisReceived -= OnClientSatelliteEphemerisReceived;
+                _client.JammerCatalogReceived -= OnClientJammerCatalogReceived;
                 _client.DcsLosOracleRequestReceived -= OnClientDcsLosOracleRequestReceived;
 
                 _logger.LogDebug("Disconnecting client: {ClientHashCode}", _client.GetHashCode());
@@ -2464,6 +2467,39 @@ public class OpenFreqService : IOpenFreqService
 
     private void OnClientSatcomLinkStateReceived(object? sender, SatcomLinkStateEventArgs args) =>
         SatcomLinkStateReceived?.Invoke(this, args);
+
+    public event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
+
+    private void OnClientJammerCatalogReceived(object? sender, JammerCatalogEventArgs args) =>
+        JammerCatalogReceived?.Invoke(this, args);
+
+    public ISignalCalculator? SignalCalculator => _signalCalculator;
+
+    public void SetSlotInterference(int frequencyKhz, Guid slotId,
+        IReadOnlyList<OpenFreqAudio.Jamming.JammerContribution> contributions) =>
+        _playbackService?.SetSlotInterference(frequencyKhz, slotId, contributions);
+
+    public IReadOnlyList<JammingReceiverSlot> GetJammingReceiverSlots()
+    {
+        var slots = new List<JammingReceiverSlot>();
+        foreach (var ((frequencyKhz, slotId), data) in _tunedSlots)
+        {
+            // Scanner joins are silent observers, not radios.
+            if (_scannerSlots.TryGetValue(frequencyKhz, out var scannerSlot) && scannerSlot == slotId)
+                continue;
+
+            slots.Add(new JammingReceiverSlot(
+                frequencyKhz, slotId, data.RadioStation.Type,
+                GetOwnPosition(frequencyKhz, slotId),
+                GetOwnDcsLocalPosition(frequencyKhz, slotId) is { } dcs ? new DcsVector3(dcs.X, dcs.Y, dcs.Z) : null,
+                GetOwnGeodeticPosition(frequencyKhz, slotId),
+                GetReceiverSensitivityDb(frequencyKhz, data),
+                _satcomActiveFrequencies.ContainsKey(frequencyKhz),
+                data.IsEnabled));
+        }
+
+        return slots;
+    }
 
     private void OnClientSatelliteEphemerisReceived(object? sender, SatelliteEphemerisEventArgs args) =>
         SatelliteEphemerisReceived?.Invoke(this, args);

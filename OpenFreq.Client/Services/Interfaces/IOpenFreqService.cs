@@ -108,6 +108,19 @@ public interface IOpenFreqService : IDisposable
     /// client-side az/el display and the local terrain-LOS ray.</summary>
     event EventHandler<SatelliteEphemerisEventArgs>? SatelliteEphemerisReceived;
 
+    /// <summary>The server's jammer catalog + live state (docs/jamming); consumed by JammingService.</summary>
+    event EventHandler<JammerCatalogEventArgs>? JammerCatalogReceived;
+
+    /// <summary>Every tuned receiver slot with its position and sensitivity, for the jamming model.</summary>
+    IReadOnlyList<OpenFreq.Client.Services.Jamming.JammingReceiverSlot> GetJammingReceiverSlots();
+
+    /// <summary>The terrain signal calculator when a heightmap is loaded, else null.</summary>
+    OpenFreqClient.Services.Audio.ISignalCalculator? SignalCalculator { get; }
+
+    /// <summary>Hands one slot's jammer contributions to playback (empty list = none).</summary>
+    void SetSlotInterference(int frequencyKhz, Guid slotId,
+        IReadOnlyList<OpenFreqAudio.Jamming.JammerContribution> contributions);
+
     // Methods
     Task Initialize(OpenFreqClient.Models.OpenFreqSettings settings, int recordingDeviceIndex, int playbackDeviceIndex);
     Task ConnectAsync(TimeSpan? connectTimeout = null);

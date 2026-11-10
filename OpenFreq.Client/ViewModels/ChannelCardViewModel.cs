@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using FalconBmsDataService.Models;
 using OpenFreq.Client.Models;
+using OpenFreq.Client.Services.Jamming;
 using OpenFreq.Client.Services.Satcom;
 using OpenFreq.Common.Satcom;
 using OpenFreqAudio;
@@ -137,7 +138,10 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial double SignalStrengthPercent { get; set; }
     /// <summary>Received signal-to-noise ratio, in dB.</summary>
-    [ObservableProperty] public partial double SignalStrengthSnrDb { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingText), nameof(HasJammingText), nameof(JammingDebugText),
+        nameof(HasJammingDebugText))]
+    public partial double SignalStrengthSnrDb { get; set; }
     /// <summary>Received signal level, in dBm.</summary>
     [ObservableProperty] public partial double SignalStrengthReceivedDb { get; set; }
 
@@ -146,6 +150,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         Channel.ChannelConnectionStatus.Disconnected;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingText), nameof(HasJammingText), nameof(JammingDebugText),
+        nameof(HasJammingDebugText))]
     public partial Channel.ChannelTransmissionStatus TransmissionStatus { get; set; } =
         Channel.ChannelTransmissionStatus.Idle;
 
@@ -161,6 +167,45 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     public partial string? SignalBlockedText { get; set; }
 
     public bool HasSignalBlockedText => !string.IsNullOrEmpty(SignalBlockedText);
+
+    /// <summary>Latest jamming summary for this radio from JammingService (null: no jammer reaches it).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(JammingText), nameof(HasJammingText), nameof(JammingDebugText),
+        nameof(HasJammingDebugText))]
+    public partial JammingStatusMessage? JammingStatus { get; set; }
+
+    /// <summary>The wanted signal's SNR while someone is being received, else null (no signal to compare).</summary>
+    private double? CurrentSignalSnrDb =>
+        TransmissionStatus == Channel.ChannelTransmissionStatus.Receiving ? SignalStrengthSnrDb : null;
+
+    /// <summary>"JAMMED" (the jammer denies the link: J/S at or above the kill threshold) or "INTERFERENCE" (it is
+    /// audible), from JammingService's per-slot max JNR against the current signal -- see
+    /// JammingService.ClassifyBadge. Same placement and style as <see cref="SignalBlockedText"/>.</summary>
+    public string? JammingText =>
+        JammingService.ClassifyBadge(JammingStatus?.MaxJnrDb, CurrentSignalSnrDb, JammingStatus?.IsFm ?? false) switch
+        {
+            JammingBadge.Jammed => "JAMMED",
+            JammingBadge.Interference => "INTERFERENCE",
+            _ => null
+        };
+
+    public bool HasJammingText => JammingText != null;
+
+    /// <summary>Debug-mode readout: strongest jammer, its J/N and J/S against the current signal.</summary>
+    public string JammingDebugText
+    {
+        get
+        {
+            if (Settings?.DebugMode != true || JammingStatus?.MaxJnrDb is not { } jnr) return "";
+            var js = CurrentSignalSnrDb is { } snr
+                ? $", J/S {(jnr - snr).ToString("+0;-0", CultureInfo.InvariantCulture)} dB"
+                : "";
+            return $"JAM {JammingStatus.DominantJammerName}: J/N {jnr.ToString("+0;-0", CultureInfo.InvariantCulture)} dB" +
+                   $"{js} ({JammingStatus.JammerCount} jammer(s))";
+        }
+    }
+
+    public bool HasJammingDebugText => JammingDebugText.Length > 0;
 
     [ObservableProperty] public partial bool IsEditing { get; set; }
 
@@ -296,6 +341,12 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
                     SignalStrengthReceivedDb = m.ReceivedDb;
                 }
             });
+
+        WeakReferenceMessenger.Default.Register<JammingStatusMessage>(this, (_, m) =>
+        {
+            if (m.SlotId == Id && m.FrequencyKhz == FrequencyKhz)
+                JammingStatus = m.MaxJnrDb == null ? null : m;
+        });
     }
 
     [RelayCommand]
@@ -392,6 +443,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     partial void OnFrequencyKhzChanged(int value)
     {
         _channelWasChanged = true;
+        JammingStatus = null; // the next JammingService tick reports the new frequency
     }
 
 
@@ -620,6 +672,11 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(ShowManualPanControl));
         if (e.PropertyName == nameof(SettingsViewModel.DcsManualRadioControlOverride))
             OnPropertyChanged(nameof(CanAdjustRadioControls));
+        if (e.PropertyName == nameof(SettingsViewModel.DebugMode))
+        {
+            OnPropertyChanged(nameof(JammingDebugText));
+            OnPropertyChanged(nameof(HasJammingDebugText));
+        }
     }
 
     [RelayCommand]
@@ -657,6 +714,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         if (Settings != null)
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
         WeakReferenceMessenger.Default.Unregister<SignalStrengthTracker.SignalStrengthUpdateMessage>(this);
+        WeakReferenceMessenger.Default.Unregister<JammingStatusMessage>(this);
     }
 }
 

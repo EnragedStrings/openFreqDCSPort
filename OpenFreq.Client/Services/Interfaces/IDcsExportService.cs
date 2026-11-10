@@ -36,6 +36,14 @@ public interface IDcsExportService : IDisposable, ILifecycleService
     IReadOnlyList<DcsRadioState> GetRadios();
     DcsLineOfSightResult? RequestLineOfSight(string key, DcsVector3 remotePosition);
 
+    /// <summary>This map's DCS-local position (x north, y altitude MSL, z east) of a geodetic point, converted by
+    /// the live DCS instance (coord.LLtoLO). Returns the cached conversion, or null while the first one is in
+    /// flight (re-requested at most every couple of seconds) or when DCS isn't connected. <paramref
+    /// name="altitudeMsl"/> null puts the point <paramref name="heightAglMeters"/> above the terrain. The cache is
+    /// per <paramref name="key"/> and dropped when the inputs or the theater change.</summary>
+    DcsVector3? ConvertLatLonToLocal(string key, double latitude, double longitude, double? altitudeMsl,
+        double heightAglMeters);
+
     /// <summary>Asks this client's own live DCS instance to check terrain LOS between two
     /// arbitrary geodetic points -- see DcsExportService's own doc comment on the implementation.
     /// </summary>

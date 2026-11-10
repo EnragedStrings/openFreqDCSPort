@@ -22,6 +22,8 @@ namespace OpenFreqClient.Json;
 [JsonSerializable(typeof(DcsLosResponsePacket))]
 [JsonSerializable(typeof(DcsLosRemoteRequestPacket))]
 [JsonSerializable(typeof(DcsLosRemoteResponsePacket))]
+[JsonSerializable(typeof(DcsCoordRequestPacket))]
+[JsonSerializable(typeof(DcsCoordResponsePacket))]
 public partial class ClientJsonContext : JsonSerializerContext
 {
 }

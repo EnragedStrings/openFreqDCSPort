@@ -1451,6 +1451,48 @@ local function buildRemoteLosResponse(request)
     return response
 end
 
+-- Converts geodetic points (jammers placed by lat/lon in the OpenFreq server config) to this map's
+-- local X/Y/Z with coord.LLtoLO, the same projection buildRemoteLosResponse uses. A point with no
+-- altitude is placed `agl` metres above the terrain (land.getHeight). The client caches the result
+-- per point, so this runs once per jammer per mission, not per frame.
+local function buildCoordResponse(request)
+    local available = type(coord) == "table" and type(coord.LLtoLO) == "function"
+    local response = {
+        schema = "openfreq.dcs.coord.response",
+        version = 1,
+        requestId = request.requestId or "",
+        available = available,
+        points = {}
+    }
+
+    if not available or type(request.points) ~= "table" then
+        return response
+    end
+
+    for _, point in pairs(request.points) do
+        if type(point.id) == "string" and type(point.lat) == "number" and type(point.lon) == "number" then
+            local alt = type(point.alt) == "number" and point.alt or 0
+            local ok, localPoint = pcall(coord.LLtoLO, point.lat, point.lon, alt)
+            if ok and type(localPoint) == "table" and type(localPoint.x) == "number" and
+                type(localPoint.z) == "number" then
+                local y = alt
+                if type(point.alt) ~= "number" then
+                    local agl = type(point.agl) == "number" and point.agl or 0
+                    local ground = 0
+                    if land and type(land.getHeight) == "function" then
+                        local okHeight, height = pcall(land.getHeight, { x = localPoint.x, y = localPoint.z })
+                        if okHeight and type(height) == "number" then ground = height end
+                    end
+                    y = ground + agl
+                end
+                response.points[#response.points + 1] = { id = point.id, x = localPoint.x, y = y, z = localPoint.z }
+            end
+        end
+    end
+
+    return response
+end
+
 function OpenFreqDCS.startLos()
     local losConfig = config.los or {}
     if losConfig.enabled == false or OpenFreqDCS.losReceiveSocket or not socket then
@@ -1506,6 +1548,12 @@ function OpenFreqDCS.processLosRequests()
         elseif ok and type(request) == "table" and request.schema == "openfreq.dcs.los.remote_request" then
             pcall(function()
                 local response = buildRemoteLosResponse(request)
+                local payload = encodeJson(response)
+                OpenFreqDCS.udp:send(payload)
+            end)
+        elseif ok and type(request) == "table" and request.schema == "openfreq.dcs.coord.request" then
+            pcall(function()
+                local response = buildCoordResponse(request)
                 local payload = encodeJson(response)
                 OpenFreqDCS.udp:send(payload)
             end)

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenFreq.Client.Services;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Client.Services.Jamming;
 using OpenFreq.Common;
 using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services.Audio;
@@ -41,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFalconRadioSharedMemoryService, FalconRadioSharedMemoryService>();
         services.AddSingleton<IIvcMonitorService, IvcMonitorService>();
         services.AddSingleton<IUpdateService, UpdateService>();
+        services.AddSingleton<IJammingService, JammingService>();
         services.AddSingleton<ISpeechTranscriber>(sp => new WhisperSpeechTranscriber(
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WhisperSpeechTranscriber>(),
             Path.Combine(AppDataPaths.ClientModelDirectory, "ggml-tiny.en.bin")));

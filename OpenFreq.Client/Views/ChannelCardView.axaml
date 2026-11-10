@@ -108,6 +108,28 @@
                         Margin="0,2,0,0"
                         IsVisible="{Binding HasSignalBlockedText}" />
 
+                    <!-- A jammer on this radio: "JAMMED" (it denies the link) or "INTERFERENCE"
+                         (audible). See ChannelCardViewModel.JammingText. -->
+                    <TextBlock
+                        Text="{Binding JammingText}"
+                        Classes="Caption"
+                        FontWeight="SemiBold"
+                        Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                        TextWrapping="NoWrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasJammingText}" />
+
+                    <!-- DEBUG-ONLY: strongest jammer's J/N and J/S (SettingsViewModel.DebugMode). -->
+                    <TextBlock
+                        Text="{Binding JammingDebugText}"
+                        Classes="Caption"
+                        Opacity="0.6"
+                        FontFamily="monospace"
+                        FontSize="10"
+                        TextWrapping="Wrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasJammingDebugText}" />
+
                     <!-- DEBUG-ONLY: raw satellite position/geometry/antenna readout, only
                          populated server-side with SettingsViewModel.DebugMode on; see
                          ChannelCardViewModel.SatcomDebugText's own doc comment. Candidate for

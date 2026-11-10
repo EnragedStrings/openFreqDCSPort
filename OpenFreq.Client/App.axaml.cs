@@ -7,6 +7,7 @@ using FalconBmsDataService.Services;
 using FalconRadioService.Services;
 using Microsoft.Extensions.DependencyInjection;
 using OpenFreq.Client.Services.Interfaces;
+using OpenFreq.Client.Services.Jamming;
 using OpenFreq.Services.Acmi;
 using OpenFreqClient.Services;
 using OpenFreqClient.Services.Interfaces;
@@ -47,7 +48,8 @@ public partial class App : Application
             serviceProvider.GetRequiredService<IFalconSharedMemoryService>(),
             serviceProvider.GetRequiredService<IDcsExportService>(),
             serviceProvider.GetRequiredService<IAcmiClientService>(),
-            serviceProvider.GetRequiredService<IHotkeyService>()
+            serviceProvider.GetRequiredService<IHotkeyService>(),
+            serviceProvider.GetRequiredService<IJammingService>()
         ];
 #else
             _services = new List<ILifecycleService>
@@ -55,6 +57,7 @@ public partial class App : Application
                 serviceProvider.GetRequiredService<IAcmiClientService>(),
                 serviceProvider.GetRequiredService<IDcsExportService>(),
                 serviceProvider.GetRequiredService<IHotkeyService>(),
+                serviceProvider.GetRequiredService<IJammingService>(),
             };
 #endif
 

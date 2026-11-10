@@ -27,6 +27,13 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
     private readonly ConcurrentDictionary<string, DcsLineOfSightResult> _losResults = new();
     private readonly ConcurrentDictionary<string, DateTime> _losLastRequestUtc = new();
 
+    // LL->LO conversions (ConvertLatLonToLocal): the request inputs and theater they were made for, the last
+    // send time, and the answer once DCS replied.
+    private static readonly TimeSpan CoordRequestInterval = TimeSpan.FromSeconds(2);
+    private readonly ConcurrentDictionary<string, CoordEntry> _coords = new();
+
+    private sealed record CoordEntry(DcsCoordPoint Request, string Theater, DateTime RequestedUtc, DcsVector3? Result);
+
     // Pending remote (two-arbitrary-point) LOS requests awaiting this client's own DCS instance's
     // reply -- see RequestRemoteLineOfSightAsync/DcsLosRemoteRequestPacket. Unlike the self-
     // anchored _losResults cache above (polled, fire-and-forget), this answers one specific
@@ -218,6 +225,74 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             return null;
 
         return now - result.ReceivedUtc <= LosResultTtl ? result : null;
+    }
+
+    public DcsVector3? ConvertLatLonToLocal(string key, double latitude, double longitude, double? altitudeMsl,
+        double heightAglMeters)
+    {
+        if (string.IsNullOrWhiteSpace(key) || State != ServiceState.Connected)
+            return null;
+
+        var request = new DcsCoordPoint
+        {
+            Id = key, Lat = latitude, Lon = longitude, Alt = altitudeMsl,
+            Agl = altitudeMsl == null ? heightAglMeters : null
+        };
+        var theater = Theater;
+        var now = DateTime.UtcNow;
+
+        if (_coords.TryGetValue(key, out var entry) && entry.Theater == theater && SamePoint(entry.Request, request))
+        {
+            if (entry.Result != null) return entry.Result;
+            if (now - entry.RequestedUtc < CoordRequestInterval) return null;
+        }
+
+        _coords[key] = new CoordEntry(request, theater, now, null);
+        SendCoordRequest(request);
+        return null;
+    }
+
+    private static bool SamePoint(DcsCoordPoint a, DcsCoordPoint b) =>
+        a.Lat == b.Lat && a.Lon == b.Lon && a.Alt == b.Alt && a.Agl == b.Agl;
+
+    private void SendCoordRequest(DcsCoordPoint point)
+    {
+        var udpClient = _udpClient;
+        if (udpClient == null)
+            return;
+
+        var request = new DcsCoordRequestPacket
+        {
+            RequestId = $"{DateTime.UtcNow.Ticks}:{point.Id}",
+            ClientPort = UdpPort,
+            Points = [point]
+        };
+
+        try
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(request, ClientJsonContext.Default.DcsCoordRequestPacket);
+            lock (_udpSendLock)
+            {
+                udpClient.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Loopback, LosRequestPort));
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to send DCS coordinate request for {Key}", point.Id);
+        }
+    }
+
+    private void ApplyCoordResponse(DcsCoordResponsePacket packet)
+    {
+        if (!packet.Available)
+            return;
+
+        foreach (var result in packet.Points)
+        {
+            if (string.IsNullOrWhiteSpace(result.Id) || !_coords.TryGetValue(result.Id, out var entry))
+                continue;
+            _coords[result.Id] = entry with { Result = new DcsVector3(result.X, result.Y, result.Z) };
+        }
     }
 
     /// <summary>Asks this client's own live DCS instance to check terrain LOS between two
@@ -414,6 +489,12 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
             var packet = JsonSerializer.Deserialize(buffer, ClientJsonContext.Default.DcsLosResponsePacket);
             if (packet != null)
                 ApplyLosResponse(packet);
+        }
+        else if (string.Equals(schema, "openfreq.dcs.coord.response", StringComparison.OrdinalIgnoreCase))
+        {
+            var packet = JsonSerializer.Deserialize(buffer, ClientJsonContext.Default.DcsCoordResponsePacket);
+            if (packet != null)
+                ApplyCoordResponse(packet);
         }
         else if (string.Equals(schema, "openfreq.dcs.los.remote_response", StringComparison.OrdinalIgnoreCase))
         {

@@ -33,13 +33,16 @@ public enum JammingBadge
 
 /// <summary>Per-slot jamming summary, sent to the UI (WeakReferenceMessenger) whenever it changes.</summary>
 /// <param name="MaxJnrDb">Strongest jammer's in-passband J/N, dB; null when no jammer reaches this slot.</param>
+/// <param name="HopHitFraction">For a hopping (HAVE QUICK / SINCGARS) slot, the fraction of hops (or of each dwell,
+/// follower) the strongest jammer hits; 1 for single channel.</param>
 public sealed record JammingStatusMessage(
     int FrequencyKhz,
     Guid SlotId,
     double? MaxJnrDb,
     int JammerCount,
     string? DominantJammerName,
-    bool IsFm);
+    bool IsFm,
+    double HopHitFraction = 1.0);
 
 public interface IJammingService : ILifecycleService, IDisposable
 {
@@ -89,7 +92,7 @@ public sealed class JammingService : IJammingService
     private CancellationTokenSource? _cts;
 
     /// <summary>Loss and geometry from one jammer to one receiver slot.</summary>
-    private sealed record PathResult(double LossDb, double BearingFromJammerDeg);
+    private sealed record PathResult(double LossDb, double BearingFromJammerDeg, double DistanceMeters);
 
     public JammingService(IOpenFreqService openFreq, IDcsExportService dcs, ILogger<JammingService> logger)
         : this(openFreq, dcs, logger, () => DateTime.UtcNow)
@@ -215,10 +218,20 @@ public sealed class JammingService : IJammingService
         var channelClass = JammingMath.ClassifyReceiver(slot.FrequencyKhz);
         var rxBwKhz = JammingMath.ReceiverBandwidthKhz(channelClass);
 
+        var hopping = slot.Eccm is { State: { } hopState, Hopset: { Count: > 0 } hs } ? (hopState, hs) : default;
+
         foreach (var entry in catalog)
         {
             if (!entry.Active || entry.Emissions.Count == 0) continue;
             var jammer = entry.Definition;
+
+            if (hopping.hs != null)
+            {
+                if (HoppingContribution(slot, jammer, entry.Emissions, hopping.hopState, hopping.hs, rxBwKhz, now) is
+                    { } hc)
+                    result.Add(hc);
+                continue;
+            }
 
             // Only bother with path loss when some emission actually lands in the passband.
             var inBand = entry.Emissions
@@ -268,6 +281,73 @@ public sealed class JammingService : IJammingService
         return result;
     }
 
+    /// <summary>
+    /// A jammer against a hopping (HAVE QUICK / SINCGARS) slot (research-02 §6.2–6.3, docs/jamming/HAVE_QUICK.md).
+    /// Static techniques (spot, barrage, partial-band, swept slices): μ = |hopset ∩ jammed spectrum| / N from the
+    /// slot's actual hopset (FMT list, lockouts), and the per-hop J/N is the jammer's in-channel power on a hopset
+    /// channel it covers. A follower (responsive jammer whose band reaches the hopset) puts its whole emission on
+    /// each hop it detects, T_delay late: f_hit = max(0, 1 − T_delay·R_h), T_delay = reaction + excess path / c.
+    /// The transmitter's position isn't known here, so the excess path assumes it is next to the receiver
+    /// (d_TJ ≈ d_JR, d_TR ≈ 0: 2·d_JR / c), which is the jammer's worst case.
+    /// </summary>
+    private JammerContribution? HoppingContribution(JammingReceiverSlot slot, JammerDefinition jammer,
+        IReadOnlyList<JammerEmission> emissions, OpenFreqAudio.Eccm.HopSlotState hop, OpenFreq.Common.Eccm.Hopset hopset,
+        double rxBwKhz, DateTime now)
+    {
+        // Emissions that land on at least one hopset channel.
+        var hitting = emissions.Where(e => hopset.ChannelsHitBy(e.CenterKhz, e.BandwidthKhz) > 0).ToList();
+        if (hitting.Count == 0) return null;
+
+        var path = GetPath(jammer, slot, now);
+        if (path == null) return null;
+
+        bool follower = jammer.Responsive ?? false;
+        double bestJnr = double.NegativeInfinity;
+        JammerEmission? best = null;
+        foreach (var e in hitting)
+        {
+            var eirp = JammingMath.EirpDbm(jammer, path.BearingFromJammerDeg, e.PowerFraction);
+            // In-channel share: a follower re-tunes its whole emission onto the hop; a static emission has
+            // rxBw / B_J of its power in any one channel it covers (all of a narrow spot).
+            var fraction = follower ? 1.0 : Math.Min(1.0, rxBwKhz / Math.Max(1e-6, e.BandwidthKhz));
+            var jnr = eirp - path.LossDb + 10.0 * Math.Log10(fraction) - slot.ReceiverSensitivityDbm;
+            if (jnr > bestJnr)
+            {
+                bestJnr = jnr;
+                best = e;
+            }
+        }
+        if (best == null || !double.IsFinite(bestJnr) || bestJnr < MinContributionJnrDb) return null;
+
+        double hitFraction;
+        if (follower)
+        {
+            var excessPathMs = 2.0 * path.DistanceMeters / 299_792_458.0 * 1000.0;
+            hitFraction = JammingMath.FollowerHitFraction((jammer.ReactionMs ?? 0f) + excessPathMs,
+                hop.EffectiveHopRateHz);
+        }
+        else
+        {
+            hitFraction = hopset.HitFraction(hitting.Select(e => (e.CenterKhz, e.BandwidthKhz)));
+        }
+        if (hitFraction <= 0) return null;
+
+        var offsetHz = best.BandwidthKhz <= 2 * rxBwKhz
+            ? JammingMath.CarrierToleranceOffsetHz(jammer.Id, jammer.CarrierToleranceHz ?? 0)
+            : 0.0;
+
+        return new JammerContribution(
+            jammer.Id,
+            (float)bestJnr,
+            jammer.Technique ?? JammerTechnique.Noise,
+            (float)offsetHz,
+            WaveformParams(jammer),
+            follower,
+            jammer.ReactionMs ?? 0f,
+            (float)hitFraction,
+            HopFollower: follower);
+    }
+
     private static JammerWaveformParams WaveformParams(JammerDefinition j) => new()
     {
         ToneOffsetsHz = j.ToneOffsetsHz ?? [],
@@ -290,7 +370,7 @@ public sealed class JammingService : IJammingService
             ? null
             : catalog.FirstOrDefault(c => c.Definition.Id == strongest.JammerId)?.Definition.Name ?? strongest.JammerId;
         var status = new JammingStatusMessage(slot.FrequencyKhz, slot.SlotId, strongest?.JnrDb, contributions.Count,
-            name, isFm);
+            name, isFm, strongest?.HopHitFraction ?? 1.0);
 
         var key = (slot.FrequencyKhz, slot.SlotId);
         if (_status.TryGetValue(key, out var previous) && !Differs(previous, status)) return;
@@ -301,7 +381,8 @@ public sealed class JammingService : IJammingService
     private static bool Differs(JammingStatusMessage a, JammingStatusMessage b) =>
         a.JammerCount != b.JammerCount || a.DominantJammerName != b.DominantJammerName ||
         (a.MaxJnrDb == null) != (b.MaxJnrDb == null) ||
-        (a.MaxJnrDb is { } x && b.MaxJnrDb is { } y && Math.Abs(x - y) >= 0.5);
+        (a.MaxJnrDb is { } x && b.MaxJnrDb is { } y && Math.Abs(x - y) >= 0.5) ||
+        Math.Abs(a.HopHitFraction - b.HopHitFraction) >= 0.005;
 
     // ------------------------------------------------------------------ badge
 
@@ -309,15 +390,27 @@ public sealed class JammingService : IJammingService
     /// The channel-card badge for a slot. With a wanted signal present, J/S = JNR − SNR decides: at or above the kill
     /// threshold (AM 0 dB, FM +3 dB) it is JAMMED, else INTERFERENCE. Without one, a jammer ≥ <see cref="StrongJnrDb"/>
     /// over the noise is JAMMED. Anything below <see cref="AudibleJnrDb"/> shows nothing.
+    /// A hopping radio loses only <paramref name="hopHitFraction"/> of its hops (research-02 §6.4, Miller–Licklider):
+    /// under 1 % it shows nothing (≈ one tick every few seconds), under 50 % at most INTERFERENCE (chopped but
+    /// readable).
     /// </summary>
-    public static JammingBadge ClassifyBadge(double? maxJnrDb, double? signalSnrDb, bool isFm)
+    public static JammingBadge ClassifyBadge(double? maxJnrDb, double? signalSnrDb, bool isFm,
+        double hopHitFraction = 1.0)
     {
         if (maxJnrDb is not { } jnr || jnr < AudibleJnrDb) return JammingBadge.None;
+        if (hopHitFraction < MinAudibleHopFraction) return JammingBadge.None;
         var kill = JammingMath.KillThresholdDb(isFm ? VoiceModulation.Fm : VoiceModulation.Am);
-        if (signalSnrDb is { } snr)
-            return jnr - snr >= kill ? JammingBadge.Jammed : JammingBadge.Interference;
-        return jnr >= StrongJnrDb ? JammingBadge.Jammed : JammingBadge.Interference;
+        var badge = signalSnrDb is { } snr
+            ? jnr - snr >= kill ? JammingBadge.Jammed : JammingBadge.Interference
+            : jnr >= StrongJnrDb ? JammingBadge.Jammed : JammingBadge.Interference;
+        return badge == JammingBadge.Jammed && hopHitFraction < DeniedHopFraction ? JammingBadge.Interference : badge;
     }
+
+    /// <summary>Hop hit fraction below which a hopping radio's badge stays blank.</summary>
+    public const double MinAudibleHopFraction = 0.01;
+
+    /// <summary>Hop hit fraction from which a hopping radio can show JAMMED (half the hops lost).</summary>
+    public const double DeniedHopFraction = 0.5;
 
     // ------------------------------------------------------------------ propagation
 
@@ -390,7 +483,7 @@ public sealed class JammingService : IJammingService
                 loss += l * 60.0;
             }
 
-            return new PathResult(loss, JammingMath.BearingDeg(tx.Z, tx.X, rx.Z, rx.X));
+            return new PathResult(loss, JammingMath.BearingDeg(tx.Z, tx.X, rx.Z, rx.X), distance);
         }
 
         return GeodeticPath(jammer, slot);
@@ -409,7 +502,7 @@ public sealed class JammingService : IJammingService
         if (horizon == null) return null;
 
         return new PathResult(FreeSpaceLossDb(slot.FrequencyKhz, distance) + horizon.Value,
-            JammingMath.GeodeticBearingDeg(lat, lon, rx.LatitudeDeg, rx.LongitudeDeg));
+            JammingMath.GeodeticBearingDeg(lat, lon, rx.LatitudeDeg, rx.LongitudeDeg), distance);
     }
 
     /// <summary>BMS / stationary / ACMI receivers: both ends in the heightmap frame. A DCS-local jammer is placed
@@ -467,7 +560,7 @@ public sealed class JammingService : IJammingService
         var horizon = HorizonLoss(distance, talt, rx.Z);
         if (horizon == null) return null;
 
-        return new PathResult(loss + horizon.Value, JammingMath.BearingDeg(0, 0, east, north));
+        return new PathResult(loss + horizon.Value, JammingMath.BearingDeg(0, 0, east, north), distance);
     }
 
     /// <summary>The jammer's DCS-local position: configured, or converted from lat/lon by DCS (cached there).</summary>

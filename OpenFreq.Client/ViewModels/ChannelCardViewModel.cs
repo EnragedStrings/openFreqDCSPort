@@ -182,7 +182,8 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     /// audible), from JammingService's per-slot max JNR against the current signal -- see
     /// JammingService.ClassifyBadge. Same placement and style as <see cref="SignalBlockedText"/>.</summary>
     public string? JammingText =>
-        JammingService.ClassifyBadge(JammingStatus?.MaxJnrDb, CurrentSignalSnrDb, JammingStatus?.IsFm ?? false) switch
+        JammingService.ClassifyBadge(JammingStatus?.MaxJnrDb, CurrentSignalSnrDb, JammingStatus?.IsFm ?? false,
+                JammingStatus?.HopHitFraction ?? 1.0) switch
         {
             JammingBadge.Jammed => "JAMMED",
             JammingBadge.Interference => "INTERFERENCE",

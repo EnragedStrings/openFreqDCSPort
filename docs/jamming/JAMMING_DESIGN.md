@@ -1,7 +1,9 @@
 # OpenFreq Communications Jamming — Design
 
-Status: design agreed 2026-11-09. Phase 0, Phase 1 (scripted jammers from server config) and Phase 2 (auto-targeting brain)
-implemented; phases 3-6 pending.
+Status: design agreed 2026-11-09. Phase 0, Phase 1 (scripted jammers from server config), Phase 2 (auto-targeting brain)
+and Phase 3 (HAVE QUICK + SINCGARS, see `HAVE_QUICK.md`) implemented; phases 4-6 pending. Phase 3 leaves for later:
+the KY-58 preamble-loss rule over HQ, a mission-date Hooks script, per-coalition comm plans, and in-DCS verification
+of the ARC-210 ECCM fields and the ARC-164 "A" knob index.
 Research behind every number here: `research-01-physics.md` (jamming equation, J/S thresholds, waveforms and
 sounds), `research-02-eccm.md` (HAVE QUICK, SINCGARS, SATCOM, Link-16, hop model), `research-03-systems.md`
 (real jammers, preset table, doctrine), `research-04-codebase-map.md` (integration points, file:line).
@@ -105,6 +107,13 @@ limiting gives power robbing to every user on that channel; DAMA orderwire jammi
   debug view, and in GCI mode a jammer list.
 
 ### HAVE QUICK (full) and SINCGARS
+
+Implemented in phase 3 as described in `HAVE_QUICK.md`. Where the result differs from the plan below:
+
+- **Sync window.** HQ uses ±50 ms [EST] and SINCGARS ±4 s.
+- **Net channel.** A hopping net is routed on a channel derived from its net number (HopNetFrequency).
+- **Hop clock.** Hop timing uses the UTC wall clock plus each radio's TOD offset (net time), not DCS mission time.
+- **Mission date.** It comes from the comm plan, else the server's UTC date.
 - Model: WOD (6 segments × 6 digits; segment 1 and 2 semantics incl. conferencing per research-02 §1.1), MWOD (up
   to 6 dated WODs), TOD (with a sync state: received / not received; drift), net number (A00.000–A99.975 with
   NATO .x25 / non-NATO .x50 / training / FMT nets), hopset selection (NATO ≈2000, non-NATO ≈4000, FMT 5–16 from

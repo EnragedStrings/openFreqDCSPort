@@ -133,7 +133,9 @@ How it works (on the server; the catalog shows each auto jammer's emissions, plu
 - **Burn-through.** Close the range to the other station, or kill the jammer.
 - **Make yourself hard to hear.** Terrain masking, or low altitude, which shortens your radio horizon to
   the jammer.
-- **HAVE QUICK / SINCGARS** (phase 3) frequency hopping beats a spot jammer outright.
+- **HAVE QUICK / SINCGARS** frequency hopping beats a spot jammer outright (a spot on a 2000-channel combat
+  hopset hits 0.05 % of hops). Partial-band, barrage and follower jammers still hurt, and training / FMT nets are
+  weak. The comm plan (`eccm` section) and the details are in [HAVE_QUICK.md](HAVE_QUICK.md).
 
 ## Presets
 
@@ -176,3 +178,9 @@ JNR    = J_in − receiver sensitivity                                  (the sam
 The channel card shows **JAMMED** when the jammer is at or above the signal it would cover
 (J/S ≥ 0 dB AM, +3 dB FM; or JNR ≥ 20 dB with no signal), and **INTERFERENCE** when it is audible.
 Radios in SATCOM mode are not affected in phase 1.
+
+**Hopping radios (HAVE QUICK / SINCGARS).** The client hands playback the hop hit fraction instead of a constant
+jammer. It is μ = (channels of the radio's hopset the jammer covers) / N. A responsive jammer becomes a follower,
+which jams the last 1 − (reaction + 2·d/c)·R_h of every dwell. The per-hop J/N is the jammer's power in one channel.
+All listeners on a net hear the same hops hit. The badge stays blank under 1 % of hops and shows at most
+INTERFERENCE under 50 %. See [HAVE_QUICK.md](HAVE_QUICK.md).

@@ -144,6 +144,10 @@ public class RadioPlayback : IDisposable
         // _lock; the DSP thread reads the reference from its slot snapshot.
         public IReadOnlyList<JammerContribution> Jammers { get; set; } = [];
 
+        // Each jammer's waveform state (phase, PRNG, gates), keyed by JammerId so a new Jammers list with the
+        // same ids carries on where the last one left off. DSP thread only (see SlotReceiver).
+        public Dictionary<string, JammerWaveform> JammerStates { get; } = new();
+
         // True while this slot's receiver state is non-finite and being reset,
         // so that's logged once per run instead of every callback. DSP thread only.
         public bool WasNonFinite { get; set; }
@@ -1222,7 +1226,9 @@ public class RadioPlayback : IDisposable
                 _slots[key] = slot;
             }
 
-            slot.Jammers = contributions;
+            // The DSP thread reads this reference without the lock, so it must be a list nobody mutates later
+            // (each call passes a new one). Per-jammer waveform state survives by JammerId.
+            slot.Jammers = contributions ?? [];
         }
     }
 

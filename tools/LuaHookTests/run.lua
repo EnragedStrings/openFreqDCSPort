@@ -1,9 +1,10 @@
--- Lua test harness for the OpenFreq DCS GameGUI hooks (auto-connect).
+-- Lua test harness for the OpenFreq DCS GameGUI hooks (auto-connect, mission jammers).
 --
 --   lua tools/LuaHookTests/run.lua [repoRoot]
 --
 -- Runs with plain Lua 5.1-5.4 and no DCS: DCS, net, lfs, LuaSocket, io.open (a virtual file
--- system), os.execute and the clock are all stubbed. Exit code 0 = all tests passed.
+-- system), os.execute, the clock and the DCS mission scripting environment (what
+-- net.dostring_in("server", ...) runs in) are all stubbed. Exit code 0 = all tests passed.
 -- OpenFreq.Client.Tests/LuaHookHarnessTests.cs runs this when a `lua` executable is on PATH.
 
 local repoRoot = arg and arg[1] or "."
@@ -191,12 +192,20 @@ local function newEnv(opts)
         recv_chat = function(text) e.localChats[#e.localChats + 1] = text end,
     }
     e.lfs = { writedir = function() return WRITEDIR end }
+    e.udpCreated = 0
+    e.dnsNames = {}   -- host name -> IPv4 for socket.dns.toip
     e.socket = {
+        dns = { toip = function(host) return e.dnsNames[host] end },
         udp = function()
+            e.udpCreated = e.udpCreated + 1
             return {
                 setsockname = function() return 1 end,
-                settimeout = function() end,
-                sendto = function(_, data, host, port) e.sent[#e.sent + 1] = { data = data, host = host, port = port } end,
+                settimeout = function(_, t) e.udpTimeout = t end,
+                sendto = function(_, data, host, port)
+                    if e.udpFail then return nil, "connection refused" end
+                    e.sent[#e.sent + 1] = { data = data, host = host, port = port }
+                    return #data
+                end,
                 receivefrom = function()
                     local item = table.remove(e.inbox, 1)
                     if not item then return nil, "timeout" end
@@ -220,6 +229,7 @@ local function restoreGlobals()
     rawset(_G, "DCS", nil)
     rawset(_G, "net", nil)
     rawset(_G, "lfs", nil)
+    package.loaded.socket = nil
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -591,12 +601,127 @@ local function serverConfig(section)
     return M.encodeJson({ v = 1, autoConnect = base })
 end
 
+---------------------------------------------------------------------------------------------------
+-- Fake DCS mission scripting environment (what net.dostring_in("server", code) runs in)
+---------------------------------------------------------------------------------------------------
+
+-- world = { groups = { {name, side, category, units = { {name, type, life, active, point,
+--           removed, exists, category, failPoint} }} }, statics = { {name, side, type, life,
+--           point, removed, exists} } }
+local function newMissionEnv(world)
+    local unitByName, staticByName = {}, {}
+    local function unitObject(d, g)
+        local o = {}
+        function o:isExist() return d.exists ~= false and not d.removed end
+        function o:getName() return d.name end
+        function o:getLife() return d.life or 1 end
+        function o:isActive() return d.active ~= false end
+        function o:getPoint()
+            if d.failPoint then error("getPoint failed") end
+            local p = d.point or { x = 1000, y = 50, z = 2000 }
+            return { x = p.x, y = p.y, z = p.z }
+        end
+        function o:getTypeName() return d.type or "Ural-375" end
+        function o:getCoalition() return g and g.side or d.side or 0 end
+        if g then
+            function o:getDesc() return { category = d.category or g.category or 2 } end
+            function o:getGroup() return g.object end
+        end
+        return o
+    end
+    local function existingUnits(g)
+        local list = {}
+        for _, d in ipairs(g.units) do
+            if d.exists ~= false and not d.removed then list[#list + 1] = unitObject(d, g) end
+        end
+        return list
+    end
+    for _, g in ipairs(world.groups) do
+        g.object = {
+            getName = function() return g.name end,
+            getUnits = function() return existingUnits(g) end,
+            getUnit = function(_, i) return existingUnits(g)[i] end,
+            getCategory = function() return g.category or 2 end,
+        }
+    end
+    local function find(name)
+        for _, g in ipairs(world.groups) do
+            for _, d in ipairs(g.units) do
+                if d.name == name then return d, g end
+            end
+        end
+    end
+    local function findStatic(name)
+        for _, d in ipairs(world.statics) do
+            if d.name == name then return d end
+        end
+    end
+    local mission = {
+        coalition = {
+            getGroups = function(side)
+                local list = {}
+                for _, g in ipairs(world.groups) do
+                    if g.side == side and #existingUnits(g) > 0 then list[#list + 1] = g.object end
+                end
+                return list
+            end,
+            getStaticObjects = function(side)
+                local list = {}
+                for _, d in ipairs(world.statics) do
+                    if d.side == side and not d.removed then list[#list + 1] = unitObject(d, nil) end
+                end
+                return list
+            end,
+        },
+        Unit = { getByName = function(name)
+            local d, g = find(name)
+            if d and not d.removed then return unitObject(d, g) end
+        end },
+        StaticObject = { getByName = function(name)
+            local d = findStatic(name)
+            if d and not d.removed then return unitObject(d, nil) end
+        end },
+        coord = { LOtoLL = function(p) return 40 + p.x / 100000, 40 + p.z / 100000, p.y end },
+        pcall = pcall, type = type, tostring = tostring, tonumber = tonumber, ipairs = ipairs, pairs = pairs,
+        string = string, table = table, math = math, error = error,
+    }
+    return mission
+end
+
+local function runInMission(world, code)
+    local mission = newMissionEnv(world)
+    local fn, err
+    if rawget(_G, "setfenv") and rawget(_G, "loadstring") then
+        fn, err = loadstring(code, "mission")
+        if fn then setfenv(fn, mission) end
+    else
+        fn, err = load(code, "mission", "t", mission)
+    end
+    if not fn then return "[string] " .. tostring(err) end
+    local ok, result = pcall(fn)
+    if not ok then return tostring(result) end
+    return tostring(result)
+end
+
+local JAM_SECRET = "0123456789abcdef-test-secret"
+
 local function newServer(opts)
     opts = opts or {}
     local e = newEnv({ mp = opts.mp, server = opts.server ~= false })
     if opts.config ~= false then vfs[SERVER_JSON] = opts.config or serverConfig() end
     e.ucids = { [2] = "ucid-two", [3] = "ucid-three" }
-    dofile(SERVER_HOOK)
+    e.world = opts.world or { groups = {}, statics = {} }
+    e.queries = {}
+    e.missionName = "Op Test"
+    e.DCS.getMissionName = function() return e.missionName end
+    e.net.dostring_in = function(state, code)
+        e.queries[#e.queries + 1] = code
+        if e.queryOverride then return e.queryOverride(state, code) end
+        if state ~= "server" then return "" end
+        return runInMission(e.world, code)
+    end
+    package.loaded.socket = e.socket
+    e.hook = dofile(SERVER_HOOK)
     local cb = e.registered
     truthy(type(cb) == "table", "server callbacks registered")
     cb.onMissionLoadEnd()
@@ -759,6 +884,377 @@ test("server: coexists in a callback chain with another hook", function()
     eq(chain("onPlayerTrySendChat", 2, "hi", -1), nil, "chain result")
     eq(chain("onPlayerConnect", 2), nil, "connect chain")
     eq(otherCalls, 2, "other hook reached")
+    restoreGlobals()
+end)
+
+---------------------------------------------------------------------------------------------------
+-- Server hook: jamming module (mission jammers, docs/jamming/MISSION_JAMMERS.md)
+---------------------------------------------------------------------------------------------------
+
+local function jamConfig(section, noAutoConnect)
+    local jam = { enabled = true, secret = JAM_SECRET }
+    for k, v in pairs(section or {}) do jam[k] = v end
+    for k, v in pairs(section or {}) do if v == "nil" then jam[k] = nil end end
+    local cfg = { v = 1, jamming = jam }
+    if not noAutoConnect then
+        cfg.autoConnect = { enabled = true, host = "voice.example.com", port = 9937, sid = "example-main", auth = true }
+    end
+    return M.encodeJson(cfg)
+end
+
+local function demoWorld()
+    return {
+        groups = {
+            { name = "Blue SAM", side = 2, category = 2, units = {
+                { name = "JAM:r934b;mode=auto #001", type = "Ural-375", point = { x = -281000, y = 512, z = 647000 } },
+                { name = "Plain truck" },
+            } },
+            { name = "JAM:@sinitsa", side = 1, category = 2, units = {
+                { name = "Ural 1", point = { x = 100, y = 20, z = 200 } },
+                { name = "Ural 2" },
+            } },
+            { name = "Untagged flight", side = 2, category = 0, units = { { name = "Viper 1-1", type = "F-16C_50" } } },
+            { name = "Jammer flight", side = 2, category = 0, units = { { name = "JAM:ej;tech=Noise", type = "EA-6B", point = { x = 5000, y = 7000, z = 6000 } } } },
+            { name = "Helo", side = 1, category = 1, units = { { name = "JAM:helo", type = "Mi-8MT" } } },
+            { name = "Navy", side = 2, category = 3, units = { { name = "JAM:ship", type = "CVN_71" } } },
+        },
+        statics = {
+            { name = "JAM:spark", side = 0, type = "Comms tower M", point = { x = 10, y = 300, z = 20 } },
+            { name = "Tent", side = 1, type = "FARP Tent" },
+        },
+    }
+end
+
+-- The hook's own sends only (client tests use the same capture list).
+local function jamSent(e)
+    local list = {}
+    for _, item in ipairs(e.sent) do
+        if item.data:sub(1, 5) == "OFJ1 " then list[#list + 1] = item end
+    end
+    return list
+end
+
+local function decodeDatagram(e, item, secret)
+    local J = e.hook.modules.jamming
+    local mac, json = item.data:match("^OFJ1 (%x+) (.*)$")
+    truthy(mac, "datagram shape")
+    eq(#mac, 64, "hmac length")
+    falsy(mac:find("[A-F]"), "uppercase hex")
+    eq(J.hmacSha256Hex(secret or JAM_SECRET, json), mac, "hmac over the json part")
+    truthy(#item.data <= 60000, "datagram size")
+    return jsonDecode(json), json
+end
+
+local function lastJam(e)
+    local list = jamSent(e)
+    local item = list[#list]
+    truthy(item, "a jamming datagram was sent")
+    return decodeDatagram(e, item), item
+end
+
+local function unitsByName(msg)
+    local map, count = {}, 0
+    for _, u in ipairs(msg.units) do map[u.name] = u; count = count + 1 end
+    return map, count
+end
+
+local function serverFrames(e, cb, seconds)
+    local steps = math.floor(seconds / 0.25 + 0.5)
+    for _ = 1, steps do
+        e.clock = e.clock + 0.25
+        eq(cb.onSimulationFrame(), nil, "onSimulationFrame return")
+    end
+end
+
+local function readLog()
+    return vfs[WRITEDIR .. "Logs\\OpenFreqServer.log"] or ""
+end
+
+test("jamming: SHA-256 and HMAC-SHA256 test vectors (native and pure-arithmetic AND)", function()
+    local J = dofile(SERVER_HOOK).modules.jamming
+    local vectors = {
+        { string.rep("\11", 20), "Hi There", "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7" },
+        { "Jefe", "what do ya want for nothing?", "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843" },
+        { string.rep("\170", 131), "Test Using Larger Than Block-Size Key - Hash Key First",
+          "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54" },
+    }
+    local long = string.rep("0123456789abcdef\200\255", 300)
+    local reference
+    for _, backend in ipairs({ "auto", "table" }) do
+        J.selectBand(backend == "table" and "table" or nil)
+        eq(J.sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", backend .. " sha256('')")
+        eq(J.sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", backend .. " sha256('abc')")
+        eq(J.sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", backend .. " sha256 two blocks")
+        for i, v in ipairs(vectors) do
+            eq(J.hmacSha256Hex(v[1], v[2]), v[3], backend .. " RFC 4231 vector #" .. i)
+        end
+        local h = J.hmacSha256Hex("k", long)
+        reference = reference or h
+        eq(h, reference, backend .. " long message agrees across backends")
+    end
+end)
+
+test("jamming: disabled without a valid section; no socket, no query, no send, secret never logged", function()
+    local cases = {
+        M.encodeJson({ v = 1, autoConnect = { enabled = true, host = "voice.example.com", port = 9937 } }),
+        jamConfig({ enabled = false }),
+        jamConfig({ secret = "short" }),
+        jamConfig({ secret = "nil" }),
+        jamConfig({ secret = "CHANGE-ME-to-a-long-random-secret" }),
+        jamConfig({ port = 80 }),
+        jamConfig({ port = 70000 }),
+        jamConfig({ port = "x" }),
+        jamConfig({ host = "localhost" }),
+        jamConfig({ host = "a.com;rm" }),
+        jamConfig({ prefix = "" }),
+        jamConfig({ prefix = string.rep("J", 17) }),
+        jamConfig({ prefix = "JAM\n" }),
+        jamConfig({ intervalSeconds = "2" }),
+        jamConfig({ rescanSeconds = false }),
+        "not json",
+    }
+    for i, cfg in ipairs(cases) do
+        local e, cb = newServer({ config = cfg, world = demoWorld() })
+        serverFrames(e, cb, 5)
+        cb.onSimulationStop()
+        eq(e.udpCreated, 0, "sockets with config #" .. i)
+        eq(#e.queries, 0, "mission queries with config #" .. i)
+        eq(#jamSent(e), 0, "datagrams with config #" .. i)
+        falsy(readLog():find(JAM_SECRET, 1, true), "secret in log #" .. i)
+        if i > 1 and i < #cases then
+            truthy(readLog():find("jamming: disabled: ", 1, true), "disabled reason logged #" .. i)
+        end
+    end
+    -- autoConnect still works when the jamming section is invalid.
+    local e, cb = newServer({ config = jamConfig({ secret = "short" }) })
+    cb.onPlayerConnect(2); cb.onPlayerStart(2)
+    eq(#e.chats, 1, "advert still sent")
+    restoreGlobals()
+end)
+
+test("jamming: nothing is sent when not a multiplayer server", function()
+    for _, opts in ipairs({ { mp = false }, { server = false } }) do
+        opts.config = jamConfig(); opts.world = demoWorld()
+        local e, cb = newServer(opts)
+        serverFrames(e, cb, 10)
+        cb.onSimulationStop()
+        eq(#e.queries, 0, "queries")
+        eq(#jamSent(e), 0, "datagrams")
+    end
+    restoreGlobals()
+end)
+
+test("jamming: full scan on mission load finds unit, static and group tags; datagram format", function()
+    local e, cb = newServer({ config = jamConfig(), world = demoWorld() })
+    local sent = jamSent(e)
+    eq(#sent, 1, "one datagram on mission load")
+    eq(sent[1].host, "127.0.0.1", "default host"); eq(sent[1].port, 9989, "default port")
+    eq(e.udpTimeout, 0, "non-blocking socket")
+    local msg = lastJam(e)
+    eq(msg.v, 1, "v"); eq(msg.seq, 1, "seq")
+    truthy(type(msg.boot) == "string" and msg.boot:match("^%x%x%x%x%x%x%x%x$"), "boot is 8 hex chars")
+    truthy(math.abs(msg.ts - os.time()) <= 5, "ts")
+    truthy(msg.mission:match("^Op Test|%d+$"), "mission identity: " .. tostring(msg.mission))
+    local units, count = unitsByName(msg)
+    eq(count, 6, "tagged units")
+    falsy(units["Plain truck"] or units["Viper 1-1"] or units["Tent"] or units["Ural 2"], "untagged unit listed")
+    local sam = units["JAM:r934b;mode=auto #001"]
+    eq(sam.group, "Blue SAM", "group"); eq(sam.kind, "ground", "kind"); eq(sam.side, 2, "side")
+    eq(sam.type, "Ural-375", "type"); eq(sam.alive, true, "alive")
+    eq(sam.x, -281000, "x"); eq(sam.y, 512, "y"); eq(sam.z, 647000, "z"); eq(sam.alt, 512, "alt")
+    truthy(math.abs(sam.lat - 37.19) < 1e-9, "lat " .. tostring(sam.lat))
+    truthy(math.abs(sam.lon - 46.47) < 1e-9, "lon " .. tostring(sam.lon))
+    local grp = units["Ural 1"]
+    truthy(grp, "group tag puts the jammer on the first unit")
+    eq(grp.group, "JAM:@sinitsa", "group name carries the tag"); eq(grp.side, 1, "red")
+    eq(units["JAM:spark"].kind, "static", "static kind"); eq(units["JAM:spark"].group, "", "static group")
+    eq(units["JAM:spark"].alive, true, "static alive"); eq(units["JAM:spark"].side, 0, "neutral")
+    eq(units["JAM:ej;tech=Noise"].kind, "air", "airplane"); eq(units["JAM:ej;tech=Noise"].alt, 7000, "air alt")
+    eq(units["JAM:helo"].kind, "air", "helicopter"); eq(units["JAM:ship"].kind, "ship", "ship")
+    truthy(readLog():find("jamming: sending to 127.0.0.1:9989", 1, true), "jamming log prefix")
+    restoreGlobals()
+end)
+
+test("jamming: names with '|', newline, backslash and quotes survive the round trip", function()
+    local odd = "JAM:a|b\nc\\d\"e\r|"
+    local world = { groups = { { name = "G|1\\", side = 2, category = 2, units = { { name = odd } } } }, statics = {} }
+    local e, cb = newServer({ config = jamConfig(), world = world })
+    local units = unitsByName(lastJam(e))
+    truthy(units[odd], "odd name present")
+    eq(units[odd].group, "G|1\\", "odd group")
+    serverFrames(e, cb, 2) -- lookup by the known (unescaped) name
+    units = unitsByName(lastJam(e))
+    eq(units[odd] and units[odd].alive, true, "found again by lookup")
+    -- Parser alone.
+    local J = e.hook.modules.jamming
+    local recs = J.parseQueryResult("OFJQ1\nU|JAM:x\\py\\nz\\\\|g||||0|||||||u")
+    eq(#recs, 1, "records"); eq(recs[1].name, "JAM:x|y\nz\\", "unescaped"); eq(recs[1].alive, false, "dead")
+    falsy(J.parseQueryResult("[string \"x\"]:1: attempt to call nil"), "error text rejected")
+    restoreGlobals()
+end)
+
+test("jamming: custom prefix, host name resolution and port", function()
+    local world = demoWorld()
+    world.groups[1].units[2].name = "EW-1 truck"
+    local e, cb = newServer({ world = world, config = jamConfig({ prefix = "EW-", host = "jam.example.com", port = 9990 }) })
+    eq(#jamSent(e), 0, "unresolvable host: nothing sent")
+    truthy(readLog():find("could not resolve jam.example.com", 1, true), "resolve failure logged")
+    e.dnsNames["jam.example.com"] = "10.1.2.3"
+    cb.onMissionLoadEnd()
+    local sent = jamSent(e)
+    eq(sent[#sent].host, "10.1.2.3", "resolved ip"); eq(sent[#sent].port, 9990, "port")
+    local units, count = unitsByName(lastJam(e))
+    eq(count, 1, "only the EW- unit"); truthy(units["EW-1 truck"], "custom prefix")
+    restoreGlobals()
+end)
+
+test("jamming: throttled to intervalSeconds, seq increments, boot stays", function()
+    local e, cb = newServer({ config = jamConfig(), world = demoWorld() })
+    serverFrames(e, cb, 1.75)
+    eq(#jamSent(e), 1, "no send before intervalSeconds")
+    serverFrames(e, cb, 0.25)
+    eq(#jamSent(e), 2, "send at intervalSeconds")
+    serverFrames(e, cb, 6)
+    local sent = jamSent(e)
+    eq(#sent, 5, "every 2 s")
+    local first = decodeDatagram(e, sent[1])
+    for i, item in ipairs(sent) do
+        local msg = decodeDatagram(e, item)
+        eq(msg.seq, i, "seq " .. i); eq(msg.boot, first.boot, "boot"); eq(msg.mission, first.mission, "mission")
+    end
+    -- Clamp: intervalSeconds below 1 becomes 1.
+    e, cb = newServer({ config = jamConfig({ intervalSeconds = 0.1, rescanSeconds = 1 }), world = demoWorld() })
+    serverFrames(e, cb, 3)
+    eq(#jamSent(e), 4, "1 s minimum interval")
+    restoreGlobals()
+end)
+
+test("jamming: dead and removed units are reported alive=false and stay listed", function()
+    local world = demoWorld()
+    local e, cb = newServer({ config = jamConfig(), world = world })
+    world.groups[1].units[1].life = 0          -- killed (still exists, life 0)
+    world.statics[1].removed = true            -- destroyed static: getByName returns nil
+    world.groups[2].units[1].removed = true    -- group-tag unit gone: Ural 2 must NOT take over
+    world.groups[6].units[1].exists = false    -- ship sunk: isExist false
+    serverFrames(e, cb, 2)
+    local units, count = unitsByName(lastJam(e))
+    eq(count, 6, "still six")
+    eq(units["JAM:r934b;mode=auto #001"].alive, false, "killed unit")
+    eq(units["JAM:spark"].alive, false, "removed static"); eq(units["JAM:spark"].lat, nil, "no position when gone")
+    eq(units["Ural 1"].alive, false, "removed group unit"); eq(units["Ural 1"].group, "JAM:@sinitsa", "group kept")
+    eq(units["JAM:ship"].alive, false, "sunk ship"); eq(units["JAM:ship"].kind, "ship", "kind kept")
+    serverFrames(e, cb, 30) -- across a rescan
+    units, count = unitsByName(lastJam(e))
+    eq(count, 6, "still six after rescan")
+    falsy(units["Ural 2"], "next group unit does not inherit the jammer")
+    eq(units["Ural 1"].alive, false, "still dead after rescan")
+    restoreGlobals()
+end)
+
+test("jamming: late spawn appears after rescanSeconds, late activation is not alive", function()
+    local world = demoWorld()
+    world.groups[#world.groups + 1] = { name = "Late", side = 1, category = 2,
+        units = { { name = "JAM:late", active = false, point = { x = 1, y = 2, z = 3 } } } }
+    local e, cb = newServer({ config = jamConfig(), world = world })
+    local units = unitsByName(lastJam(e))
+    eq(units["JAM:late"].alive, false, "inactive = not alive")
+    eq(units["JAM:late"].x, 1, "position still included for an inactive unit")
+    world.groups[#world.groups].units[1].active = true
+    world.groups[#world.groups + 1] = { name = "Spawned", side = 2, category = 2, units = { { name = "JAM:spawned" } } }
+    serverFrames(e, cb, 2)
+    units = unitsByName(lastJam(e))
+    eq(units["JAM:late"].alive, true, "activated")
+    falsy(units["JAM:spawned"], "not before the rescan")
+    serverFrames(e, cb, 26)
+    falsy(unitsByName(lastJam(e))["JAM:spawned"], "not at 28 s")
+    serverFrames(e, cb, 2)
+    truthy(unitsByName(lastJam(e))["JAM:spawned"], "found by the 30 s rescan")
+    restoreGlobals()
+end)
+
+test("jamming: onSimulationStop sends an empty mission once, then nothing", function()
+    local e, cb = newServer({ config = jamConfig(), world = demoWorld() })
+    eq(cb.onSimulationStop(), nil, "return")
+    local msg, item = lastJam(e)
+    eq(msg.mission, "", "empty mission"); eq(#msg.units, 0, "no units")
+    truthy(item.data:find('"units":[]', 1, true), "units is an empty JSON array")
+    eq(msg.seq, 2, "seq continues")
+    local count = #jamSent(e)
+    serverFrames(e, cb, 10)
+    cb.onSimulationStop()
+    eq(#jamSent(e), count, "nothing after stop")
+    -- Next mission: new identity, same boot, seq continues, units rescanned.
+    e.missionName = "Op Next"
+    cb.onMissionLoadEnd()
+    local next = lastJam(e)
+    truthy(next.mission:match("^Op Next|%d+$"), "new mission")
+    eq(next.boot, msg.boot, "same boot"); eq(next.seq, 3, "seq")
+    local stamp = tonumber(next.mission:match("|(%d+)$"))
+    cb.onMissionLoadEnd()
+    truthy(tonumber(lastJam(e).mission:match("|(%d+)$")) > stamp, "every load gets a new id")
+    restoreGlobals()
+end)
+
+test("jamming: failed mission query sends nothing; errors in the mission never escape", function()
+    local e, cb = newServer({ config = jamConfig(), world = demoWorld() })
+    e.queryOverride = function() return "[string \"x\"]:1: boom" end
+    serverFrames(e, cb, 6)
+    eq(#jamSent(e), 1, "no sends while the query fails")
+    e.queryOverride = function() error("dostring_in exploded") end
+    serverFrames(e, cb, 6)
+    eq(#jamSent(e), 1, "no sends while dostring_in throws")
+    e.queryOverride = nil
+    serverFrames(e, cb, 2)
+    eq(#jamSent(e), 2, "recovers")
+    -- A unit whose getPoint throws: listed, not alive (a jammer needs a position).
+    local world = demoWorld()
+    world.groups[1].units[1].failPoint = true
+    e, cb = newServer({ config = jamConfig(), world = world })
+    local units = unitsByName(lastJam(e))
+    eq(units["JAM:r934b;mode=auto #001"].alive, false, "no position -> not alive")
+    eq(units["JAM:r934b;mode=auto #001"].lat, nil, "no lat")
+    -- Socket send failure is logged (rate-limited) and does not throw.
+    e.udpFail = true
+    serverFrames(e, cb, 6)
+    eq(#jamSent(e), 1, "failed sends not captured")
+    local _, failures = readLog():gsub("UDP send to 127%.0%.0%.1:9989 failed", "")
+    eq(failures, 1, "send failure logged once")
+    e.udpFail = false
+    serverFrames(e, cb, 2)
+    eq(lastJam(e).seq, 5, "seq kept counting through failures")
+    restoreGlobals()
+end)
+
+test("jamming: at most 200 units and 60000 bytes per datagram", function()
+    local world = { groups = {}, statics = {} }
+    for i = 1, 230 do
+        world.groups[i] = { name = "G" .. i, side = 2, category = 2,
+            units = { { name = "JAM:" .. string.rep("n", 300) .. i } } }
+    end
+    local e, cb = newServer({ config = jamConfig(), world = world })
+    local msg, item = lastJam(e)
+    truthy(#item.data <= 60000, "size cap")
+    truthy(#msg.units < 200 and #msg.units > 100, "trimmed from the end: " .. #msg.units)
+    truthy(readLog():find("datagram over 60000 bytes", 1, true), "trim logged")
+    truthy(readLog():find("more than 200 tagged units", 1, true), "cap logged")
+    world = { groups = {}, statics = {} }
+    for i = 1, 230 do
+        world.groups[i] = { name = "G" .. i, side = 2, category = 2, units = { { name = "JAM:" .. i } } }
+    end
+    e, cb = newServer({ config = jamConfig(), world = world })
+    eq(#lastJam(e).units, 200, "200 units max")
+    restoreGlobals()
+end)
+
+test("jamming: callbacks return nil and autoConnect is unaffected", function()
+    local e, cb = newServer({ config = jamConfig(), world = demoWorld() })
+    eq(cb.onSimulationFrame(), nil, "frame"); eq(cb.onSimulationStop(), nil, "stop")
+    eq(cb.onMissionLoadEnd(), nil, "load")
+    cb.onPlayerConnect(2); cb.onPlayerStart(2)
+    eq(#e.chats, 1, "advert")
+    eq(e.chats[1].line, EXPECTED_LINE, "advert line")
+    truthy(readLog():find("autoconnect: advert: ", 1, true), "autoconnect log lines unchanged")
     restoreGlobals()
 end)
 

@@ -68,8 +68,8 @@ restart DCS again.
 
 Notes:
 - A `password` key, if present, is **ignored**. Passwords are never advertised.
-- The section can also be spelled `autoconnect`. A `jamming` section is reserved for a later
-  feature that will live in the same hook file and the same config file.
+- The section can also be spelled `autoconnect`. The `jamming` section belongs to mission jammers
+  (below); the example file ships it disabled.
 - If the file is missing or invalid, or `enabled` is not `true`, the hook does nothing.
 - Private addresses (for example `192.168.x.x`) are only accepted by players who reach your DCS
   server over a private address too (LAN play). Public DCS servers must advertise a public address.
@@ -83,10 +83,20 @@ independent: each can point to a different OpenFreq server or port, or be disabl
 ## Coexistence
 
 - The hook returns nothing from every DCS callback except to drop a fake advert, so DCS-SRS,
-  DCSServerBot, and other hooks keep working. It does not use `net.dostring_in` or `os.execute` and
-  does no network I/O.
+  DCSServerBot, and other hooks keep working. It never uses `os.execute`. Auto-connect does not use
+  `net.dostring_in` and does no network I/O; only mission jammers, when enabled, read units with
+  `net.dostring_in("server", ...)` and send UDP to your OpenFreq server.
 - It works on dedicated servers and on player-hosted servers. It does nothing in single player.
 - SRS auto-connect and OpenFreq auto-connect can run side by side.
+
+## Mission jammers
+
+The same hook can also turn mission units into OpenFreq jammers: name a unit, static or group
+`JAM:<preset>` and the hook sends its position and alive state to your OpenFreq server about every
+2 s, signed with a shared secret. Kill the unit and the jamming stops. It is off unless the
+`jamming` section of `OpenFreq.json` has `"enabled": true` and a secret of at least 16 characters
+(replace the example placeholder; the hook refuses it). Setup, naming rules and the wire format:
+[docs/jamming/MISSION_JAMMERS.md](../jamming/MISSION_JAMMERS.md).
 
 ## Checking that it works
 

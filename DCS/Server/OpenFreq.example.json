@@ -7,5 +7,14 @@
     "sid": "example-main",
     "auth": true,
     "chat_command": "-openfreq"
+  },
+  "jamming": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 9989,
+    "secret": "CHANGE-ME-to-a-long-random-secret",
+    "intervalSeconds": 2,
+    "rescanSeconds": 30,
+    "prefix": "JAM:"
   }
 }

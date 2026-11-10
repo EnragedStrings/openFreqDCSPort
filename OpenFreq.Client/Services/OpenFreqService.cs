@@ -2523,6 +2523,10 @@ public class OpenFreqService : IOpenFreqService
         if (resolution.IsHopping) _slotEccm[slotId] = resolution;
         else _slotEccm.TryRemove(slotId, out _);
         _playbackService?.SetSlotHopNet(frequencyKhz, slotId, resolution.State);
+        // and wherever else this radio is tuned right now (the card may have moved to the net's channel since)
+        foreach (var (tunedKhz, tunedSlot) in _tunedSlots.Keys)
+            if (tunedSlot == slotId && tunedKhz != frequencyKhz)
+                _playbackService?.SetSlotHopNet(tunedKhz, slotId, resolution.State);
     }
 
     public OpenFreq.Common.Eccm.EccmResolution? GetSlotEccm(Guid slotId) =>

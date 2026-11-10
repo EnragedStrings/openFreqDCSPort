@@ -20,6 +20,10 @@ public class DcsRadioState
     /// <summary>HAVE QUICK frequency-hopping engaged for this radio.</summary>
     public bool HqOn { get; set; }
 
+    /// <summary>HAVE QUICK / SINCGARS state read from the cockpit (ARC-210 ECCM page) or the ARC-164 "A" knob;
+    /// null when the aircraft doesn't export one (manual entry on the channel card).</summary>
+    public DcsEccmState? Eccm { get; set; }
+
     /// <summary>Cockpit squelch switch state: true = normal/closed squelch, false = the pilot
     /// has manually opened squelch to monitor weak/garbled signals.</summary>
     public bool SquelchOn { get; set; } = true;
@@ -84,6 +88,7 @@ public class DcsRadioState
             Enc = Enc,
             EncKey = EncKey,
             HqOn = HqOn,
+            Eccm = Eccm == null ? null : Eccm with { },
             SquelchOn = SquelchOn,
             ToneOn = ToneOn,
             SatcomSelected = SatcomSelected,

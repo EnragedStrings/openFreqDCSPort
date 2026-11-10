@@ -741,6 +741,7 @@ public sealed class DcsExportService(ILogger<DcsExportService> logger) : IDcsExp
         oldRadio.Enc != newRadio.Enc ||
         oldRadio.EncKey != newRadio.EncKey ||
         oldRadio.HqOn != newRadio.HqOn ||
+        !Equals(oldRadio.Eccm, newRadio.Eccm) ||
         oldRadio.SquelchOn != newRadio.SquelchOn ||
         oldRadio.ToneOn != newRadio.ToneOn ||
         oldRadio.SatcomSelected != newRadio.SatcomSelected ||

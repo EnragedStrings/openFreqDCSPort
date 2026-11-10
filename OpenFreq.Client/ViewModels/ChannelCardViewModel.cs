@@ -284,6 +284,171 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
     /// to decrypt; <see cref="Enc"/>/<see cref="EncKey"/> determine whether they actually do.</summary>
     [ObservableProperty] public partial bool CryptoCapable { get; set; } = true;
 
+    // ------------------------------------------------------------------ HAVE QUICK / SINCGARS
+    // docs/jamming/HAVE_QUICK.md. The settings come from the cockpit (A-10C II ARC-210 ECCM page, ARC-164 "A" knob)
+    // or are entered here (any other radio, GCI). EccmService resolves them against the server's comm plan and
+    // answers with EccmStatus (net, hopset, readiness).
+
+    public static string[] EccmModeOptions { get; } = ["Off", "HAVE QUICK", "SINCGARS"];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EccmModeIndex), nameof(IsEccmActive), nameof(EccmKeyLabel), nameof(EccmNetHint))]
+    public partial OpenFreqAudio.Eccm.HopMode EccmMode { get; set; }
+
+    /// <summary>EccmMode as an index into <see cref="EccmModeOptions"/>, for the combo box.</summary>
+    public int EccmModeIndex
+    {
+        get => (int)EccmMode;
+        set => EccmMode = (OpenFreqAudio.Eccm.HopMode)Math.Clamp(value, 0, 2);
+    }
+
+    /// <summary>HAVE QUICK net ("A12.325") or SINCGARS net ("F001").</summary>
+    [ObservableProperty] public partial string? EccmNet { get; set; }
+
+    /// <summary>A WOD (HAVE QUICK) or TRANSEC key (SINCGARS) typed in by hand; empty = the comm plan's.</summary>
+    [ObservableProperty] public partial string? EccmManualKey { get; set; }
+
+    /// <summary>The radio has a time of day (GPS / TOD receive). Off = "NO TIME".</summary>
+    [ObservableProperty] public partial bool EccmTodValid { get; set; } = true;
+
+    /// <summary>Emergency TOD start: the radio's clock offset from net time, seconds (0 after a TOD receive).</summary>
+    [ObservableProperty] public partial double EccmTodOffsetSeconds { get; set; }
+
+    /// <summary>The cockpit's own readiness line (ARC-210), null when the cockpit reports none.</summary>
+    [ObservableProperty] public partial string? EccmCockpitStatus { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowManualEccmControls), nameof(EccmSourceText))]
+    public partial OpenFreq.Common.Eccm.EccmSource EccmSource { get; set; }
+
+    /// <summary>What EccmService made of the settings (null until it answers, or when off).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EccmBadgeText), nameof(HasEccmBadge), nameof(EccmReadinessText),
+        nameof(HasEccmReadiness), nameof(EccmDescription))]
+    public partial OpenFreq.Common.Eccm.EccmResolution? EccmStatus { get; set; }
+
+    public bool IsEccmActive => EccmMode != OpenFreqAudio.Eccm.HopMode.None;
+
+    /// <summary>The ECCM fields are editable unless the cockpit drives them.</summary>
+    public bool ShowManualEccmControls => EccmSource == OpenFreq.Common.Eccm.EccmSource.Manual;
+
+    public string EccmSourceText => EccmSource switch
+    {
+        OpenFreq.Common.Eccm.EccmSource.Cockpit => "From the cockpit (ARC-210 ECCM page)",
+        OpenFreq.Common.Eccm.EccmSource.Knob => "From the ARC-164 \"A\" knob (virtual HAVE QUICK)",
+        _ => "Manual"
+    };
+
+    public string EccmKeyLabel => EccmMode == OpenFreqAudio.Eccm.HopMode.Sincgars
+        ? "TRANSEC KEY (blank = comm plan / default)"
+        : "WOD, 6 SEGMENTS (blank = comm plan MWOD)";
+
+    public string EccmNetHint => EccmMode == OpenFreqAudio.Eccm.HopMode.Sincgars ? "F001" : "A12.325";
+
+    /// <summary>"HQ A12.325" / "SG F001" while hopping.</summary>
+    public string? EccmBadgeText => EccmStatus is { State: { } s }
+        ? (s.Identity.Mode == OpenFreqAudio.Eccm.HopMode.HaveQuick ? "HQ " : "SG ") + s.Identity.Net
+        : null;
+
+    public bool HasEccmBadge => EccmBadgeText != null;
+
+    /// <summary>"NO TIME", "NO WOD", … while the radio can't hop.</summary>
+    public string? EccmReadinessText => EccmStatus is { IsHopping: true, Readiness: { Length: > 0 } r } ? r : null;
+
+    public bool HasEccmReadiness => EccmReadinessText != null;
+
+    public string EccmDescription => EccmStatus?.Description ?? "";
+
+    private bool _suppressEccmUpdate;
+    private int? _preEccmFrequencyKhz;
+
+    partial void OnEccmModeChanged(OpenFreqAudio.Eccm.HopMode value) => SendEccmUpdate();
+    partial void OnEccmNetChanged(string? value) => SendEccmUpdate();
+    partial void OnEccmManualKeyChanged(string? value) => SendEccmUpdate();
+    partial void OnEccmTodValidChanged(bool value) => SendEccmUpdate();
+    partial void OnEccmTodOffsetSecondsChanged(double value) => SendEccmUpdate();
+
+    /// <summary>The settings as they stand.</summary>
+    public OpenFreq.Common.Eccm.EccmSlotSettings CurrentEccmSettings() => new()
+    {
+        Mode = EccmMode,
+        Net = EccmNet,
+        ManualWod = EccmMode == OpenFreqAudio.Eccm.HopMode.HaveQuick ? EccmManualKey : null,
+        ManualSincgarsKey = EccmMode == OpenFreqAudio.Eccm.HopMode.Sincgars ? EccmManualKey : null,
+        TodValid = EccmTodValid,
+        TodOffsetMs = double.IsFinite(EccmTodOffsetSeconds) ? (long)Math.Round(EccmTodOffsetSeconds * 1000) : 0,
+        CockpitStatus = EccmCockpitStatus,
+        Source = EccmSource
+    };
+
+    /// <summary>
+    /// The cockpit's ECCM state (DCS sync): it drives the fields while it reports one; when it stops reporting, a
+    /// cockpit-driven card goes back to off/manual. Null and already manual: the user's own settings stay.
+    /// </summary>
+    public void ApplyCockpitEccm(OpenFreq.Common.Eccm.EccmSlotSettings? settings)
+    {
+        if (settings == null)
+        {
+            if (EccmSource == OpenFreq.Common.Eccm.EccmSource.Manual) return;
+            settings = OpenFreq.Common.Eccm.EccmSlotSettings.Off;
+        }
+
+        var changed = EccmMode != settings.Mode || EccmNet != settings.Net ||
+                      EccmCockpitStatus != settings.CockpitStatus || EccmSource != settings.Source;
+        if (!changed) return;
+
+        _suppressEccmUpdate = true;
+        try
+        {
+            EccmSource = settings.Source;
+            EccmMode = settings.Mode;
+            EccmNet = settings.Net;
+            EccmCockpitStatus = settings.CockpitStatus;
+            EccmTodValid = settings.TodValid;
+            EccmTodOffsetSeconds = settings.TodOffsetMs / 1000.0;
+        }
+        finally
+        {
+            _suppressEccmUpdate = false;
+        }
+        SendEccmUpdate();
+    }
+
+    /// <summary>"TOD RCV" / GPS time: the radio's clock is on net time.</summary>
+    [RelayCommand]
+    public void ReceiveTod()
+    {
+        EccmTodValid = true;
+        EccmTodOffsetSeconds = 0;
+    }
+
+    private void SendEccmUpdate()
+    {
+        if (_suppressEccmUpdate) return;
+
+        // A manually created channel meets the rest of its net on the net's channel (HopNetFrequency), like
+        // IsManualSatcomMode does for DAMA; DCS channels are retuned by the DCS sync instead.
+        if (RadioStationData.Type != RadioStationData.RadioStationType.DCS)
+        {
+            var netKhz = IsEccmActive ? OpenFreq.Common.Eccm.HopNetFrequency.Khz(EccmMode, EccmNet) : null;
+            var target = netKhz ?? (IsEccmActive ? FrequencyKhz : _preEccmFrequencyKhz ?? FrequencyKhz);
+            if (netKhz != null) _preEccmFrequencyKhz ??= FrequencyKhz;
+            else if (!IsEccmActive) _preEccmFrequencyKhz = null;
+            if (target != FrequencyKhz)
+            {
+                var old = FrequencyKhz;
+                FrequencyKhz = target;
+                if (!IsEditing)
+                    WeakReferenceMessenger.Default.Send(new ChannelUpdatedMessage(Id, old, target, ConnectionStatus, Pan,
+                        _parentLocationViewModel?.IsBmsLocation ?? false));
+            }
+            HqOn = EccmMode != OpenFreqAudio.Eccm.HopMode.None;
+        }
+
+        WeakReferenceMessenger.Default.Send(new OpenFreq.Client.Services.Eccm.ChannelEccmUpdateMessage(Id, FrequencyKhz,
+            CurrentEccmSettings()));
+    }
+
     /// <summary>Only DCS-sourced channels sync Enc/EncKey/HqOn/CryptoCapable automatically; other
     /// types expose them as user-editable controls.</summary>
     public bool ShowManualEncryptionControls =>
@@ -347,6 +512,12 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
         {
             if (m.SlotId == Id && m.FrequencyKhz == FrequencyKhz)
                 JammingStatus = m.MaxJnrDb == null ? null : m;
+        });
+
+        WeakReferenceMessenger.Default.Register<OpenFreq.Client.Services.Eccm.EccmSlotStatusMessage>(this, (_, m) =>
+        {
+            if (m.SlotId == Id)
+                EccmStatus = m.Resolution.IsHopping ? m.Resolution : null;
         });
     }
 
@@ -716,6 +887,7 @@ public partial class ChannelCardViewModel : ViewModelBase, IDisposable
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
         WeakReferenceMessenger.Default.Unregister<SignalStrengthTracker.SignalStrengthUpdateMessage>(this);
         WeakReferenceMessenger.Default.Unregister<JammingStatusMessage>(this);
+        WeakReferenceMessenger.Default.Unregister<OpenFreq.Client.Services.Eccm.EccmSlotStatusMessage>(this);
     }
 }
 

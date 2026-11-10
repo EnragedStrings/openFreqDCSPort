@@ -13,6 +13,17 @@ OpenFreqDCSConfig.a10c2.trustDevicePower = OpenFreqDCSConfig.a10c2.trustDevicePo
 OpenFreqDCSConfig.a10c2.arc210IndicatorIds = OpenFreqDCSConfig.a10c2.arc210IndicatorIds or { 18 }
 OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax = OpenFreqDCSConfig.a10c2.arc210IndicatorScanMax or 100
 
+-- "Virtual HAVE QUICK" on the ARC-164: MNL mode with the 100 MHz knob on "A" makes the other digit knobs dial a
+-- HAVE QUICK net (A12.325). DCS has no HQ logic for this radio; OpenFreq supplies the WOD (docs/jamming/HAVE_QUICK.md).
+-- The knob's "A" position is unverified in-sim: OpenFreqDCS.log logs every raw value of the knob ("ARC164 100MHz
+-- knob"); set aIndex (value / hundredsStep, rounded) to what it reads on "A" if it isn't 2.
+OpenFreqDCSConfig.a10c2.arc164VirtualHq = OpenFreqDCSConfig.a10c2.arc164VirtualHq or {
+    enabled = true,
+    hundredsArgument = 162,
+    hundredsStep = 0.1,
+    aIndex = 2
+}
+
 -- ARC-210 SATCOM detection. DCS itself has no dedicated "SATCOM selected" argument. The PRIMARY
 -- signal (PROJECT_OBSERVED) is the ARC-210 cockpit display's own "active_channel" field, read via
 -- list_indication on the same indicator already used for frequency/COMSEC -- an exact integer

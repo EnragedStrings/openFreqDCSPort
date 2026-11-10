@@ -418,25 +418,148 @@ end
 
 -- KY-58/COMSEC state for the ARC-210, read from the same list_indication values used for its
 -- frequency display. comsec_submode: "PT" = plain text, "CT" = cipher text, "CT-TD" = cipher
--- text with Have Quick (time data) frequency hopping. Mirrors DCS-SRS's A10C2.lua interpretation
--- of indicator 18.
+-- text, time delay (the KY-58's long-preamble mode). DCS-SRS reads CT-TD as HAVE QUICK; it isn't
+-- (arc_210_page_KY.lua: comsec_submode is a KY setting). HAVE QUICK / SINCGARS come from the
+-- ECCM page instead, see getArc210EccmState (docs/jamming/research-05-dcs-hq-export.md §2.3).
 local function getArc210ComsecState(values)
     if not values or not values.comsec_submode then
-        return false, nil, false
+        return false, nil
     end
 
     local submode = values.comsec_submode
     local encKey = tonumber(values.ky_submode_label)
 
-    if submode == "CT" then
-        return true, encKey, false
-    elseif submode == "CT-TD" then
-        return true, encKey, true
+    if submode == "CT" or submode == "CT-TD" then
+        return true, encKey
     end
 
     -- "PT" (plain text) or any other/unrecognized submode
-    return false, encKey, false
+    return false, encKey
 end
+
+local function trimText(value)
+    if type(value) ~= "string" then
+        return ""
+    end
+    return (value:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- HAVE QUICK / SINCGARS from the ARC-210 ECCM page (list_indication(18) while PAGE_ARC_210_ECCM is
+-- shown; research-05 §2.2). Returns nil when the display isn't the ECCM page. Fields:
+--   mode   "hq1" | "hq2" | "sg" | "sg_cs" | "sg_cue" | "off" (NO FILL / empty channel)
+--   net    "A12.300" (HQ: Net_ID_left_part .. "." .. Net_ID_right_part) or "F001" (SG_data)
+--   status active_eccm_channel_HQI_status: "" = ready, "NO TIME", "NO WOD", "NO MWOD",
+--          "NO OPER DAY", "NO FMT", "INVALID NET ID"
+--   eccmChannel, sgLateEntry ("LE" / "LFn"), source = "cockpit"
+local function parseArc210EccmPage(values)
+    if type(values) ~= "table" then
+        return nil
+    end
+    local rawType = values.active_eccm_channel_type
+    if rawType == nil and values.Net_ID_left_part == nil and values.SG_data == nil and values["NO FILL"] == nil then
+        return nil
+    end
+
+    local eccmType = trimText(rawType):upper()
+    local eccm = {
+        source = "cockpit",
+        eccmChannel = tonumber(trimText(values.active_eccm_channel_index)),
+        status = ""
+    }
+    if eccmType == "HQI" or eccmType == "HQII" or (eccmType == "" and values.Net_ID_left_part ~= nil) then
+        eccm.mode = eccmType == "HQI" and "hq1" or "hq2"
+        local left = trimText(values.Net_ID_left_part):upper()
+        local right = trimText(values.Net_ID_right_part)
+        if left ~= "" and left:sub(1, 1) ~= "A" then
+            left = "A" .. left
+        end
+        if left ~= "" and right ~= "" then
+            eccm.net = left .. "." .. right
+        end
+        eccm.status = trimText(values.active_eccm_channel_HQI_status):upper()
+    elseif eccmType == "SG" or eccmType == "SG_CS" or eccmType == "SG_CUE" or values.SG_data ~= nil then
+        if values["COLD ST"] ~= nil or values.SG_CS_label_mhz ~= nil or eccmType == "SG_CS" then
+            eccm.mode = "sg_cs"
+        elseif values.SG_CUE_top_line_label ~= nil or eccmType == "SG_CUE" then
+            eccm.mode = "sg_cue"
+        else
+            eccm.mode = "sg"
+        end
+        eccm.net = trimText(values.SG_data):upper()
+        eccm.sgLateEntry = trimText(values.top_line_label)
+    else
+        eccm.mode = "off"
+        if values["NO FILL"] ~= nil then
+            eccm.status = "NO FILL"
+        end
+    end
+    return eccm
+end
+
+-- The ECCM page is only on the display while the pilot looks at it, so the last state read there
+-- holds through other pages (menus, KY) and is dropped on a plain frequency page (single channel).
+local function getArc210EccmState(values)
+    local page = parseArc210EccmPage(values)
+    if page then
+        OpenFreqDCS.arc210Eccm = page
+        return page
+    end
+    if type(values) == "table" and values.freq_label_mhz ~= nil then
+        OpenFreqDCS.arc210Eccm = nil
+    end
+    return OpenFreqDCS.arc210Eccm
+end
+
+-- "Virtual HAVE QUICK" on the ARC-164 (research-05 §3): DCS simulates no HQ logic for it, but its
+-- 100 MHz knob (arg 162) has an "A" position. With the frequency mode on MNL and that knob on "A",
+-- the other digit knobs (163-166) dial the net: A + 10 MHz + 1 MHz digits . 0.1 MHz digit + 25 kHz
+-- step -> "A12.325". OpenFreq supplies the WOD. Knob position values are unverified in-sim:
+-- config.a10c2.arc164VirtualHq.{enabled, hundredsArgument, hundredsStep, aIndex} override them, and
+-- every change of the raw knob value is logged.
+local function getArc164VirtualHq(mainPanel)
+    local cfg = (config.a10c2 and config.a10c2.arc164VirtualHq) or {}
+    if cfg.enabled == false then
+        return nil
+    end
+
+    local mode = getSelectorIndex(mainPanel, 167, 0.1)
+    local knobArg = numberOr(cfg.hundredsArgument, 162)
+    local hundredsIndex, raw = getSelectorIndex(mainPanel, knobArg, numberOr(cfg.hundredsStep, 0.1))
+    if raw ~= nil and OpenFreqDCS.lastArc164HundredsRaw ~= raw then
+        OpenFreqDCS.lastArc164HundredsRaw = raw
+        writeDebug(string.format("ARC164 100MHz knob: arg%s=%.3f index=%s (A index=%s)", tostring(knobArg), raw,
+            tostring(hundredsIndex), tostring(numberOr(cfg.aIndex, 2))))
+    end
+    if mode ~= nil and mode ~= 0 then
+        return nil
+    end
+    if hundredsIndex == nil or hundredsIndex ~= numberOr(cfg.aIndex, 2) then
+        return nil
+    end
+
+    local tens = getSelectorIndex(mainPanel, 163, 0.1)
+    local ones = getSelectorIndex(mainPanel, 164, 0.1)
+    local tenth = getSelectorIndex(mainPanel, 165, 0.1)
+    local quarterIndex = getSelectorIndex(mainPanel, 166, 0.1)
+    if not isIndexInRange(tens, 0, 9) or not isIndexInRange(ones, 0, 9)
+        or not isIndexInRange(tenth, 0, 9) or not isIndexInRange(quarterIndex, 0, 3) then
+        return nil
+    end
+
+    return {
+        mode = "hq2",
+        net = string.format("A%d%d.%d%02d", tens, ones, tenth, quarterKhzByIndex[quarterIndex]),
+        source = "knob"
+    }
+end
+
+OpenFreqDCS.eccm = {
+    getArc210ComsecState = getArc210ComsecState,
+    parseArc210EccmPage = parseArc210EccmPage,
+    getArc210EccmState = getArc210EccmState,
+    getArc164VirtualHq = getArc164VirtualHq,
+    getListIndicatorValues = getListIndicatorValues
+}
 
 local function scanArc210DisplayIndicator()
     local scanMax = numberOr(config.a10c2 and config.a10c2.arc210IndicatorScanMax, 100)
@@ -643,7 +766,17 @@ local function buildA10C2Radios()
     local arc210ActiveChannel = tonumber(arc210DisplayValues and arc210DisplayValues.active_channel)
 
     -- ARC-210 built-in COMSEC (independent of the shared external KY-58 unit below)
-    local arc210Enc, arc210EncKey, arc210HqOn = getArc210ComsecState(arc210DisplayValues)
+    local arc210Enc, arc210EncKey = getArc210ComsecState(arc210DisplayValues)
+    -- HAVE QUICK / SINCGARS: the ECCM page (ARC-210), the "A" knob (ARC-164 virtual HQ).
+    local arc210Eccm = getArc210EccmState(arc210DisplayValues)
+    local arc210HqOn = arc210Eccm ~= nil and (arc210Eccm.mode == "hq1" or arc210Eccm.mode == "hq2")
+    local arc164Eccm = getArc164VirtualHq(mainPanel)
+    local eccmLog = (arc210Eccm and (arc210Eccm.mode .. " " .. tostring(arc210Eccm.net) .. " [" .. tostring(arc210Eccm.status) .. "]") or "none")
+        .. " | ARC164 " .. (arc164Eccm and arc164Eccm.net or "none")
+    if OpenFreqDCS.lastEccmLog ~= eccmLog then
+        OpenFreqDCS.lastEccmLog = eccmLog
+        writeDebug("ECCM: ARC210 " .. eccmLog)
+    end
 
     -- KY-58 Radio Encryption: shared external unit, switchable between the ARC-164 (UHF) and
     -- ARC-186 (VHF-FM). Mirrors DCS-SRS's A10C2.lua cockpit argument mapping (784 power/OP,
@@ -844,6 +977,7 @@ local function buildA10C2Radios()
             enc = arc210Enc,
             encKey = arc210EncKey,
             hqOn = arc210HqOn,
+            eccm = arc210Eccm,
             squelchOn = arc210SquelchOn,
             toneOn = false,
             satcomSelected = arc210SatcomSelected,
@@ -862,7 +996,8 @@ local function buildA10C2Radios()
             ptt = ptt.arc164,
             enc = arc164Enc,
             encKey = arc164EncKey,
-            hqOn = false,
+            hqOn = arc164Eccm ~= nil,
+            eccm = arc164Eccm,
             squelchOn = arc164SquelchOn,
             toneOn = false
         },

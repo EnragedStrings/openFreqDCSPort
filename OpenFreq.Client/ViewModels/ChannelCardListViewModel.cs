@@ -884,6 +884,20 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             }
         }
 
+        // HAVE QUICK / SINCGARS (docs/jamming/HAVE_QUICK.md): a hopping radio meets its net on the net's channel,
+        // whatever the dial shows. The cockpit's state (ARC-210 ECCM page, ARC-164 "A" knob) wins; without one the
+        // card's own manual ECCM settings apply.
+        var cockpitEccm = radio.Eccm?.ToSettings();
+        if (satcomNetId == null)
+        {
+            var existing = DcsLocation?.Channels.FirstOrDefault(c => c.DcsRadioId == key);
+            var hopMode = cockpitEccm?.Mode ?? existing?.EccmMode ?? OpenFreqAudio.Eccm.HopMode.None;
+            var hopNet = cockpitEccm != null ? cockpitEccm.Net : existing?.EccmNet;
+            if (hopMode != OpenFreqAudio.Eccm.HopMode.None &&
+                OpenFreq.Common.Eccm.HopNetFrequency.Khz(hopMode, hopNet) is { } netKhz)
+                effectiveFrequencyKhz = netKhz;
+        }
+
         var channel = SyncDcsChannelOnUiThread(
             key: key,
             name: radio.Name,
@@ -895,6 +909,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             encKey: radio.EncKey,
             hqOn: radio.HqOn,
             squelchOn: radio.SquelchOn);
+
+        channel?.ApplyCockpitEccm(cockpitEccm);
 
         if (channel != null)
         {

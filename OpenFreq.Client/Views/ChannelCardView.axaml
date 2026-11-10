@@ -119,6 +119,25 @@
                         Margin="0,2,0,0"
                         IsVisible="{Binding HasJammingText}" />
 
+                    <!-- HAVE QUICK / SINCGARS: net, hopset and fill ("HQ A12.325 · NATO N=2000 · MWOD"), and the
+                         readiness line when the radio can't hop ("NO TIME", "NO WOD", ...). See
+                         docs/jamming/HAVE_QUICK.md. -->
+                    <TextBlock
+                        Text="{Binding EccmDescription}"
+                        Classes="Caption"
+                        Opacity="0.75"
+                        TextWrapping="NoWrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasEccmBadge}" />
+                    <TextBlock
+                        Text="{Binding EccmReadinessText}"
+                        Classes="Caption"
+                        FontWeight="SemiBold"
+                        Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                        TextWrapping="NoWrap"
+                        Margin="0,2,0,0"
+                        IsVisible="{Binding HasEccmReadiness}" />
+
                     <!-- DEBUG-ONLY: strongest jammer's J/N and J/S (SettingsViewModel.DebugMode). -->
                     <TextBlock
                         Text="{Binding JammingDebugText}"
@@ -245,6 +264,70 @@
                                        VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
+
+                    <!-- HAVE QUICK / SINCGARS: mode + net; click to set net, WOD/key and TOD. -->
+                    <Button Classes="Flat"
+                            Padding="8,4"
+                            CornerRadius="4"
+                            ToolTip.Tip="HAVE QUICK / SINCGARS (net, WOD, TOD)">
+                        <Panel>
+                            <TextBlock Text="{Binding EccmBadgeText}"
+                                       IsVisible="{Binding HasEccmBadge}"
+                                       Classes="Body2"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="AJ"
+                                       IsVisible="{Binding !HasEccmBadge}"
+                                       Classes="Body2"
+                                       Opacity="0.55"
+                                       VerticalAlignment="Center" />
+                        </Panel>
+                        <Button.Flyout>
+                            <Flyout Placement="Bottom">
+                                <StackPanel Spacing="8" Width="300">
+                                    <TextBlock Text="HAVE QUICK / SINCGARS"
+                                               Classes="Caption"
+                                               Opacity="0.55"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1" />
+                                    <TextBlock Text="{Binding EccmSourceText}" Classes="Caption" Opacity="0.75" />
+                                    <ComboBox ItemsSource="{Binding EccmModeOptions}"
+                                              SelectedIndex="{Binding EccmModeIndex}"
+                                              IsEnabled="{Binding ShowManualEccmControls}"
+                                              HorizontalAlignment="Stretch" />
+                                    <TextBlock Text="NET" Classes="Caption" Opacity="0.55" />
+                                    <TextBox Text="{Binding EccmNet}"
+                                             PlaceholderText="{Binding EccmNetHint}"
+                                             IsEnabled="{Binding ShowManualEccmControls}" />
+                                    <TextBlock Text="{Binding EccmKeyLabel}" Classes="Caption" Opacity="0.55" />
+                                    <TextBox Text="{Binding EccmManualKey}"
+                                             PasswordChar="•"
+                                             PlaceholderText="300.050 251.000 277.775 312.600 225.025 399.975"
+                                             IsEnabled="{Binding IsEccmActive}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <CheckBox Content="TOD (GPS / received)"
+                                                  IsChecked="{Binding EccmTodValid}"
+                                                  IsEnabled="{Binding ShowManualEccmControls}" />
+                                        <Button Content="TOD RCV"
+                                                Command="{Binding ReceiveTodCommand}"
+                                                Classes="Outline"
+                                                ToolTip.Tip="Receive time of day: the radio's clock goes onto net time" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="TOD offset (s)" Classes="Caption" VerticalAlignment="Center" />
+                                        <TextBox Text="{Binding EccmTodOffsetSeconds}" Width="90"
+                                                 ToolTip.Tip="An emergency-started clock: how far it is off net time" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding EccmDescription}" Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding EccmReadinessText}"
+                                               Classes="Caption"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource MaterialValidationErrorBrush}"
+                                               IsVisible="{Binding HasEccmReadiness}" />
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
 
                     <!-- Clickable Hotkey Button - Click to set/change hotkey -->
                     <Button Command="{Binding BeginCaptureHotkeyCommand}"

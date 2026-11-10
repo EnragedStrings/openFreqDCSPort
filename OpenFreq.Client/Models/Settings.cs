@@ -26,6 +26,10 @@ public class OpenFreqSettings
     public int BmsRadio2Pan { get; set; }
     public Dictionary<string, int> DcsRadioPans { get; set; } = [];
 
+    /// <summary>Per-DCS-radio volume (0..1) used while <see cref="DcsManualRadioControlOverride"/> is on, keyed like
+    /// <see cref="DcsRadioPans"/>. A radio with no entry plays at full volume (0 dB).</summary>
+    public Dictionary<string, double> DcsRadioVolumes { get; set; } = [];
+
     // Keyed by "{unit}:{slot}" (see ChannelCardListViewModel.GetDcsRadioKey) so bindings from
     // different aircraft with overlapping slot numbers don't collide. One dictionary in place of
     // fixed per-radio properties since different aircraft have different radio counts (the A-10's

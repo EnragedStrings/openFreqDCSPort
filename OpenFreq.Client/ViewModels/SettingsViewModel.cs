@@ -227,6 +227,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public partial int BmsRadio2Pan { get; set; } = 0;
 
     private Dictionary<string, int> _dcsRadioPans = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, double> _dcsRadioVolumes = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, HotkeyBinding> _dcsPttHotkeys = new(StringComparer.OrdinalIgnoreCase);
 
     // Seven global TX PTT keybind slots, keyed by radio position (1-7, the max radio count across
@@ -725,6 +726,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _dcsRadioPans = new Dictionary<string, int>(
             settings.DcsRadioPans ?? new Dictionary<string, int>(),
             StringComparer.OrdinalIgnoreCase);
+        _dcsRadioVolumes = new Dictionary<string, double>(
+            settings.DcsRadioVolumes ?? new Dictionary<string, double>(),
+            StringComparer.OrdinalIgnoreCase);
         _dcsPttHotkeys = new Dictionary<string, HotkeyBinding>(
             settings.DcsPttHotkeys ?? new Dictionary<string, HotkeyBinding>(),
             StringComparer.OrdinalIgnoreCase);
@@ -788,9 +792,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
         AmbientNoiseVolume = settings.AmbientNoiseVolume;
         AutoRecordInGameMode = settings.AutoRecordInGameMode;
-        // Manual volume/squelch override always starts off, regardless of the saved value --
-        // cockpit-driven control should be the default state on every launch.
-        DcsManualRadioControlOverride = false;
+        // Manual volume/squelch override: kept across launches, for cockpits whose volume knobs don't export
+        // (or export wrongly). Off by default.
+        DcsManualRadioControlOverride = settings.DcsManualRadioControlOverride;
         // Keep the computed AppData default when no path was saved.
         if (!string.IsNullOrWhiteSpace(settings.RecordingPath))
             RecordingPath = settings.RecordingPath;
@@ -989,6 +993,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             BmsRadio1Pan = BmsRadio1Pan,
             BmsRadio2Pan = BmsRadio2Pan,
             DcsRadioPans = new Dictionary<string, int>(_dcsRadioPans, StringComparer.OrdinalIgnoreCase),
+            DcsRadioVolumes = new Dictionary<string, double>(_dcsRadioVolumes, StringComparer.OrdinalIgnoreCase),
             DcsPttHotkeys = new Dictionary<string, HotkeyBinding>(_dcsPttHotkeys, StringComparer.OrdinalIgnoreCase),
             GlobalPttHotkey = GlobalPttHotkey,
             OverlayEnabled = OverlayEnabled,
@@ -1055,6 +1060,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             return;
 
         _dcsRadioPans[radioId] = Math.Clamp(pan, -100, 100);
+    }
+
+    /// <summary>The manual-override volume of a DCS radio (0..1); full volume until the user sets one.</summary>
+    public double GetDcsRadioVolume(string radioId) =>
+        _dcsRadioVolumes.TryGetValue(radioId, out var volume) && double.IsFinite(volume)
+            ? Math.Clamp(volume, 0.0, 1.0)
+            : 1.0;
+
+    public void SetDcsRadioVolume(string radioId, double volume)
+    {
+        if (string.IsNullOrWhiteSpace(radioId) || !double.IsFinite(volume))
+            return;
+
+        _dcsRadioVolumes[radioId] = Math.Clamp(volume, 0.0, 1.0);
     }
 
     /// <summary>Raised when a setting that shouldn't wait for the normal clean-shutdown-only

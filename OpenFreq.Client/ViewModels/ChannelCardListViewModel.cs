@@ -234,7 +234,17 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             (r, m) => _openFreqService.SetEncryption(m.FrequencyKhz, m.ChannelId, m.Enc, m.EncKey, m.HqOn,
                 m.CryptoCapable));
         WeakReferenceMessenger.Default.Register<ChannelVolumeUpdateMessage>(this,
-            (r, m) => _openFreqService.SetVolume(m.FrequencyKhz, m.ChannelId, (float)m.Volume));
+            (r, m) =>
+            {
+                _openFreqService.SetVolume(m.FrequencyKhz, m.ChannelId, (float)m.Volume);
+
+                // Manual override: the slider is the volume, remembered per DCS radio (the guard receiver follows it).
+                if (!_settings.DcsManualRadioControlOverride) return;
+                var dcsChannel = DcsLocation?.Channels.FirstOrDefault(c => c.Id == m.ChannelId);
+                if (string.IsNullOrWhiteSpace(dcsChannel?.DcsRadioId)) return;
+                _settings.SetDcsRadioVolume(dcsChannel.DcsRadioId, m.Volume);
+                ApplyGuardMonitorVolume(dcsChannel.DcsRadioId, m.Volume);
+            });
         WeakReferenceMessenger.Default.Register<LocationViewModel.LocationSelectionRequestedMessage>(this,
             (r, m) => SelectedLocation = Locations.FirstOrDefault(g => g.Id == m.LocationId));
 
@@ -297,6 +307,42 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
         {
             SyncGlobalPttHotkeyRegistration();
         }
+        else if (e.PropertyName == nameof(SettingsViewModel.DcsManualRadioControlOverride))
+        {
+            ApplyDcsVolumesOnUiThread();
+        }
+    }
+
+    /// <summary>The manual volume override was switched: put every DCS radio (and its guard receiver) on the
+    /// remembered manual volume, or back on the cockpit knob. Without this the sliders keep the last cockpit
+    /// value (often -80 dB) until the cockpit next changes something.</summary>
+    private void ApplyDcsVolumesOnUiThread()
+    {
+        if (DcsLocation == null) return;
+
+        void Apply()
+        {
+            var manual = _settings.DcsManualRadioControlOverride;
+            var radios = _dcsExportService.GetRadios();
+            foreach (var channel in DcsLocation.Channels)
+            {
+                if (string.IsNullOrWhiteSpace(channel.DcsRadioId)) continue;
+                var cockpit = radios.FirstOrDefault(r => GetDcsRadioKey(r) == channel.DcsRadioId);
+                var volume = manual ? _settings.GetDcsRadioVolume(channel.DcsRadioId) : cockpit?.Volume;
+                if (volume == null) continue;
+                channel.Volume = volume.Value;
+                ApplyGuardMonitorVolume(channel.DcsRadioId, volume.Value);
+            }
+        }
+
+        UiThread.RunOrPost(Apply);
+    }
+
+    private void ApplyGuardMonitorVolume(string radioKey, double volume)
+    {
+        if (_guardMonitorJoinedFrequencyKhz.TryGetValue(radioKey, out var guardKhz) &&
+            _guardMonitorSlotIds.TryGetValue(radioKey, out var guardSlotId))
+            _openFreqService.SetVolume(guardKhz, guardSlotId, (float)volume);
     }
 
     private HotkeyBinding? _registeredGlobalPttHotkey;
@@ -1145,7 +1191,9 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 _openFreqService.SetSquelch(guardFrequencyKhz, slotId, isSquelchClosed: true);
                 _guardMonitorJoinedFrequencyKhz[radioKey] = guardFrequencyKhz;
             }
-            _openFreqService.SetVolume(guardFrequencyKhz, slotId, (float)radio.Volume);
+            _openFreqService.SetVolume(guardFrequencyKhz, slotId, (float)(_settings.DcsManualRadioControlOverride
+                ? _settings.GetDcsRadioVolume(radioKey)
+                : radio.Volume));
             ApplyDcsSpatial(guardFrequencyKhz, slotId, radio);
         }
         else if (_guardMonitorJoinedFrequencyKhz.TryGetValue(radioKey, out var joinedFrequencyKhz) &&
@@ -1224,6 +1272,10 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             {
                 channel.Volume = volume;
                 channel.IsSquelchEnabled = squelchOn;
+            }
+            else
+            {
+                channel.Volume = _settings.GetDcsRadioVolume(key);
             }
             _openFreqService.SetPan(channel.FrequencyKhz, channel.Id, channel.Pan);
         }

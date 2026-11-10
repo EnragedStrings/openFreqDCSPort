@@ -178,6 +178,31 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void DcsManualVolumeOverride_AndPerRadioVolumes_RoundTripThroughSettings()
+    {
+        var vm = VmFactory.Settings();
+        Assert.False(vm.DcsManualRadioControlOverride);
+        Assert.Equal(1.0, vm.GetDcsRadioVolume("1")); // no entry: full volume, not the cockpit's -80 dB
+
+        vm.DcsManualRadioControlOverride = true;
+        vm.SetDcsRadioVolume("1", 0.5);
+        vm.SetDcsRadioVolume("2", 7.0);           // clamped
+        vm.SetDcsRadioVolume("3", double.NaN);    // ignored
+
+        var settings = vm.GetSettings();
+        settings.DarkMode = null;
+        settings.WindowState = null;
+
+        var fresh = VmFactory.Settings();
+        fresh.LoadFromSettings(settings);
+
+        Assert.True(fresh.DcsManualRadioControlOverride); // stays on across restarts
+        Assert.Equal(0.5, fresh.GetDcsRadioVolume("1"));
+        Assert.Equal(1.0, fresh.GetDcsRadioVolume("2"));
+        Assert.Equal(1.0, fresh.GetDcsRadioVolume("3"));
+    }
+
+    [Fact]
     public void WindowPlacement_SurvivesSaveWithoutUpdateWindowSettings()
     {
         // Closing while minimized skips the size/position capture in UpdateWindowSettings;

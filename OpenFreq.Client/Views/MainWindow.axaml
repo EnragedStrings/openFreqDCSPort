@@ -549,7 +549,7 @@
                                         </StackPanel>
                                         <CheckBox Content="Manual volume/squelch override"
                                                   IsChecked="{Binding Settings.DcsManualRadioControlOverride}"
-                                                  ToolTip.Tip="Off (default): the DCS cockpit volume knob controls each radio's volume. On: each channel's own Volume/Squelch controls take effect instead." />
+                                                  ToolTip.Tip="Off (default): the DCS cockpit volume knobs control each radio's volume. On: each channel's own Volume/Squelch controls take effect instead, starting at full volume; the volume you set is remembered per radio and the setting stays on across restarts. Use it when a cockpit's volume knobs don't reach OpenFreq." />
                                     </StackPanel>
                                 </controls:Card>
 

@@ -22,6 +22,9 @@ UninstallDisplayIcon={app}\OpenFreq.Server.exe
 
 [Files]
 Source: "..\..\artifacts\publish\server\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; DCS multiplayer auto-connect: the DCS-server hook and a sample config, for the admin to copy into
+; the DCS server's Saved Games folder (docs/autoconnect/SERVER_ADMIN.md). Not installed into DCS.
+Source: "..\..\DCS\Server\*"; DestDir: "{app}\DCS-Hooks"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\OpenFreq DCS Server"; Filename: "{app}\OpenFreq.Server.exe"

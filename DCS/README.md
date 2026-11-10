@@ -115,3 +115,12 @@ argument. `minId`/`maxId` (default `0`-`900`) bound the scan range, and
 per-frame cost, so set `debugArgScan.optIn` back to `false` once you've found what
 you need. Arguments that keep changing (gauges, needles, animations) are logged as "muted" after a
 few changes and then skipped, and each DCS session starts a fresh log capped at 25 MB.
+
+## Multiplayer auto-connect hooks
+
+- `OpenFreqDCS/Hooks/OpenFreq-ClientGameGUI.lua`: installed by the client into `Saved Games\DCS...\Scripts\Hooks`;
+  a thin loader for `OpenFreqDCS/Scripts/OpenFreqAutoConnectGameGUI.lua`. Reads the app-written
+  `Mods\Services\OpenFreqDCS\AutoConnect\client.json` and talks to the app on `127.0.0.1:34323`.
+- `Server/OpenFreq-ServerGameGUI.lua` and `Server/OpenFreq.example.json`: for DCS server admins, see
+  [docs/autoconnect/SERVER_ADMIN.md](../docs/autoconnect/SERVER_ADMIN.md).
+- Tests: `lua tools/LuaHookTests/run.lua .` (stubbed DCS environment).

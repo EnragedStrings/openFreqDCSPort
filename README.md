@@ -56,6 +56,8 @@ Real-time network voice radio with real-time physics simulation for [Falcon BMS]
 
 The DCS export is installed under `Saved Games\DCS...\Mods\Services\OpenFreqDCS` and is loaded from `Saved Games\DCS...\Scripts\Export.lua`. Heightmap sampling is disabled by default in `DCS/OpenFreqDCS/Scripts/OpenFreqDCSConfig.lua`; enable it only when you want DCS to generate a raw terrain file for OpenFreq.
 
+**DCS multiplayer auto-connect (opt-in):** a DCS server can advertise its OpenFreq server in one chat line, and OpenFreq connects (and can be started by DCS) when you join. Off until you allow it; your saved address and password are never changed. Players: [docs/autoconnect/CLIENT.md](docs/autoconnect/CLIENT.md). Server admins: [docs/autoconnect/SERVER_ADMIN.md](docs/autoconnect/SERVER_ADMIN.md) (DCSServerBot: [DCSSERVERBOT.md](docs/autoconnect/DCSSERVERBOT.md)).
+
 
 ### Server
 1. Verify ports 9987 (TCP), 9988 (UDP) are open (default configuration)

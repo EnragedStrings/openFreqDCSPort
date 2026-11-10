@@ -117,6 +117,15 @@ TCP 9987  (WebSocket signaling)
 UDP 9988  (audio relay)
 ```
 
+### DCS Multiplayer Auto-Connect
+
+A DCS server can tell joining players where its OpenFreq server is: install
+`OpenFreq-ServerGameGUI.lua` and a `Config\OpenFreq.json` on the DCS server (see
+[autoconnect/SERVER_ADMIN.md](autoconnect/SERVER_ADMIN.md); DCSServerBot:
+[autoconnect/DCSSERVERBOT.md](autoconnect/DCSSERVERBOT.md)). Players in DCS mode then connect
+automatically if they allowed it ([autoconnect/CLIENT.md](autoconnect/CLIENT.md)). Passwords are never
+advertised; the client asks for them.
+
 ---
 
 ## 3\. Client - BMS Mode

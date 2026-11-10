@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Threading;
+using OpenFreq.Utilities;
 using CommunityToolkit.Mvvm.ComponentModel;
 using OpenFreqClient.Models;
 
@@ -93,10 +94,7 @@ public partial class RadioOverlayViewModel : ViewModelBase
     /// when actually called from a background thread.</summary>
     private void PostRebuildDisplayedChannels()
     {
-        if (Dispatcher.UIThread.CheckAccess())
-            RebuildDisplayedChannels();
-        else
-            Dispatcher.UIThread.Post(RebuildDisplayedChannels);
+        UiThread.RunOrPost(RebuildDisplayedChannels);
     }
 
     private void RebuildDisplayedChannels()

@@ -337,10 +337,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (Dispatcher.UIThread.CheckAccess())
-            Apply();
-        else
-            Dispatcher.UIThread.Post(Apply);
+        UiThread.RunOrPost(Apply);
     }
 
     private void OnAllLocationsChanged(object? sender, NotifyCollectionChangedEventArgs e)

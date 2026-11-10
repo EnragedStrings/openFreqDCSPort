@@ -1,12 +1,17 @@
+using System.Runtime.CompilerServices;
+using OpenFreq.Utilities;
 using Xunit;
 
-// RadioOverlayViewModelTests pass individually but were flaky as part of the full run: xUnit runs
-// test classes in parallel on separate threads by default, and Avalonia's Dispatcher.UIThread is a
-// process-wide singleton that binds to whichever thread first touches it. Once some other test
-// class claims that thread, RadioOverlayViewModel's PostRebuildDisplayedChannels sees
-// Dispatcher.UIThread.CheckAccess() return false on its own thread and posts to a dispatcher queue
-// nothing in this headless test host ever pumps -- so the update silently never happens before the
-// assertion runs. Disabling parallelization keeps every test class on one thread for the whole run,
-// so there's no other thread to lose that race to. The suite is fast enough (well under a second)
-// that running it sequentially instead of in parallel is not a real cost.
+// Kept: one thread for the whole run also keeps any remaining Dispatcher.UIThread use on a single thread.
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
+
+// Avalonia's Dispatcher.UIThread is a process-wide singleton that binds to whichever thread first touches it, and
+// this headless test host never pumps posted work. View-models that "run now if on the UI thread, else post"
+// (UiThread.RunOrPost) therefore only took effect when the test's own thread happened to win that race -- async
+// tests resume on thread-pool threads, so RadioOverlayViewModelTests failed in roughly 1 run in 3. Run that work
+// inline for the whole test assembly instead, so results never depend on thread identity.
+internal static class TestAssemblySetup
+{
+    [ModuleInitializer]
+    internal static void RunUiWorkInline() => UiThread.RunInline = true;
+}

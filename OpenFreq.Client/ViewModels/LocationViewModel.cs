@@ -267,16 +267,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
             channel.ConnectionStatus = Channel.ChannelConnectionStatus.Disconnected;
         }
 
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            // Already on UI thread - add directly
-            Channels.Add(channel);
-        }
-        else
-        {
-            // Not on UI thread - marshal to UI thread
-            Dispatcher.UIThread.Post(() => { Channels.Add(channel); });
-        }
+        // Add directly on the UI thread, else marshal to it.
+        UiThread.RunOrPost(() => Channels.Add(channel));
 
         return channel;
     }

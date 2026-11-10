@@ -52,6 +52,14 @@ public class HotkeyService : IHotkeyService
     private readonly Dictionary<Guid, string> _deviceNames = [];
     private Thread? _pollingThread;
     private Thread? _enumerationThread;
+
+    // The first DirectInput scan runs on its own thread (see Start): GetDevices() can block for ~30 s on some
+    // machines (a USB device slow to answer), and on the startup path that kept the window from appearing at all.
+    // _directInputInitializing is true from Start() until that thread has acquired the devices and started the
+    // polling/enumeration threads; _directInputInitLock orders that hand-off against AttachWindow.
+    private Thread? _directInputInitThread;
+    private volatile bool _directInputInitializing;
+    private readonly object _directInputInitLock = new();
     private IntPtr _windowHandle;
 
     /// <summary>Handoff for a pending RescanInputDevices() request. The polling thread is the
@@ -89,18 +97,40 @@ public class HotkeyService : IHotkeyService
         _logger.LogInformation("HotkeyService started (keyboard support enabled)");
 
 #if WINDOWS
-        // Initialize DirectInput for joystick support (Windows only)
+        // Initialize DirectInput for joystick support (Windows only), off the startup path: the first device scan
+        // can take ~30 s on some machines, and the main window can't appear until Start() returns. Keyboard hotkeys
+        // work at once; joystick bindings start working when the scan completes.
+        var token = _cts.Token;
+        _directInputInitializing = true;
+        _directInputInitThread = new Thread(() => InitializeDirectInputInBackground(token))
+        {
+            IsBackground = true,
+            Name = "DirectInput Startup Thread"
+        };
+        _directInputInitThread.Start();
+#endif
+    }
+
+#if WINDOWS
+    private void InitializeDirectInputInBackground(CancellationToken token)
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            InitializeDirectInput();
-            _logger.LogInformation("DirectInput initialized - joystick support enabled");
+            InitializeDirectInput(token);
+            _logger.LogInformation("DirectInput initialized - joystick support enabled ({Seconds:F1} s)",
+                started.Elapsed.TotalSeconds);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to initialize DirectInput - joystick support disabled");
         }
-#endif
+        finally
+        {
+            _directInputInitializing = false;
+        }
     }
+#endif
 
     public void Stop()
     {
@@ -139,7 +169,7 @@ public class HotkeyService : IHotkeyService
     }
 
 #if WINDOWS
-    private void InitializeDirectInput()
+    private void InitializeDirectInput(CancellationToken token = default)
     {
         // Get window handle - try to get from main window, fallback to desktop. Start() runs
         // before App.axaml.cs assigns desktop.MainWindow, so mainWindow is always null here and
@@ -150,27 +180,41 @@ public class HotkeyService : IHotkeyService
         // otherwise DirectInput's background/focus-tracking state stays anchored to a window that
         // outlives this app's process, which is what caused bindings to require a full Windows
         // restart (not just an app restart) to recover.
-        try
-        {
-            var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
-                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-                ? desktop.MainWindow
-                : null;
-
-            if (mainWindow != null)
-            {
-                _windowHandle = mainWindow.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
-            }
-        }
-        catch
-        {
-            _windowHandle = IntPtr.Zero;
-        }
-
-        // Fallback: use desktop window
+        // Runs on the startup scan thread: never clobber a handle AttachWindow already stored, and a failed
+        // (off-UI-thread) Avalonia lookup just leaves the handle as it was.
         if (_windowHandle == IntPtr.Zero)
         {
-            _windowHandle = GetDesktopWindow();
+            try
+            {
+                var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
+                    is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                    ? desktop.MainWindow
+                    : null;
+
+                if (mainWindow != null)
+                {
+                    var handle = mainWindow.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                    if (handle != IntPtr.Zero && _windowHandle == IntPtr.Zero)
+                        _windowHandle = handle;
+                }
+            }
+            catch
+            {
+                // keep whatever handle is set (possibly none: the desktop fallback below)
+            }
+        }
+
+        // Fallback: use desktop window. Under the hand-off lock so it can't overwrite an app window AttachWindow
+        // stores at the same moment.
+        IntPtr handleAtScan;
+        lock (_directInputInitLock)
+        {
+            if (_windowHandle == IntPtr.Zero)
+            {
+                _windowHandle = GetDesktopWindow();
+            }
+
+            handleAtScan = _windowHandle;
         }
 
         // Create DirectInput instance
@@ -178,6 +222,25 @@ public class HotkeyService : IHotkeyService
 
         AcquireAttachedDevices();
 
+        // Hand-off under the lock AttachWindow takes: from here on AttachWindow rebinds devices itself.
+        lock (_directInputInitLock)
+        {
+            _directInputInitializing = false;
+
+            if (token.IsCancellationRequested)
+                return; // Stop() came in during the scan: no threads; StopDirectInput releases what was acquired
+
+            // The app window arrived while the scan ran (AttachWindow only stored it): bind every device to it now,
+            // before the polling thread exists, so nothing else touches these devices concurrently.
+            if (_windowHandle != handleAtScan)
+                RebindDevices(_windowHandle);
+
+            StartJoystickThreads();
+        }
+    }
+
+    private void StartJoystickThreads()
+    {
         if (_joystickDevices.Count > 0)
         {
             // Start polling thread
@@ -579,6 +642,21 @@ public class HotkeyService : IHotkeyService
 
     private void StopDirectInput()
     {
+        // The startup scan owns _directInput until it finishes. Callers cancel _cts first, so it starts no threads
+        // once its scan returns; but GetDevices() itself can't be interrupted. If it is still stuck after 10 s, leave
+        // DirectInput alone rather than dispose it under that call (the process is exiting or rescanning anyway).
+        if (_directInputInitThread != null)
+        {
+            if (!_directInputInitThread.Join(TimeSpan.FromSeconds(10)))
+            {
+                _logger.LogWarning(
+                    "DirectInput startup scan still running after 10s -- leaving DirectInput state alone rather than dispose it under that scan");
+                return;
+            }
+
+            _directInputInitThread = null;
+        }
+
         // The enumeration thread also touches _directInput (GetDevices/CreateDevice/Acquire) --
         // wait for it to notice cancellation before disposing anything out from under it. It
         // owns no state to release itself (only PollJoysticks does, see below), so a timeout
@@ -613,8 +691,21 @@ public class HotkeyService : IHotkeyService
         }
         else if (_directInput != null)
         {
-            // No polling thread was ever started (0 devices were acquired), so nothing else can
-            // be touching DirectInput concurrently -- safe to release it directly.
+            // No polling thread was ever started (0 devices were acquired, or Stop() cancelled the
+            // startup scan before it started one), so nothing else can be touching DirectInput
+            // concurrently -- safe to release it, and any devices that scan acquired, directly.
+            lock (_joystickLock)
+            {
+                foreach (var device in _joystickDevices)
+                {
+                    try { device.Unacquire(); device.Dispose(); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "Error releasing joystick after a cancelled startup scan"); }
+                }
+
+                _joystickDevices.Clear();
+                _previousJoystickStates.Clear();
+            }
+
             _directInput.Dispose();
             _directInput = null;
         }
@@ -626,8 +717,28 @@ public class HotkeyService : IHotkeyService
     {
         if (windowHandle == IntPtr.Zero || windowHandle == _windowHandle) return;
 
-        var previousHandle = _windowHandle;
-        _windowHandle = windowHandle;
+        lock (_directInputInitLock)
+        {
+            var previousHandle = _windowHandle;
+            _windowHandle = windowHandle;
+
+            // Startup scan still running: it binds every device to this window when it finishes (see
+            // InitializeDirectInput). Rebinding here would race it.
+            if (_directInputInitializing)
+            {
+                _logger.LogDebug("App window {Current:X} stored; joysticks bind to it when the startup scan finishes",
+                    windowHandle.ToInt64());
+                return;
+            }
+
+            var count = RebindDevices(windowHandle);
+            _logger.LogDebug("Rebound {Count} joystick device(s) from window {Previous:X} to app window {Current:X}",
+                count, previousHandle.ToInt64(), windowHandle.ToInt64());
+        }
+    }
+
+    private int RebindDevices(IntPtr windowHandle)
+    {
 
         // Re-bind every currently-acquired device's cooperative level to the app's own window
         // instead of whatever placeholder Start() used (see InitializeDirectInput) -- otherwise
@@ -643,7 +754,7 @@ public class HotkeyService : IHotkeyService
             try
             {
                 device.Unacquire();
-                device.SetCooperativeLevel(_windowHandle, CooperativeLevel.Background | CooperativeLevel.NonExclusive);
+                device.SetCooperativeLevel(windowHandle, CooperativeLevel.Background | CooperativeLevel.NonExclusive);
                 device.Acquire();
             }
             catch (Exception ex)
@@ -652,17 +763,16 @@ public class HotkeyService : IHotkeyService
             }
         }
 
-        _logger.LogDebug("Rebound {Count} joystick device(s) from window {Previous:X} to app window {Current:X}",
-            devicesSnapshot.Count, previousHandle.ToInt64(), windowHandle.ToInt64());
+        return devicesSnapshot.Count;
     }
 
     public List<JoystickDeviceInfo> GetAvailableJoysticks()
     {
         var result = new List<JoystickDeviceInfo>();
 
-        if (_directInput == null)
+        if (_directInput == null || _directInputInitializing)
         {
-            return result;
+            return result; // not started, or the startup scan still owns DirectInput
         }
 
         try
@@ -942,6 +1052,12 @@ public class HotkeyService : IHotkeyService
         if (_hook == null)
         {
             _logger.LogDebug("Ignoring input device rescan request - hotkey service not started");
+            return 0;
+        }
+
+        if (_directInputInitializing)
+        {
+            _logger.LogInformation("Ignoring input device rescan request - the startup device scan is still running");
             return 0;
         }
 

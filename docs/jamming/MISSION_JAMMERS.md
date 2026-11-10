@@ -62,7 +62,8 @@ In `Saved Games\<instance>\Config\OpenFreq.json` add a `jamming` section next to
 }
 ```
 
-`host`/`port` are the OpenFreq server's mission-jammer intake (UDP). The `secret` must match the OpenFreq server's.
+`host`/`port` are the OpenFreq server's mission-jammer intake (UDP; `host` is an IPv4 address or DNS name, not
+`localhost`). The `secret` must match the OpenFreq server's; a secret still containing `CHANGE-ME` is refused.
 
 ## 3. OpenFreq server setup
 
@@ -77,13 +78,15 @@ In `OpenFreq.Server.json`:
     "port": 9989,
     "secret": "the same secret",
     "staleAfterSeconds": 30,
-    "maxJammers": 200
+    "maxJammers": 200,
+    "prefix": "JAM:"
   },
   "jammers": [ ... ]
 }
 ```
 
-If the OpenFreq server runs on another machine than the DCS server, forward UDP `port` to it. The intake refuses to
+`prefix` must match the hook's `prefix` (the datagram does not carry it). If the OpenFreq server runs on another
+machine than the DCS server, forward UDP `port` to it. The intake refuses to
 start without a secret of at least 16 characters.
 
 ## 4. Wire protocol (hook → OpenFreq server)

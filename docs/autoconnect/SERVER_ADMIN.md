@@ -28,7 +28,7 @@ OPENFREQ/1 host=voice.example.com port=9937 sid=example-main auth=1 -- OpenFreq 
 ## Install (manual, without DCSServerBot)
 
 You need two files from this repository's `DCS/Server` folder (the OpenFreq DCS Server installer
-also copies them to `<install folder>\DCS-Hooks`):
+also copies them to `<install folder>\DCS-Hooks`, and the portable server zips carry them in `DCS-Hooks`):
 
 | File | Copy to |
 |---|---|

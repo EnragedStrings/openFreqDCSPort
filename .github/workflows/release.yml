@@ -79,6 +79,10 @@ jobs:
               -p:DebugType=none -p:DebugSymbols=false \
               -p:InformationalVersion="$VERSION" \
               -o "$OUTDIR"
+            # DCS server hook (auto-connect advert + mission jammers) for the admin to copy to
+            # Saved Games\<instance>\Scripts\Hooks, with its example Config\OpenFreq.json.
+            mkdir -p "$OUTDIR/DCS-Hooks"
+            cp DCS/Server/OpenFreq-ServerGameGUI.lua DCS/Server/OpenFreq.example.json "$OUTDIR/DCS-Hooks/"
             pushd "$OUTDIR"
             zip -r "$GITHUB_WORKSPACE/OpenFreq-Server-${{ github.ref_name }}-${RID}-portable.zip" . --exclude "*.pdb"
             popd

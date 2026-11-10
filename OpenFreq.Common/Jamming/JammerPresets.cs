@@ -43,6 +43,14 @@ public sealed record JammerPreset
     /// <summary>UHF SATCOM uplink jammer (phase 4).</summary>
     public bool SatcomUplink { get; init; }
 
+    /// <summary>Auto mode: intercept receiver sensitivity, dBm [E: −110 typical; −120 for dedicated SIGINT
+    /// platforms].</summary>
+    public double DetectionSensitivityDbm { get; init; } = AutoTargetingDefaults.DetectionSensitivityDbm;
+
+    /// <summary>Auto mode: search/DF/set-on time before a newly heard frequency is jammed, s [E: research-02
+    /// §6.6, 10 s, range 2–60 s].</summary>
+    public double ReacquireDelaySeconds { get; init; } = AutoTargetingDefaults.ReacquireDelaySeconds;
+
     /// <summary>Names of figures that are estimates ("TxPowerW", "AntennaGainDbi", "Coverage", ...).</summary>
     public IReadOnlySet<string> EstimatedFigures { get; init; } = new HashSet<string>();
 
@@ -157,6 +165,7 @@ public static class JammerPresets
             Id = "ec130h", Name = "EC-130H Compass Call", Platform = JammerPlatform.Air,
             MinFrequencyKhz = 30_000, MaxFrequencyKhz = 3_000_000, TxPowerW = 1500, AntennaGainDbi = 13,
             MaxSimultaneousSpots = 16, FollowerCapable = true, ReactionMs = 2, AntennaHeightMeters = 7000,
+            DetectionSensitivityDbm = -120, ReacquireDelaySeconds = 5,
             EstimatedFigures = E(Power, Gain, Spots, Reaction)
         },
         new()
@@ -164,6 +173,7 @@ public static class JammerPresets
             Id = "ea37b", Name = "EA-37B Compass Call", Platform = JammerPlatform.Air,
             MinFrequencyKhz = 30_000, MaxFrequencyKhz = 3_000_000, TxPowerW = 1500, AntennaGainDbi = 15,
             MaxSimultaneousSpots = 16, FollowerCapable = true, ReactionMs = 2, AntennaHeightMeters = 12_000,
+            DetectionSensitivityDbm = -120, ReacquireDelaySeconds = 5,
             EstimatedFigures = E(Power, Gain, Coverage, Spots, Reaction)
         },
         new()
@@ -255,6 +265,11 @@ public static class JammerPresets
         r.ReactionMs ??= preset.ReactionMs;
         r.CarrierToleranceHz ??= DefaultCarrierToleranceHz;
         r.Targeting ??= new JammerTargeting();
+        r.Targeting.AutoMaxSpots ??= r.MaxSimultaneousSpots;
+        r.Targeting.DetectionSensitivityDbm ??= preset.DetectionSensitivityDbm;
+        r.Targeting.ActivityHalfLifeSeconds ??= AutoTargetingDefaults.ActivityHalfLifeSeconds;
+        r.Targeting.DropAfterSeconds ??= AutoTargetingDefaults.DropAfterSeconds;
+        r.Targeting.ReacquireDelaySeconds ??= preset.ReacquireDelaySeconds;
         return r;
     }
 }

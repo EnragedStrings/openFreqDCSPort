@@ -342,6 +342,12 @@ public class JammerCatalogEntryDto
 
     /// <summary>What it is radiating on right now (empty when not active).</summary>
     [JsonPropertyName("emissions")] public List<Jamming.JammerEmission> Emissions { get; set; } = [];
+
+    /// <summary>Auto-targeting jammers only (null otherwise): searching, or jamming <see cref="AutoTargetsKhz"/>.</summary>
+    [JsonPropertyName("autoState")] public Jamming.AutoJammerState? AutoState { get; set; }
+
+    /// <summary>The frequencies the auto brain is jamming right now, kHz (also present as spot emissions).</summary>
+    [JsonPropertyName("autoTargetsKhz")] public List<int>? AutoTargetsKhz { get; set; }
 }
 
 /// <summary>

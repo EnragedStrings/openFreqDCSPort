@@ -32,7 +32,8 @@ public sealed class JammerEmission
     [JsonIgnore] public double EndKhz => CenterKhz + BandwidthKhz / 2.0;
 }
 
-/// <summary>Scripted targeting: what a resolved jammer radiates on (phase 1; the auto brain comes in phase 2).</summary>
+/// <summary>What a resolved jammer radiates on: its scripted spots and bands, plus (auto mode) the spots the
+/// server's auto brain (<see cref="AutoTargetingBrain"/>) picked.</summary>
 public static class ScriptedTargeting
 {
     /// <summary>Notch width around a protected frequency, kHz (one 25 kHz channel).</summary>
@@ -43,13 +44,12 @@ public static class ScriptedTargeting
     /// or on a user-protected frequency; truncated to MaxSimultaneousSpots) and one or more per band (clipped to the
     /// tuning range, with protected frequencies — guard by default — notched out). Each configured target gets
     /// <see cref="JammingMath.PowerFractionPerEmission"/> of the PA power; a notched band's pieces share their
-    /// band's share in proportion to width.
+    /// band's share in proportion to width. <paramref name="autoSpotsKhz"/> (auto mode only) are added as spots
+    /// after the scripted ones, capped at <see cref="AutoCapacity"/>, and share the PAs with them.
     /// </summary>
-    public static List<JammerEmission> Emissions(JammerDefinition resolved)
+    public static List<JammerEmission> Emissions(JammerDefinition resolved, IEnumerable<int>? autoSpotsKhz = null)
     {
         var targeting = resolved.Targeting;
-        if (targeting.Mode != JammerTargetingMode.Scripted) return [];
-
         var min = resolved.MinFrequencyKhz ?? 0;
         var max = resolved.MaxFrequencyKhz ?? int.MaxValue;
         var spotBw = targeting.SpotBandwidthKhz > 0 ? targeting.SpotBandwidthKhz : 25.0;
@@ -65,6 +65,8 @@ public static class ScriptedTargeting
             .Distinct()
             .Take(Math.Max(1, resolved.MaxSimultaneousSpots ?? 1))
             .ToList();
+        if (targeting.Mode == JammerTargetingMode.Auto && autoSpotsKhz != null)
+            spots.AddRange(autoSpotsKhz.Where(f => !spots.Contains(f)).Distinct().Take(AutoCapacity(resolved)));
 
         var bands = new List<List<(double Lo, double Hi)>>();
         foreach (var band in targeting.Bands ?? [])
@@ -88,6 +90,16 @@ public static class ScriptedTargeting
         }
 
         return result;
+    }
+
+    /// <summary>How many spots the auto brain may hold: the auto limit, less the scripted spots already using
+    /// the system's simultaneous-spot capacity. 0 outside auto mode.</summary>
+    public static int AutoCapacity(JammerDefinition resolved)
+    {
+        if (resolved.Targeting.Mode != JammerTargetingMode.Auto) return 0;
+        var max = resolved.MaxSimultaneousSpots ?? 1;
+        var scripted = Math.Min(max, (resolved.Targeting.SpotFrequenciesKhz ?? []).Distinct().Count());
+        return Math.Max(0, Math.Min(resolved.Targeting.AutoMaxSpots ?? max, max - scripted));
     }
 
     private static List<(double Lo, double Hi)> Notch(double lo, double hi, IEnumerable<double> notches)

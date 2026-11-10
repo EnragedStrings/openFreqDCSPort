@@ -22,8 +22,8 @@ public enum JammerTargetingMode
     /// <summary>The configured spot frequencies and bands, all the time (subject to the schedule).</summary>
     Scripted,
 
-    /// <summary>Reserved for phase 2 (detect active frequencies, spot-jam the busiest). Until then a jammer in
-    /// this mode radiates nothing.</summary>
+    /// <summary>Detect active frequencies and spot-jam the busiest, with look-through, a reacquire delay and a
+    /// protected list (server auto brain, phase 2). Scripted spots and bands, if any, are radiated as well.</summary>
     Auto
 }
 
@@ -69,7 +69,7 @@ public sealed class JammerBand
     }
 }
 
-/// <summary>What a jammer radiates on. Scripted targeting only in phase 1; the auto fields are reserved.</summary>
+/// <summary>What a jammer radiates on: scripted spots and bands, plus the auto brain's picks in auto mode.</summary>
 public sealed class JammerTargeting
 {
     [JsonPropertyName("mode")]
@@ -96,27 +96,45 @@ public sealed class JammerTargeting
     [JsonPropertyName("protectedFrequenciesKhz")]
     public List<int> ProtectedFrequenciesKhz { get; set; } = [];
 
-    // ---- Phase 2 (auto targeting), reserved: parsed and carried, not used yet. ----
+    // ---- Auto targeting (phase 2): used when Mode is Auto; scripted spots and bands still apply alongside. ----
 
-    /// <summary>Auto mode: lowest frequency the brain may pick, kHz.</summary>
-    [JsonPropertyName("autoBandStartKhz")]
-    public int? AutoBandStartKhz { get; set; }
+    /// <summary>Auto mode: only pick frequencies inside these ranges, kHz (empty = the whole tuning range).</summary>
+    [JsonPropertyName("autoBands")]
+    public List<JammerBand> AutoBands { get; set; } = [];
 
-    /// <summary>Auto mode: highest frequency the brain may pick, kHz.</summary>
-    [JsonPropertyName("autoBandEndKhz")]
-    public int? AutoBandEndKhz { get; set; }
-
-    /// <summary>Auto mode: how many spots at once (default: the preset's max simultaneous spots).</summary>
+    /// <summary>Auto mode: most auto-picked spots at once (default: the preset's max simultaneous spots, less
+    /// any scripted spots).</summary>
     [JsonPropertyName("autoMaxSpots")]
     public int? AutoMaxSpots { get; set; }
 
-    /// <summary>Auto mode: dwell on a target before re-evaluating, ms.</summary>
-    [JsonPropertyName("autoDwellMs")]
-    public double? AutoDwellMs { get; set; }
+    /// <summary>Auto mode: weakest transmission the jammer's intercept receiver detects, dBm (default from the
+    /// preset, typically −110).</summary>
+    [JsonPropertyName("detectionSensitivityDbm")]
+    public double? DetectionSensitivityDbm { get; set; }
 
-    /// <summary>Auto mode: delay before following a net that changed frequency, ms (research-02 §6.6: 10 s).</summary>
-    [JsonPropertyName("autoReacquireDelayMs")]
-    public double? AutoReacquireDelayMs { get; set; }
+    /// <summary>Auto mode: half-life of the activity score (decayed keyed seconds), seconds (default 60).</summary>
+    [JsonPropertyName("activityHalfLifeSeconds")]
+    public double? ActivityHalfLifeSeconds { get; set; }
+
+    /// <summary>Auto mode: a target with no detected activity for this long is dropped, seconds (default 30).</summary>
+    [JsonPropertyName("dropAfterSeconds")]
+    public double? DropAfterSeconds { get; set; }
+
+    /// <summary>Auto mode: a newly detected frequency is jammed only this long after it was first heard
+    /// (search, DF, set-on), seconds (default from the preset, typically 10; research-02 §6.6).</summary>
+    [JsonPropertyName("reacquireDelaySeconds")]
+    public double? ReacquireDelaySeconds { get; set; }
+
+    /// <summary>A copy with its own lists.</summary>
+    public JammerTargeting Clone()
+    {
+        var copy = (JammerTargeting)MemberwiseClone();
+        copy.SpotFrequenciesKhz = SpotFrequenciesKhz?.ToList() ?? [];
+        copy.Bands = Bands?.ToList() ?? [];
+        copy.ProtectedFrequenciesKhz = ProtectedFrequenciesKhz?.ToList() ?? [];
+        copy.AutoBands = AutoBands?.ToList() ?? [];
+        return copy;
+    }
 }
 
 /// <summary>Optional on/off schedule, relative to when the server (re)loaded the jammer.</summary>
@@ -298,11 +316,12 @@ public sealed class JammerDefinition
     [JsonPropertyName("schedule")]
     public JammerSchedule? Schedule { get; set; }
 
-    /// <summary>A shallow copy (lists are copied, nested objects shared).</summary>
+    /// <summary>A shallow copy (lists and the targeting are copied, other nested objects shared).</summary>
     public JammerDefinition Clone()
     {
         var copy = (JammerDefinition)MemberwiseClone();
         copy.ToneOffsetsHz = ToneOffsetsHz?.ToList();
+        copy.Targeting = Targeting?.Clone()!;
         return copy;
     }
 }

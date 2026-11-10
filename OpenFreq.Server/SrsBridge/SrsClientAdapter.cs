@@ -602,6 +602,12 @@ public sealed class SrsClientAdapter : IAsyncDisposable
 
         if (newlyTransmitting == null) return;
 
+        // Lets the server's auto jammers locate this SRS player as a transmitter (a zeroed position means SRS
+        // isn't reporting one). Not sent in the transmission message, which would also change transcript gating.
+        if (LastKnownState?.LatLngPosition is { } position && _shadowClient.MyPeerId is { } peerId &&
+            (position.Lat != 0 || position.Lng != 0))
+            _bridge.Jamming?.ReportTransmitterPosition(peerId, position.Lat, position.Lng, position.Alt);
+
         foreach (var khz in newlyTransmitting)
             _ = _shadowClient.StartTransmissionAsync(khz);
     }

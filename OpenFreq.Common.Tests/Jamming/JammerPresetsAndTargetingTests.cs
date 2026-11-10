@@ -175,14 +175,28 @@ public class ScriptedTargetingTests
     }
 
     [Fact]
-    public void AutoMode_RadiatesNothingInPhase1()
+    public void AutoMode_KeepsScriptedSpots_AndAutoSpotsShareThePas()
     {
-        var e = ScriptedTargeting.Emissions(Resolve(t =>
+        var jammer = Resolve(t =>
         {
             t.Mode = JammerTargetingMode.Auto;
             t.SpotFrequenciesKhz = [251_000];
-        }));
-        Assert.Empty(e);
+        }, pas: 1);
+        Assert.Single(ScriptedTargeting.Emissions(jammer));
+
+        // r934b holds 3 spots: one scripted leaves room for 2 auto spots; the third auto pick is cut.
+        Assert.Equal(2, ScriptedTargeting.AutoCapacity(jammer));
+        var e = ScriptedTargeting.Emissions(jammer, [260_000, 270_000, 280_000]);
+        Assert.Equal([251_000.0, 260_000.0, 270_000.0], e.Select(x => x.CenterKhz));
+        Assert.All(e, x => Assert.Equal(1.0 / 3.0, x.PowerFraction, 6));
+    }
+
+    [Fact]
+    public void ScriptedMode_IgnoresAutoSpots()
+    {
+        var jammer = Resolve(t => t.SpotFrequenciesKhz = [251_000]);
+        Assert.Equal(0, ScriptedTargeting.AutoCapacity(jammer));
+        Assert.Single(ScriptedTargeting.Emissions(jammer, [260_000]));
     }
 
     [Theory]

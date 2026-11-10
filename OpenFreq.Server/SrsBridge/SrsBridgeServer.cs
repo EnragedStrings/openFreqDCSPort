@@ -75,7 +75,12 @@ public sealed class SrsBridgeServer : IAsyncDisposable
         // behavior LosOracleService has always had (see its own tests).
         LosOracle = signalingServer?.LosOracle ??
                     new LosOracleService(signalingServer!, openFreqClients, loggerFactory.CreateLogger<LosOracleService>());
+        Jamming = signalingServer?.Jamming;
     }
+
+    /// <summary>The server's jammers (null when jamming is off): bridged SRS transmitters report their positions
+    /// here so auto jammers can detect them.</summary>
+    public global::OpenFreqServer.Jamming.JammingCoordinator? Jamming { get; }
 
     public void Start()
     {

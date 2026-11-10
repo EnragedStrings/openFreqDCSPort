@@ -160,6 +160,13 @@ public class SignalingServer
             }
             : null;
         LosOracle = new LosOracleService(this, _clients, loggerFactory.CreateLogger<LosOracleService>());
+        if (_jamming != null)
+        {
+            // Auto jammers' intercept geometry: the transmitter's own DCS referees first (non-blocking, cached).
+            _jamming.LineOfSight = (jammerId, txId, jLat, jLon, jAlt, txLat, txLon, txAlt) =>
+                LosOracle.TryGetLineOfSight($"jam:{jammerId}:{txId}", txId, jLat, jLon, jAlt, txLat, txLon, txAlt);
+        }
+
         _transcriptDelivery = new TranscriptDeliveryService(this, _clients, _channelManager, LosOracle,
             loggerFactory.CreateLogger<TranscriptDeliveryService>());
 
@@ -635,6 +642,7 @@ public class SignalingServer
         session.FrequencyListenerPositions.TryRemove(frequencyKhz, out _);
 
         if (!wasMember) return;
+        _jamming?.ReportTransmission(session.Id, frequencyKhz, transmitting: false);
 
         // A silent observer (GCI "monitor all" scanner) is never announced, coming or going.
         if (!wasObserver)
@@ -692,6 +700,9 @@ public class SignalingServer
             transmissionMsg.FrequencyKhz, session.Id, transmissionMsg.Transmitting, transmissionMsg.Is3d);
 
         if (peersInChannel is null) return;
+
+        _jamming?.ReportTransmission(session.Id, transmissionMsg.FrequencyKhz, transmissionMsg.Transmitting,
+            transmissionMsg.LatitudeDeg, transmissionMsg.LongitudeDeg, transmissionMsg.AltitudeMeters);
 
         if (transmissionMsg.TransmissionId is { Length: > 0 } transmissionId)
         {
@@ -764,6 +775,8 @@ public class SignalingServer
         session.DcsAltitudeMeters = presenceMsg.AltitudeMeters;
         session.DcsTheater = presenceMsg.Theater;
         session.DcsPresenceUpdatedUtc = DateTime.UtcNow;
+        _jamming?.ReportTransmitterPosition(session.Id, presenceMsg.LatitudeDeg, presenceMsg.LongitudeDeg,
+            presenceMsg.AltitudeMeters);
 
         return Task.CompletedTask;
     }
@@ -1076,6 +1089,7 @@ public class SignalingServer
             session.FrequencyListenerPositions.Clear();
             _audioServer.RemoveSession(clientId);
             _satcom?.RemoveClient(clientId);
+            _jamming?.ReportTransmitterGone(clientId);
 
             if (session.WebSocket.State == WebSocketState.Open)
             {

@@ -63,6 +63,35 @@ public class SignalingServer
     /// <summary>The jammer set, or null when jamming is disabled in the config (docs/jamming).</summary>
     public JammingCoordinator? Jamming => _jamming;
 
+    private OpenFreq.Common.Eccm.EccmCommPlan? _eccmCommPlan;
+    private DateOnly _eccmCommPlanDay;
+    private readonly Lock _eccmLock = new();
+
+    /// <summary>The comm plan clients get (fingerprints only), or null when <c>eccm</c> is not configured. Built on
+    /// first use and again when the UTC day rolls over (an unset mission date means "today").</summary>
+    public OpenFreq.Common.Eccm.EccmCommPlan? EccmCommPlan()
+    {
+        if (_config.Eccm is not { Enabled: true } fill) return null;
+        var now = DateTime.UtcNow;
+        lock (_eccmLock)
+        {
+            var today = DateOnly.FromDateTime(now);
+            if (_eccmCommPlan == null || _eccmCommPlanDay != today)
+            {
+                var errors = new List<string>();
+                _eccmCommPlan = fill.ToCommPlan(now, errors);
+                _eccmCommPlanDay = today;
+                foreach (var error in errors) _logger.LogWarning("ECCM comm plan: {Error}", error);
+                _logger.LogInformation(
+                    "ECCM comm plan: mission date {Date}, {Wods} WOD(s), {Fmt} FMT frequencies, hop rate {Rate}/s",
+                    _eccmCommPlan.MissionDate, _eccmCommPlan.Mwod.Count,
+                    _eccmCommPlan.FmtFrequenciesKhz?.Count ?? OpenFreq.Common.Eccm.Hopset.DefaultFmtFrequenciesKhz.Count,
+                    _eccmCommPlan.HopRateHz);
+            }
+            return _eccmCommPlan;
+        }
+    }
+
     private readonly TranscriptDeliveryService _transcriptDelivery;
 
     // High-performance logging delegates
@@ -508,6 +537,9 @@ public class SignalingServer
 
             if (_jamming != null)
                 await SendToClient(session, SignalingMessageFactory.CreateJammerCatalogUpdate(_jamming.Snapshot()));
+
+            if (EccmCommPlan() is { } commPlan)
+                await SendToClient(session, SignalingMessageFactory.CreateEccmCommPlanUpdate(commPlan));
         }
         else
         {

@@ -45,6 +45,11 @@ public class ServerConfig
     [JsonPropertyName("jamming")]
     public JammingServerConfig Jamming { get; set; } = new();
 
+    /// <summary>The mission's HAVE QUICK / SINCGARS comm plan, the aircrafts' "fill" (docs/jamming/HAVE_QUICK.md).
+    /// Null: no plan; players enter WOD/net by hand. Only fingerprints of its WODs/key are sent to clients.</summary>
+    [JsonPropertyName("eccm")]
+    public OpenFreq.Common.Eccm.EccmFill? Eccm { get; set; }
+
     [JsonPropertyName("broadcastPeerUpdates")]
     public bool BroadcastPeerUpdates { get; set; } = true;
 

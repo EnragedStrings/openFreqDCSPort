@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIvcMonitorService, IvcMonitorService>();
         services.AddSingleton<IUpdateService, UpdateService>();
         services.AddSingleton<IJammingService, JammingService>();
+        services.AddSingleton<OpenFreq.Client.Services.Eccm.IEccmService, OpenFreq.Client.Services.Eccm.EccmService>();
         services.AddSingleton<ISpeechTranscriber>(sp => new WhisperSpeechTranscriber(
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WhisperSpeechTranscriber>(),
             Path.Combine(AppDataPaths.ClientModelDirectory, "ggml-tiny.en.bin")));

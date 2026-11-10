@@ -49,7 +49,8 @@ public partial class App : Application
             serviceProvider.GetRequiredService<IDcsExportService>(),
             serviceProvider.GetRequiredService<IAcmiClientService>(),
             serviceProvider.GetRequiredService<IHotkeyService>(),
-            serviceProvider.GetRequiredService<IJammingService>()
+            serviceProvider.GetRequiredService<IJammingService>(),
+            serviceProvider.GetRequiredService<OpenFreq.Client.Services.Eccm.IEccmService>()
         ];
 #else
             _services = new List<ILifecycleService>
@@ -58,6 +59,7 @@ public partial class App : Application
                 serviceProvider.GetRequiredService<IDcsExportService>(),
                 serviceProvider.GetRequiredService<IHotkeyService>(),
                 serviceProvider.GetRequiredService<IJammingService>(),
+                serviceProvider.GetRequiredService<OpenFreq.Client.Services.Eccm.IEccmService>(),
             };
 #endif
 

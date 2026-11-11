@@ -1364,18 +1364,27 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable
         _falconRadioSharedMemoryService.RadioClientConflictResolved -= OnRadioClientConflictResolved;
         _falconSharedMemoryService.AircraftInfoChanged -= OnAircraftInfoChanged;
 
+        // Each step logged: a hang here is caught by App's shutdown watchdog, and this shows which step it was.
+        _logger.LogInformation("Shutdown: disconnecting");
         await DisconnectAsync();
+        _logger.LogInformation("Shutdown: disposing channels and settings");
         ChannelList.Dispose();
         Settings.Dispose();
+        _logger.LogInformation("Shutdown: disposing the radio/audio engine");
         _openFreqService.Dispose();
+        _logger.LogInformation("Shutdown: disposing hotkeys, ACMI and configuration");
         _hotkeyService.Dispose();
         _acmiClientService.Dispose();
         _configurationService.Dispose();
 
+        _logger.LogInformation("Shutdown: disposing Falcon and DCS services");
         _falconSharedMemoryService.Dispose();
         _falconRadioSharedMemoryService.Dispose();
         _dcsExportService.Dispose();
+        _logger.LogInformation("Shutdown: disposing audio devices");
         await _audioService.DisposeAsync();
+        _logger.LogInformation("Shutdown: disposing IVC monitor");
         await _ivcMonitorService.DisposeAsync();
+        _logger.LogInformation("Shutdown: cleanup done");
     }
 }

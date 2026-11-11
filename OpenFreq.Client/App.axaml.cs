@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
@@ -133,14 +134,41 @@ public partial class App : Application
                 // From here a new launch waits for this process to exit (see Program.WaitForClosingInstance).
                 Program.InstanceGuard?.StopListeningForShow();
 
+                // Each step is logged with its time, and a watchdog ends the process if cleanup hangs: a hung
+                // native call (audio, DirectInput, sockets) used to leave the closed app running in the
+                // background indefinitely, which also blocked the next launch.
+                var shutdownClock = System.Diagnostics.Stopwatch.StartNew();
+                var shutdownStep = "starting";
+                void Step(string name)
+                {
+                    Serilog.Log.Information("Shutdown: {Step} ({Seconds:F1} s)", name, shutdownClock.Elapsed.TotalSeconds);
+                    shutdownStep = name;
+                }
+
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10));
+                    Serilog.Log.Warning("Shutdown still stuck at \"{Step}\" after 10 s -- ending the process", shutdownStep);
+                    Serilog.Log.CloseAndFlush();
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(3));
+                        System.Diagnostics.Process.GetCurrentProcess().Kill(); // Exit itself hung
+                    });
+                    Environment.Exit(0);
+                });
+
                 foreach (var service in _services)
                 {
+                    Step($"stopping {service.GetType().Name}");
                     service.Stop();
                 }
 
+                Step("disposing the main window model");
                 await mainViewModel.DisposeAsync();
 
                 // Now actually shutdown
+                Step("closing the app");
                 desktop.Shutdown();
             };
         }

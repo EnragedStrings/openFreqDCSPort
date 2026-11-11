@@ -81,6 +81,22 @@ public class MaskClipRenderer
         File.WriteAllLines(output, y.Select(v => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
     }
 
+    [Fact]
+    public void BenchmarkMeasuredMask()
+    {
+        var output = Environment.GetEnvironmentVariable("OPENFREQ_BENCH_OUTPUT");
+        if (string.IsNullOrEmpty(output)) return;
+        var f = new MeasuredMaskFilter(Fs);
+        var x = new float[Fs * 10];
+        var rng = new Random(1);
+        for (int i = 0; i < x.Length; i++) x[i] = (float)(rng.NextDouble() - 0.5) * 0.1f;
+        for (int i = 0; i < Fs; i++) f.Process(x[i]); // warm-up
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < x.Length; i++) x[i] = f.Process(x[i]);
+        sw.Stop();
+        File.WriteAllText(output, $"10 s of audio in {sw.Elapsed.TotalMilliseconds:F1} ms; per 10 ms block {sw.Elapsed.TotalMilliseconds / 1000:F3} ms; Vector<float>.Count={System.Numerics.Vector<float>.Count}");
+    }
+
     private static float[] Decode(string path)
     {
         Bass.Init(0, Fs); // the "no sound" device: decoding only

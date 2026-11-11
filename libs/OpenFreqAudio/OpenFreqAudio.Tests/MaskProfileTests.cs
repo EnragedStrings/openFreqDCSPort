@@ -90,4 +90,25 @@ public class MaskProfileTests
         var g = new MeasuredMaskFilter(Rate);
         for (int i = 0; i < 1000; i++) Assert.Equal(0f, g.Process(0f));
     }
+
+    [Fact]
+    public void A10Ambience_HasNoN1N2EngineWhine()
+    {
+        // The 480 Hz (N1) and 750 Hz (N2) engine tones were removed from the A-10C everywhere; the inverter stays.
+        var bed = new float[Rate * 4];
+        AmbientNoiseEffectFactory.Create(AmbientNoiseType.AirA10, Rate).ApplyPreFade(bed, 0, bed.Length, 1f);
+
+        double Power(double hz)
+        {
+            double w = 2 * Math.PI * hz / Rate, c = 2 * Math.Cos(w), s1 = 0, s2 = 0;
+            for (int i = Rate; i < bed.Length; i++) { double s0 = bed[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+            return s1 * s1 + s2 * s2 - c * s1 * s2;
+        }
+
+        double Db(double a, double b) => 10 * Math.Log10(a / b);
+        // A tone stands far above its neighbours; noise doesn't.
+        Assert.True(Db(Power(480), (Power(455) + Power(505)) / 2) < 6, "480 Hz tone present");
+        Assert.True(Db(Power(750), (Power(725) + Power(775)) / 2) < 6, "750 Hz tone present");
+        Assert.True(Db(Power(398.4), (Power(370) + Power(430)) / 2) > 20, "the 400 Hz inverter whine is still there");
+    }
 }

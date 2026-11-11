@@ -584,12 +584,11 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
 // ---------------------------------------------------------------------------
 
 /// <summary>
-/// Signal chain -- the same generic-jet-cockpit base as <see cref="AirGenericAmbientEffect"/>
-/// (airframe AM, N1/N2 engine whine, engine roar, oxygen mask), plus the A-10-specific inverter
-/// whine layered on top:
+/// Signal chain -- the generic-jet-cockpit base of <see cref="AirGenericAmbientEffect"/> (airframe AM, engine roar,
+/// oxygen mask) WITHOUT its N1/N2 engine whine (removed at the 163rd's request: the 480/750 Hz tones were an unwanted
+/// bed on HUD tapes and radio), plus the A-10-specific inverter whine layered on top:
 ///   clean PCM
 ///   → [PreFade]  airframe AM: two beating oscillators (57 Hz + 76 Hz)
-///   → [PreFade]  engine whine: N1 fan series (~480 Hz) + N2 core series (~750 Hz)
 ///   → [PreFade]  400Hz inverter whine: two independent oscillators (~397/~399Hz) beating,
 ///                each carrying a full measured harmonic series (H2-H10, H14) -- dominant
 ///                element, unlike the jet-fighter effects, here the whine outweighs the engine
@@ -642,13 +641,6 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     private double _rumblePhase1;
     private double _rumblePhase2;
 
-    // Engine whine -- N1 fan + N2 core series, same as AirGeneric
-    private const float N1Freq = 480f, N1Level = 0.0022f, N1H2Level = 0.0014f, N1H3Level = 0.0007f, N1H4Level = 0.0003f;
-    private const float N1WobbleRate = 0.5f, N1WobbleDepth = 4.0f;
-    private double _n1Phase, _n1WobblePhase;
-    private const float N2Freq = 750f, N2Level = 0.0018f, N2H2Level = 0.001f, N2H3Level = 0.0004f;
-    private const float N2WobbleRate = 0.7f, N2WobbleDepth = 7.0f;
-    private double _n2Phase, _n2WobblePhase;
 
     // Twin 400Hz inverter whine -- two real oscillators a couple Hz apart so the measured
     // ~1.9Hz beat falls out of the superposition for free. Fundamental level kept at the
@@ -738,8 +730,6 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     {
         double rumbleInc1 = 2.0 * Math.PI * RumbleFreq1 / _sampleRate;
         double rumbleInc2 = 2.0 * Math.PI * RumbleFreq2 / _sampleRate;
-        double n1WobbleInc   = 2.0 * Math.PI * N1WobbleRate / _sampleRate;
-        double n2WobbleInc   = 2.0 * Math.PI * N2WobbleRate / _sampleRate;
         double invWobbleIncA = 2.0 * Math.PI * InvWobbleRateA / _sampleRate;
         double invWobbleIncB = 2.0 * Math.PI * InvWobbleRateB / _sampleRate;
         double hfWobbleInc   = 2.0 * Math.PI * HfWobbleRate / _sampleRate;
@@ -752,25 +742,6 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
                 + (float)Math.Sin(_rumblePhase2) * RumbleDepth2;
             _rumblePhase1 += rumbleInc1; if (_rumblePhase1 > Math.PI * 2) _rumblePhase1 -= Math.PI * 2;
             _rumblePhase2 += rumbleInc2; if (_rumblePhase2 > Math.PI * 2) _rumblePhase2 -= Math.PI * 2;
-
-            // N1 fan
-            double n1Wobble = Math.Sin(_n1WobblePhase) * N1WobbleDepth;
-            _n1WobblePhase += n1WobbleInc; if (_n1WobblePhase > Math.PI * 2) _n1WobblePhase -= Math.PI * 2;
-            double n1Inc = 2.0 * Math.PI * (N1Freq + n1Wobble) / _sampleRate;
-            float n1Sample = ((float)Math.Sin(_n1Phase) * N1Level
-                           + (float)Math.Sin(_n1Phase * 2.0) * N1H2Level
-                           + (float)Math.Sin(_n1Phase * 3.0) * N1H3Level
-                           + (float)Math.Sin(_n1Phase * 4.0) * N1H4Level) * _strength;
-            _n1Phase += n1Inc; if (_n1Phase > Math.PI * 2) _n1Phase -= Math.PI * 2;
-
-            // N2 core
-            double n2Wobble = Math.Sin(_n2WobblePhase) * N2WobbleDepth;
-            _n2WobblePhase += n2WobbleInc; if (_n2WobblePhase > Math.PI * 2) _n2WobblePhase -= Math.PI * 2;
-            double n2Inc = 2.0 * Math.PI * (N2Freq + n2Wobble) / _sampleRate;
-            float n2Sample = ((float)Math.Sin(_n2Phase) * N2Level
-                           + (float)Math.Sin(_n2Phase * 2.0) * N2H2Level
-                           + (float)Math.Sin(_n2Phase * 3.0) * N2H3Level) * _strength;
-            _n2Phase += n2Inc; if (_n2Phase > Math.PI * 2) _n2Phase -= Math.PI * 2;
 
             // Twin inverters: each oscillator's instantaneous frequency wobbles independently so
             // the beat rate wanders a little instead of holding a perfectly constant offset.
@@ -815,7 +786,6 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
             float x = dry;
 
             x *= rumbleGain;                    // airframe vibration AM-modulates mic pickup
-            x += n1Sample + n2Sample;           // jet engine whine
             x += invSample;                     // twin 400Hz inverter whine -- dominant element
             x += hfSample;                      // H12 resonance ("HF cluster")
             x += roar * RoarLevel * _strength;  // structure-borne engine roar (subordinate)

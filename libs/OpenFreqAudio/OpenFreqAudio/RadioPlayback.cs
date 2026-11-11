@@ -478,8 +478,9 @@ public class RadioPlayback : IDisposable
     }
 
     /// <summary>Mix up to <paramref name="frames"/> samples of a one-shot mono tone, centered, into
-    /// <see cref="_stereoBuffer"/>, advancing <paramref name="position"/> (-1 when finished).</summary>
-    private void MixOneShotTone(ref int position, float[]? toneSamples, int frames)
+    /// <see cref="_stereoBuffer"/> at <paramref name="gain"/> (the master volume), advancing
+    /// <paramref name="position"/> (-1 when finished).</summary>
+    private void MixOneShotTone(ref int position, float[]? toneSamples, int frames, float gain)
     {
         if (position < 0 || toneSamples == null) return;
 
@@ -487,7 +488,7 @@ public class RadioPlayback : IDisposable
         int toMix = Math.Min(remaining, frames);
         for (int i = 0; i < toMix; ++i)
         {
-            float s = toneSamples[position + i];
+            float s = toneSamples[position + i] * gain;
             _stereoBuffer[i * 2] += s;
             _stereoBuffer[i * 2 + 1] += s;
         }
@@ -1894,19 +1895,20 @@ public class RadioPlayback : IDisposable
                 }
             }
 
-            // Encryption PTT tones (KY_58_TX / KY_58_RX): short one-shot cues mixed in centered,
-            // same as sidetone, after the output limiter (so no added delay) and before the final clamp.
+            // Encryption PTT tones (KY_58_TX / KY_58_RX): short one-shot cues mixed in centered, at the master
+            // volume, after the output limiter (so no added delay) and before the final clamp.
             // Locked because PlayTxTone() can be called concurrently from another thread.
             lock (_lock)
             {
-                MixOneShotTone(ref _txTonePosition, _txToneSamples, samples);
-                MixOneShotTone(ref _rxTonePosition, _rxToneSamples, samples);
+                MixOneShotTone(ref _txTonePosition, _txToneSamples, samples, MasterVolume);
+                MixOneShotTone(ref _rxTonePosition, _rxToneSamples, samples, MasterVolume);
             }
 
-            // Ownship mic click in the headset: centred, like the tones (its level is MicClickVolume alone).
+            // Ownship mic click in the headset: centred, like the tones, at MicClickVolume (in the render) x master.
+            float headsetClickGain = MasterVolume;
             for (int i = 0; i < _micClickFrames; ++i)
             {
-                float s = _micClickScratch[i];
+                float s = _micClickScratch[i] * headsetClickGain;
                 _stereoBuffer[i * 2] += s;
                 _stereoBuffer[i * 2 + 1] += s;
             }

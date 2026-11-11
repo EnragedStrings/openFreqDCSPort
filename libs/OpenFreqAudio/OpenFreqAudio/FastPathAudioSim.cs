@@ -498,8 +498,23 @@ namespace OpenFreqAudio
                 ap.ReceivedDb -= ap.TerrainLossDb;
             }
             ap.ReceivedSnrDb = ap.ReceivedDb - (float)rxSensitivity;
+            ApplySnrFloor(ap, rxSensitivity);
             SetTerrainProfile(ap, profile, includeTerrainProfile);
             return ap;
+        }
+
+        /// <summary>
+        /// Lowest SNR the physics reports. Far below where any signal is heard (results down to about -222 dB are
+        /// real, so the floor sits well under them); it only stops a path thousands of km long (e.g. 7,400 km gave -4,493 dB) from producing
+        /// numbers that the dB-domain smoothing downstream would have to climb back from.
+        /// </summary>
+        public const float MinReceivedSnrDb = -300f;
+
+        private static void ApplySnrFloor(AudioParams ap, double rxSensitivity)
+        {
+            if (ap.ReceivedSnrDb >= MinReceivedSnrDb) return;
+            ap.ReceivedSnrDb = MinReceivedSnrDb;
+            ap.ReceivedDb = MinReceivedSnrDb + (float)rxSensitivity;
         }
 
         /// <summary>

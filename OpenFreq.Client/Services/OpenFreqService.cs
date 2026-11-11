@@ -2328,6 +2328,8 @@ public class OpenFreqService : IOpenFreqService
         {
             ReceivedDb = source.ReceivedDb,
             ReceivedSnrDb = source.ReceivedSnrDb,
+            FreeSpaceLossDb = source.FreeSpaceLossDb,
+            TerrainLossDb = source.TerrainLossDb,
             RadioFrequencyKHz = source.RadioFrequencyKHz,
             TuneOffsetPPM = source.TuneOffsetPPM,
             TerrainProfile = source.TerrainProfile,

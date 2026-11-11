@@ -223,11 +223,21 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
         WeakReferenceMessenger.Default.Register<SquelchEnabledDisabledMessage>(this, OnSquelchEnabledDisabled);
         WeakReferenceMessenger.Default.Register<ChannelDeleteRequestedMessage>(this, OnChannelDeleteRequested);
 
-        // Only update position if valid coordinates provided
+        // Same rule as typing the coordinates in (ValidateAndUpdatePosition), so a loaded location and a typed-in
+        // one with the same coordinates always end up at the same map position. (0, 0) = no coordinates yet.
         if (latitude != 0 || longitude != 0)
         {
-            UpdateRadioStationPosition();
+            ValidateAndUpdatePosition();
         }
+
+        // The map position depends on the theater, so recompute it when the theater changes.
+        Settings.PropertyChanged += OnSettingsPropertyChanged;
+    }
+
+    private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.SelectedTheater) && (Latitude != 0 || Longitude != 0))
+            ValidateAndUpdatePosition();
     }
 
     private async void OnChannelJoinLeaveRequested(object recipient, ChannelJoinLeaveRequestedMessage message)
@@ -518,6 +528,8 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        Settings.PropertyChanged -= OnSettingsPropertyChanged;
+
         foreach (var channel in Channels)
         {
             channel.Dispose();
@@ -598,19 +610,17 @@ public partial class LocationViewModel : ViewModelBase, IDisposable
 
         try
         {
-            // Validate coordinates
-            if (!TheaterCoordinateConverter.IsWithinTheaterBounds(Settings.SelectedTheater, Latitude, Longitude))
-            {
-                CoordinateError = "Coordinates are outside the theater bounds";
-                HasCoordinateError = true;
-                return;
-            }
+            // The radio is always where the displayed coordinates say, inside the theater or not. (Returning early
+            // here used to leave the radio at its last in-bounds position while the fields showed the new ones, so two
+            // clients showing the same coordinates could be thousands of km apart in the physics.) Out-of-theater
+            // coordinates still get the error, because they land off the heightmap.
+            bool inBounds =
+                TheaterCoordinateConverter.IsWithinTheaterBounds(Settings.SelectedTheater, Latitude, Longitude);
+            CoordinateError = inBounds
+                ? null
+                : $"Coordinates are outside the {Settings.SelectedTheater} theater bounds (off the terrain map)";
+            HasCoordinateError = !inBounds;
 
-            // Clear errors
-            CoordinateError = null;
-            HasCoordinateError = false;
-
-            // Update RadioStationData
             UpdateRadioStationPosition();
         }
         finally

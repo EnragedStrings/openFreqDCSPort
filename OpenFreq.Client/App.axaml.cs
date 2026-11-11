@@ -130,6 +130,9 @@ public partial class App : Application
                 // Defer shutdown until we're done cleaning up
                 e.Cancel = true;
 
+                // From here a new launch waits for this process to exit (see Program.WaitForClosingInstance).
+                Program.InstanceGuard?.StopListeningForShow();
+
                 foreach (var service in _services)
                 {
                     service.Stop();

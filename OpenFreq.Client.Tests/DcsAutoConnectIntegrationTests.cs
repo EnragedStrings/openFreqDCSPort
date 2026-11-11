@@ -46,6 +46,22 @@ public class SingleInstanceGuardTests
 
     [Fact]
     public void SignalShow_WithoutRunningInstance_IsFalse() => Assert.False(SingleInstanceGuard.SignalShow(UniqueName()));
+
+    [Fact]
+    public void ClosingInstance_StillHoldsTheMutexButNoLongerAcceptsShow()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var name = UniqueName();
+        using var guard = SingleInstanceGuard.TryAcquire(name)!;
+        Assert.False(SingleInstanceGuard.IsAcceptingShow(name)); // starting up: not listening yet
+        guard.ListenForShow(() => { });
+        Assert.True(SingleInstanceGuard.IsAcceptingShow(name));
+
+        guard.StopListeningForShow(); // shutdown begins
+        Assert.False(SingleInstanceGuard.IsAcceptingShow(name));
+        Assert.False(SingleInstanceGuard.SignalShow(name));
+        Assert.Null(SingleInstanceGuard.TryAcquire(name)); // a new launch waits: the mutex is still held
+    }
 }
 
 /// <summary>client.json, hook install/removal and settings persistence.</summary>

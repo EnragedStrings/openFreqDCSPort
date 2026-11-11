@@ -23,6 +23,32 @@ sealed class Program
     /// look at it.</summary>
     public static bool LaunchedByDcs { get; private set; }
 
+    /// <summary>
+    /// The mutex is held but nobody answers show requests: the other copy is starting or (the usual
+    /// case) still shutting down -- it can take several seconds to let go of DirectInput and audio.
+    /// Wait for it to exit and take over, instead of exiting with nothing on screen. Returns null as
+    /// soon as it turns out to be a live instance (it starts listening), or after 60 s.
+    /// </summary>
+    private static SingleInstanceGuard? WaitForClosingInstance(string instanceName)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (waited.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            if (SingleInstanceGuard.IsAcceptingShow(instanceName))
+                return null;
+            System.Threading.Thread.Sleep(250);
+            var guard = SingleInstanceGuard.TryAcquire(instanceName);
+            if (guard != null)
+            {
+                Log.Information("Previous OpenFreq instance finished closing after {Seconds:F1} s; starting",
+                    waited.Elapsed.TotalSeconds);
+                return guard;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Held for the whole process lifetime; see SingleInstanceGuard.</summary>
     public static SingleInstanceGuard? InstanceGuard { get; private set; }
     // Initialization code. Don't use any Avalonia, third-party APIs or any
@@ -123,6 +149,8 @@ sealed class Program
         LaunchedByDcs = Array.IndexOf(args, "--launched-by-dcs") >= 0;
         var instanceName = SingleInstanceGuard.NameFor(AppDataPaths.ProfileSuffix);
         InstanceGuard = SingleInstanceGuard.TryAcquire(instanceName);
+        if (InstanceGuard == null)
+            InstanceGuard = WaitForClosingInstance(instanceName);
         if (InstanceGuard == null)
         {
             // Started by DCS while already running: stay invisible so DCS keeps focus.

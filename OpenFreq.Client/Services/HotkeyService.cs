@@ -59,6 +59,10 @@ public class HotkeyService : IHotkeyService
     // polling/enumeration threads; _directInputInitLock orders that hand-off against AttachWindow.
     private Thread? _directInputInitThread;
     private volatile bool _directInputInitializing;
+
+    // Set by StopDirectInput when the enumeration thread is still stuck inside a device scan at shutdown: the
+    // polling thread then leaves _directInput undisposed (that scan is still using it) and process exit frees it.
+    private volatile bool _leaveDirectInputForProcessExit;
     private readonly object _directInputInitLock = new();
     private IntPtr _windowHandle;
 
@@ -511,7 +515,8 @@ public class HotkeyService : IHotkeyService
             _deviceNames.Clear();
         }
 
-        _directInput?.Dispose();
+        if (!_leaveDirectInputForProcessExit)
+            _directInput?.Dispose();
         _directInput = null;
 
         // Fail any rescan that snuck in right as we were cancelled, rather than leaving its
@@ -643,14 +648,15 @@ public class HotkeyService : IHotkeyService
     private void StopDirectInput()
     {
         // The startup scan owns _directInput until it finishes. Callers cancel _cts first, so it starts no threads
-        // once its scan returns; but GetDevices() itself can't be interrupted. If it is still stuck after 10 s, leave
-        // DirectInput alone rather than dispose it under that call (the process is exiting or rescanning anyway).
+        // once its scan returns; but GetDevices() itself can't be interrupted (~30 s on some machines). If it is still
+        // stuck after 1 s, leave DirectInput alone rather than dispose it under that call: Stop() only runs at app
+        // exit, and the process exit frees it. Waiting kept the closed app alive in the background.
         if (_directInputInitThread != null)
         {
-            if (!_directInputInitThread.Join(TimeSpan.FromSeconds(10)))
+            if (!_directInputInitThread.Join(TimeSpan.FromSeconds(1)))
             {
-                _logger.LogWarning(
-                    "DirectInput startup scan still running after 10s -- leaving DirectInput state alone rather than dispose it under that scan");
+                _logger.LogInformation(
+                    "DirectInput startup scan still running -- leaving DirectInput to process exit rather than dispose it under that scan");
                 return;
             }
 
@@ -658,15 +664,18 @@ public class HotkeyService : IHotkeyService
         }
 
         // The enumeration thread also touches _directInput (GetDevices/CreateDevice/Acquire) --
-        // wait for it to notice cancellation before disposing anything out from under it. It
-        // owns no state to release itself (only PollJoysticks does, see below), so a timeout
-        // here just means proceeding with a background thread still possibly mid-call; log it
-        // and continue rather than blocking shutdown indefinitely on it.
+        // wait for it to notice cancellation before disposing anything out from under it. Between
+        // scans it sleeps 200 ms, so 1 s is plenty; if it is still inside a GetDevices() call (which
+        // takes ~30 s on some machines and can't be interrupted), don't wait that out -- that kept the
+        // closed app alive in the background, and a relaunch in that window did nothing. The polling
+        // thread still releases the devices, but leaves _directInput itself to process exit.
         if (_enumerationThread != null)
         {
-            if (!_enumerationThread.Join(TimeSpan.FromSeconds(10)))
+            if (!_enumerationThread.Join(TimeSpan.FromSeconds(1)))
             {
-                _logger.LogWarning("Joystick enumeration thread did not stop within 10s");
+                _leaveDirectInputForProcessExit = true;
+                _logger.LogInformation(
+                    "Joystick enumeration thread is inside a device scan -- leaving DirectInput to process exit");
             }
 
             _enumerationThread = null;

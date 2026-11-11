@@ -10,7 +10,9 @@ namespace OpenFreqClient.Services;
 /// exits, which is also what the self-update relaunch waits for). A second launch finds the
 /// mutex, asks the first instance to show its window (a named event, Windows only) and exits.
 /// A launch from the DCS hook (--launched-by-dcs) exits without showing anything, so DCS keeps
-/// focus.
+/// focus. An instance that is shutting down stops listening first (StopListeningForShow), so a
+/// launch that finds the mutex but no listener knows the old copy is on its way out and waits for
+/// it (see Program) instead of exiting with nothing on screen.
 /// </summary>
 public sealed class SingleInstanceGuard : IDisposable
 {
@@ -54,6 +56,24 @@ public sealed class SingleInstanceGuard : IDisposable
         }
     }
 
+    /// <summary>The running instance is up and listening for show requests (false while it starts
+    /// up or shuts down, or when none is running).</summary>
+    public static bool IsAcceptingShow(string name)
+    {
+        if (!OperatingSystem.IsWindows())
+            return false;
+        try
+        {
+            using var handle = EventWaitHandle.OpenExisting(name + ".Show");
+            return true;
+        }
+        catch (Exception ex) when (ex is WaitHandleCannotBeOpenedException or UnauthorizedAccessException
+                                       or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Calls <paramref name="onShow"/> (on a pool thread) whenever another launch
     /// signals. Windows only; a no-op elsewhere.</summary>
     public void ListenForShow(Action onShow)
@@ -74,12 +94,19 @@ public sealed class SingleInstanceGuard : IDisposable
         }
     }
 
-    public void Dispose()
+    /// <summary>Shutdown has begun: stop answering show requests, so a new launch waits for this
+    /// process to exit rather than signalling a window that is closing.</summary>
+    public void StopListeningForShow()
     {
         _showWait?.Unregister(null);
         _showWait = null;
         _showEvent?.Dispose();
         _showEvent = null;
+    }
+
+    public void Dispose()
+    {
+        StopListeningForShow();
         _mutex.Dispose();
     }
 }

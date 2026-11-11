@@ -92,7 +92,7 @@ public class SignalingRobustnessTests
     }
 
     [Fact]
-    public async Task Authenticate_WithWrongVersion_RejectsWithServerVersion()
+    public async Task Authenticate_WithDifferentMajorVersion_Succeeds()
     {
         await using var server = await SignalingServerHarness.StartAsync();
         await using var client = await ConnectRawAsync(server);
@@ -103,10 +103,8 @@ public class SignalingRobustnessTests
             : "999.0.0-outdated";
         await client.SendAsync(SignalingMessageFactory.CreateAuthenticate("", "Old", incompatible));
 
-        var error = await client.ReceiveUntilAsync<ErrorMessage>(SignalingMessageTypes.Error);
-        Assert.Contains("version mismatch", error.Error, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(incompatible, error.Error);
-        Assert.Equal(OpenFreqVersion.Current, error.ServerVersion);
+        // No version enforcement: a different version is admitted.
+        await client.ReceiveUntilAsync<SuccessMessage>(SignalingMessageTypes.Success);
     }
 
     [Fact]
@@ -125,7 +123,7 @@ public class SignalingRobustnessTests
     }
 
     [Fact]
-    public async Task Authenticate_WithoutVersion_Rejects()
+    public async Task Authenticate_WithoutVersion_Succeeds()
     {
         await using var server = await SignalingServerHarness.StartAsync();
         await using var client = await ConnectRawAsync(server);
@@ -133,9 +131,7 @@ public class SignalingRobustnessTests
         // Pre-version clients send no version field at all.
         await client.SendAsync(SignalingMessageFactory.CreateAuthenticate("", "Legacy"));
 
-        var error = await client.ReceiveUntilAsync<ErrorMessage>(SignalingMessageTypes.Error);
-        Assert.Contains("version mismatch", error.Error, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(OpenFreqVersion.Current, error.ServerVersion);
+        await client.ReceiveUntilAsync<SuccessMessage>(SignalingMessageTypes.Success);
     }
 
     [Fact]

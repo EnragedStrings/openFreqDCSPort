@@ -690,24 +690,64 @@ end
 -- A-10C II audio panel gain for one radio. Stock: the intercom panel (master arg 238 x the channel's
 -- PULL/ROTARY args). 163rd vFS New Cockpit: the 3DAP replaces the intercom panel and drives the
 -- intercom device by command, so the intercom args are never animated and read 0 (every radio at
--- -80 dB). The 3DAP is device 79, which the stock jet doesn't have. Its knobs run backwards (arg 1 =
--- minimum): master 1045, inputs 1..5 = 1046..1050 of the selected group. Groups A-C have RT1, RT2,
--- 164 as inputs 1-3; in FB (analog) or groups D/E only the master applies. Group mute isn't exported.
+-- -80 dB). The 3DAP is device 79, which the stock jet doesn't have.
+-- Preferred: the gain the 3DAP itself applies, published as cockpit parameter 3DAP_OUT_GAIN_<radio>
+-- (RT1 / RT2 / 164 / LRS: master x input level, 0 when muted or unpowered, master only in FB / boot /
+-- degraded), read through the 163rd vFS 3DAS plugin bridge (a10_3das.cockpit_param) or get_param_handle,
+-- and only when the 3DAP also publishes the marker 3DAP_OUT_GAINS = 1.
+-- Fallback (older 3DAP, no bridge): the knob args. They run backwards (arg 1 = minimum) over 270 deg of
+-- travel: master 1045 full at arg 1 - 270/340, inputs 1..5 = 1046..1050 full at arg 0.25. Groups A-C have
+-- RT1, RT2, 164 as inputs 1-3; in FB (analog) or groups D/E only the master applies; mute is not seen.
 local A10C2_3DAP_DEVICE = 79
+local A10C2_3DAP_DIAL_FULL_ARG = 1 - 270 / 360
+local A10C2_3DAP_VOL_FULL_ARG = 1 - 270 / 340
 
-local function a10c2PanelVolume(mainPanel, input3dap, masterArg, pullArg, rotaryArg)
+local function cockpitParamNumber(name)
+    local bridge = rawget(_G, "a10_3das")
+    if bridge and type(bridge.cockpit_param) == "function" then
+        local ok, value = pcall(bridge.cockpit_param, name)
+        if ok and type(value) == "number" then
+            return value
+        end
+    end
+    local gph = rawget(_G, "get_param_handle")
+    if type(gph) == "function" then
+        local ok, value = pcall(function()
+            return gph(name):get()
+        end)
+        if ok then
+            return tonumber(value)
+        end
+    end
+    return nil
+end
+
+local function a10c2KnobVolume(value, fullArg)
+    return clamp((1.0 - (value or 0)) / (1.0 - fullArg), 0.0, 1.0)
+end
+
+local function a10c2PanelVolume(mainPanel, input3dap, masterArg, pullArg, rotaryArg, radio3dap)
     if getDevice(A10C2_3DAP_DEVICE) == nil then
         return getVolume(mainPanel, masterArg, pullArg, rotaryArg)
     end
-    local master = 1.0 - clamp(getArgument(mainPanel, 1045, 0) or 0, 0.0, 1.0)
+    -- 3DAP_OUT_GAINS = 1 marks a 3DAP that publishes its gains; without it a missing param may read 0 (muted)
+    if radio3dap ~= nil and (cockpitParamNumber("3DAP_OUT_GAINS") or 0) >= 0.5 then
+        local gain = cockpitParamNumber("3DAP_OUT_GAIN_" .. radio3dap)
+        if gain ~= nil then
+            return clamp(gain, 0.0, 1.0)
+        end
+    end
+    local master = a10c2KnobVolume(getArgument(mainPanel, 1045, 0), A10C2_3DAP_VOL_FULL_ARG)
     -- Selector: arg 0.0 = E, 0.1 = D ... 0.4 = A, 0.5 = FB  ->  group 0 = FB, 1 = A ... 5 = E
     local group = math.floor((0.5 - (getArgument(mainPanel, 1044, 0.4) or 0.4)) * 10 + 0.5)
     local input = 1.0
     if input3dap ~= nil and group >= 1 and group <= 3 then
-        input = 1.0 - clamp(getArgument(mainPanel, 1045 + input3dap, 0) or 0, 0.0, 1.0)
+        input = a10c2KnobVolume(getArgument(mainPanel, 1045 + input3dap, 0), A10C2_3DAP_DIAL_FULL_ARG)
     end
     return clamp(master * input, 0.0, 1.0)
 end
+
+OpenFreqDCS.a10c2PanelVolume = a10c2PanelVolume -- for add-on radios (RT2, LARS): same rule
 
 -- Only the ARC-210 has a true simultaneous-guard mode (TR+G: monitor 243.0 in addition to the
 -- tuned frequency, without retuning away from it). The ARC-164's GRD selector position (167,
@@ -973,8 +1013,8 @@ local function buildA10C2Radios()
         local arc210Display = oneLine(arc210DisplayRaw, 220)
         writeDebug(string.format(
             "A-10C_2 radios: ARC210 freq=%s displayFreq=%s dialFreq=%s displayIndicator=%s raw=%s on=%s modeArg551=%s args554-558=%s vol=%s sq=%s pwrOff=%s displayRaw=%s displayScan=%s activeChannel=%s satcomBand=%s satcomDedicated=%s | ARC164 freq=%s dialFreq=%s raw=%s on=%s modeArg168=%s selector167=%s channel161=%s args162-166=%s vol=%s sq=%s pwrOff=%s | ARC186 freq=%s raw=%s on=%s modeArg149=%s vol=%s sq=%s tone=%s pwrOff=%s | ptt arc210=%s arc164=%s arc186=%s mic751=%s mic752=%s",
-            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(a10c2PanelVolume(mainPanel, 1, 238, 225, 226)), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary), textOr(arc210ActiveChannel), textOr(arc210SatcomBandActive), textOr(arc210DedicatedSatcomActive),
-            textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171) * a10c2PanelVolume(mainPanel, 3, 238, 227, 228)), textOr(arc164SquelchOn), textOr(arc164PowerKnobOff),
+            textOr(arc210Frequency), textOr(arc210DisplayFrequency), textOr(arc210DialFrequency), textOr(arc210DisplayIndicator), textOr(arc210RawFrequency), textOr(arc210IsOn), textOr(getArgument(mainPanel, 551, nil)), formatArguments(mainPanel, { 554, 555, 556, 557, 558 }), textOr(a10c2PanelVolume(mainPanel, 1, 238, 225, 226, "RT1")), textOr(arc210SquelchOn), textOr(arc210PowerKnobOff), arc210Display, textOr(OpenFreqDCS.arc210IndicatorScanSummary), textOr(arc210ActiveChannel), textOr(arc210SatcomBandActive), textOr(arc210DedicatedSatcomActive),
+            textOr(arc164Frequency), textOr(arc164DialFrequency), textOr(arc164RawFrequency), textOr(arc164IsOn), textOr(getArgument(mainPanel, 168, nil)), textOr(getArgument(mainPanel, 167, nil)), textOr(getArgument(mainPanel, 161, nil)), formatArguments(mainPanel, { 162, 163, 164, 165, 166 }), textOr(getVolume(mainPanel, 171) * a10c2PanelVolume(mainPanel, 3, 238, 227, 228, "164")), textOr(arc164SquelchOn), textOr(arc164PowerKnobOff),
             textOr(arc186Frequency), textOr(arc186RawFrequency), textOr(arc186IsOn), textOr(getArgument(mainPanel, 149, nil)), textOr(getVolume(mainPanel, 147) * a10c2PanelVolume(mainPanel, nil, 238, 223, 224)), textOr(arc186SquelchOn), textOr(arc186ToneOn), textOr(arc186PowerKnobOff),
             textOr(ptt.arc210), textOr(ptt.arc164), textOr(ptt.arc186), textOr(getArgument(mainPanel, 751, nil)), textOr(getArgument(mainPanel, 752, nil))
         ))
@@ -992,7 +1032,7 @@ local function buildA10C2Radios()
             frequencyHz = arc210Frequency,
             secondaryFrequencyHz = getArc210GuardHz(mainPanel),
             modulation = arc210Modulation,
-            volume = a10c2PanelVolume(mainPanel, 1, 238, 225, 226),
+            volume = a10c2PanelVolume(mainPanel, 1, 238, 225, 226, "RT1"),
             isOn = not arc210PowerKnobOff and not arc210Booting
                 and getDevicePower(arc210, arc210Frequency, arc210IsOn, requireDevicePower),
             ptt = ptt.arc210,
@@ -1013,7 +1053,7 @@ local function buildA10C2Radios()
             frequencyHz = arc164Frequency,
             secondaryFrequencyHz = 0, -- GRD retunes the primary frequency instead; see getArc210GuardHz comment
             modulation = getDeviceModulation(arc164, 0),
-            volume = getVolume(mainPanel, 171) * a10c2PanelVolume(mainPanel, 3, 238, 227, 228),
+            volume = getVolume(mainPanel, 171) * a10c2PanelVolume(mainPanel, 3, 238, 227, 228, "164"),
             isOn = not arc164PowerKnobOff and getDevicePower(arc164, arc164Frequency, arc164IsOn, requireDevicePower),
             ptt = ptt.arc164,
             enc = arc164Enc,

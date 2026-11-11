@@ -348,7 +348,18 @@ public class OpenFreqService : IOpenFreqService
     /// <summary>When true, capture auto-starts on entering game mode (flight) and auto-stops on leaving it.</summary>
     public bool AutoRecordInGameMode { get; set; }
 
-    /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture. The radio tone stays at 0.</summary>
+    /// <summary>Mask effect profile on own voice / hot mic, local only: 1 = measured (default), 2 = classic.</summary>
+    public int MaskEffectProfile
+    {
+        get => field;
+        set
+        {
+            field = value == 2 ? 2 : 1;
+            if (_playbackService != null) _playbackService.OwnVoiceMaskProfile = (MaskProfile)field;
+        }
+    } = 1;
+
+    /// <summary>Wet/dry blend (0..1) of the ambient SFX (cockpit, gain stage, mask) on own voice in the capture.</summary>
     public double OwnVoiceSfxVolume
     {
         get => field;
@@ -535,6 +546,7 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.SidetoneVolume = (float)SidetoneVolume;
         _playbackService.AmbientNoiseVolume = (float)AmbientNoiseVolume;
         _playbackService.OwnVoiceSfxVolume = (float)OwnVoiceSfxVolume;
+        _playbackService.OwnVoiceMaskProfile = (MaskProfile)MaskEffectProfile;
         UpdateOwnVoiceAmbient();
         ApplyHudTapeFeed();
         _playbackService.SetEncryptionToneAssets(

@@ -176,6 +176,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     }
     /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture. The radio tone stays at 0.</summary>
     [ObservableProperty] public partial double OwnVoiceSfxVolume { get; set; } = 1.0;
+
+    /// <summary>Mask effect profile, as a combo-box index: 0 = profile 1 (measured), 1 = profile 2 (classic).</summary>
+    [ObservableProperty] public partial int MaskEffectProfileIndex { get; set; } = 0;
+
+    public string[] MaskEffectProfileNames { get; } = ["1 - Measured mask", "2 - Classic"];
     /// <summary>Feed the capture mix to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
     [ObservableProperty] public partial bool HudTapeFeedEnabled { get; set; }
     [ObservableProperty] public partial bool HudTapeHotMicEnabled { get; set; } = true;
@@ -615,6 +620,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     }
 
     partial void OnOwnVoiceSfxVolumeChanged(double value) => _openFreqService.OwnVoiceSfxVolume = value;
+    partial void OnMaskEffectProfileIndexChanged(int value) => _openFreqService.MaskEffectProfile = value + 1;
 
     partial void OnHudTapeFeedEnabledChanged(bool value) => _openFreqService.HudTapeFeedEnabled = value;
     partial void OnHudTapeHotMicEnabledChanged(bool value) => _openFreqService.HudTapeHotMicEnabled = value;
@@ -806,6 +812,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             RecordingPath = settings.RecordingPath;
         StreamToDevice = settings.CaptureSink == IOpenFreqService.CaptureSink.Device;
         OwnVoiceSfxVolume = settings.OwnVoiceSfxVolume;
+        MaskEffectProfileIndex = settings.MaskEffectProfile == 2 ? 1 : 0; // anything unknown -> profile 1
         HudTapeHotMicEnabled = settings.HudTapeHotMicEnabled;
         HudTapeFeedEnabled = settings.HudTapeFeedEnabled && IsWindowsPlatform;
         if (settings.DarkMode.HasValue)
@@ -1036,6 +1043,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 : IOpenFreqService.CaptureSink.File,
             MonitorDeviceName = MonitorDeviceName,
             OwnVoiceSfxVolume = OwnVoiceSfxVolume,
+            MaskEffectProfile = MaskEffectProfileIndex + 1,
             HudTapeFeedEnabled = HudTapeFeedEnabled,
             HudTapeHotMicEnabled = HudTapeHotMicEnabled,
             DarkMode = IsDarkMode,

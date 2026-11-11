@@ -93,6 +93,10 @@ public class OpenFreqSettings
     /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture (upstream 4abdbd2).</summary>
     public double OwnVoiceSfxVolume { get; set; } = 1.0;
 
+    /// <summary>Mask effect profile for the jet types on own voice and the HUD-tape hot mic (local only):
+    /// 1 = measured mask (default), 2 = classic. See OpenFreqAudio.MaskProfile.</summary>
+    public int MaskEffectProfile { get; set; } = 1;
+
     /// <summary>
     /// Pre-1.6.0 on/off switch for SFX on own voice, read from older settings files only and never
     /// written back. Off maps to <see cref="OwnVoiceSfxVolume"/> 0, the nearest thing the slider has to

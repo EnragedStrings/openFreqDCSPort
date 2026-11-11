@@ -559,6 +559,7 @@ public class RadioPlayback : IDisposable
     // only; rebuilt when the ambient type changes.
     private IAmbientNoiseEffect? _hotMicMask;
     private AmbientNoiseType _hotMicMaskType;
+    private MaskProfile _hotMicMaskProfile;
     private HudTapeFeed? _hudFeed;  // created on the first start, kept until Dispose (the DSP thread may hold it)
     private long _outputLatencyTicks; // DSP callback -> heard, Stopwatch ticks (re-read at every master stream start)
 
@@ -601,6 +602,23 @@ public class RadioPlayback : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Mask sound for the jet types on our own voice in the capture and on the HUD-tape hot mic. Local only: what we
+    /// transmit, and every incoming voice, keeps the classic mask. Default: profile 1, the measured mask.
+    /// </summary>
+    public MaskProfile OwnVoiceMaskProfile
+    {
+        get;
+        set
+        {
+            lock (_lock)
+            {
+                field = value;
+                if (_ownVoiceRenderer != null) _ownVoiceRenderer.MaskProfile = value;
+            }
+        }
+    } = MaskProfile.Measured;
 
     /// <summary>
     /// The frequency we transmit on. Informational: own voice in the capture is no longer band-limited
@@ -1026,6 +1044,7 @@ public class RadioPlayback : IDisposable
         _ownVoiceRenderer = new OwnVoiceRadioRenderer(SampleRate,
             _loggerFactory.CreateLogger<OwnVoiceRadioRenderer>())
         {
+            MaskProfile = OwnVoiceMaskProfile, // before AmbientNoise, so the effect is built once with it
             AmbientNoise = OwnVoiceAmbient,
         };
         _recordOwnVoiceBuffer.Clear();
@@ -2115,10 +2134,12 @@ public class RadioPlayback : IDisposable
             // Same mask (and gain stage) as own voice, so idle mic and transmissions are the same person in the same
             // mask; no ambience (already on the tape) and no radio effects (it is the pilot's mask, not the radio).
             var maskType = OwnVoiceAmbient;
-            if (_hotMicMask == null || maskType != _hotMicMaskType)
+            var maskProfile = OwnVoiceMaskProfile;
+            if (_hotMicMask == null || maskType != _hotMicMaskType || maskProfile != _hotMicMaskProfile)
             {
-                _hotMicMask = AmbientNoiseEffectFactory.Create(maskType, SampleRate);
+                _hotMicMask = AmbientNoiseEffectFactory.Create(maskType, SampleRate, mask: maskProfile);
                 _hotMicMaskType = maskType;
+                _hotMicMaskProfile = maskProfile;
             }
             _hotMicMask.ApplyMicOnly(_hotMicScratch, 0, samples, OwnVoiceSfxVolume);
             HudFeedMix.Build(_recordStereo.AsSpan(0, stereo), _hotMicScratch.AsSpan(0, samples),

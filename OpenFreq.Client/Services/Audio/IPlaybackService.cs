@@ -20,6 +20,7 @@ public interface IPlaybackService
     float MasterVolume { get; set; }
     float AmbientNoiseVolume { get; set; }
     float OwnVoiceSfxVolume { get; set; }
+    MaskProfile OwnVoiceMaskProfile { get; set; }
     AmbientNoiseType OwnVoiceAmbient { get; set; }
     int OwnVoiceFrequencyKhz { get; set; }
     bool IsRecording { get; }
@@ -106,6 +107,7 @@ public sealed class RadioPlaybackAdapter : IPlaybackService
     public float MasterVolume { get => _inner.MasterVolume; set => _inner.MasterVolume = value; }
     public float AmbientNoiseVolume { get => _inner.AmbientNoiseVolume; set => _inner.AmbientNoiseVolume = value; }
     public float OwnVoiceSfxVolume { get => _inner.OwnVoiceSfxVolume; set => _inner.OwnVoiceSfxVolume = value; }
+    public MaskProfile OwnVoiceMaskProfile { get => _inner.OwnVoiceMaskProfile; set => _inner.OwnVoiceMaskProfile = value; }
     public AmbientNoiseType OwnVoiceAmbient { get => _inner.OwnVoiceAmbient; set => _inner.OwnVoiceAmbient = value; }
     public int OwnVoiceFrequencyKhz { get => _inner.OwnVoiceFrequencyKhz; set => _inner.OwnVoiceFrequencyKhz = value; }
     public bool IsRecording => _inner.IsRecording;

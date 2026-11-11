@@ -73,13 +73,16 @@ internal static class AmbientNoiseEffectFactory
     /// Create an ambient noise effect with configurable strength.
     /// </summary>
     /// <param name="strength">Effect intensity multiplier (0.0 = no effect, 1.0 = full strength, > 1.0 = boost).</param>
-    public static IAmbientNoiseEffect Create(AmbientNoiseType type, int sampleRate, float strength = 5.0f)
+    /// <param name="mask">Mask sound for the jet types (F-16, F-15, generic jet, A-10C). Classic unless the caller
+    /// renders our own voice locally (own voice in the capture, HUD-tape hot mic): never changes what others hear.</param>
+    public static IAmbientNoiseEffect Create(AmbientNoiseType type, int sampleRate, float strength = 5.0f,
+        MaskProfile mask = MaskProfile.Classic)
         => type switch
         {
-            AmbientNoiseType.AirF16     => new AirF16AmbientEffect(sampleRate, strength),
-            AmbientNoiseType.AirF15     => new AirF15AmbientEffect(sampleRate, strength),
-            AmbientNoiseType.AirGeneric => new AirGenericAmbientEffect(sampleRate, strength),
-            AmbientNoiseType.AirA10     => new AirA10AmbientEffect(sampleRate, strength),
+            AmbientNoiseType.AirF16     => new AirF16AmbientEffect(sampleRate, strength, mask),
+            AmbientNoiseType.AirF15     => new AirF15AmbientEffect(sampleRate, strength, mask),
+            AmbientNoiseType.AirGeneric => new AirGenericAmbientEffect(sampleRate, strength, mask),
+            AmbientNoiseType.AirA10     => new AirA10AmbientEffect(sampleRate, strength, mask),
             AmbientNoiseType.AirUH60    => new AirUH60AmbientEffect(sampleRate, strength, includeGearbox: true),
             AmbientNoiseType.AirHelicopterGeneric => new AirUH60AmbientEffect(sampleRate, strength, includeGearbox: false),
             AmbientNoiseType.Ground     => new GroundAmbientEffect(sampleRate, strength),
@@ -179,8 +182,12 @@ internal sealed class AirF16AmbientEffect : IAmbientNoiseEffect
     private double _rumblePhase1;
     private double _rumblePhase2;
 
-    public AirF16AmbientEffect(int sampleRate, float strength)
+    // Mask profile 1 (measured mask) in place of the classic mask stage; null = classic (profile 2).
+    private readonly MeasuredMaskFilter? _measured;
+
+    public AirF16AmbientEffect(int sampleRate, float strength, MaskProfile mask = MaskProfile.Classic)
     {
+        _measured = mask == MaskProfile.Measured ? new MeasuredMaskFilter(sampleRate) : null;
         _sampleRate = sampleRate;
         _strength   = strength;
 
@@ -195,11 +202,16 @@ internal sealed class AirF16AmbientEffect : IAmbientNoiseEffect
             int idx = offset + frame;
             float dry = buffer[idx];
             float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
-            float wet = lp2 * 0.55f + x * 0.45f;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -251,12 +263,17 @@ internal sealed class AirF16AmbientEffect : IAmbientNoiseEffect
             x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
 
             // Oxygen-mask two-pole LPF + nasal cavity blend
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
 
-            float wet = lp2 * 0.55f + x * 0.45f;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -305,8 +322,12 @@ internal sealed class AirF15AmbientEffect : IAmbientNoiseEffect
     private const float SatDrive = 2.5f;
     private static readonly float SatNorm = 1.0f / MathF.Tanh(SatDrive);
 
-    public AirF15AmbientEffect(int sampleRate, float strength)
+    // Mask profile 1 (measured mask) in place of the classic mask stage; null = classic (profile 2).
+    private readonly MeasuredMaskFilter? _measured;
+
+    public AirF15AmbientEffect(int sampleRate, float strength, MaskProfile mask = MaskProfile.Classic)
     {
+        _measured = mask == MaskProfile.Measured ? new MeasuredMaskFilter(sampleRate) : null;
         _sampleRate = sampleRate;
         _strength   = strength;
 
@@ -321,9 +342,14 @@ internal sealed class AirF15AmbientEffect : IAmbientNoiseEffect
             int idx = offset + frame;
             float dry = buffer[idx];
             float x = MathF.Tanh(dry * SatDrive) * SatNorm;
-            float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
-            _muffleLP = lp;
-            float wet = lp * 0.40f + x * 0.60f;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
+                _muffleLP = lp;
+                wet = lp * 0.40f + x * 0.60f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -360,10 +386,14 @@ internal sealed class AirF15AmbientEffect : IAmbientNoiseEffect
             x = MathF.Tanh(x * SatDrive) * SatNorm;
 
             // Single-pole mask muffle: softer coloring than F-16, more dry signal let through
-            float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
-            _muffleLP = lp;
-
-            float wet = lp * 0.40f + x * 0.60f;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
+                _muffleLP = lp;
+                wet = lp * 0.40f + x * 0.60f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -439,8 +469,12 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
     private float _roarLpState;
     private uint _noiseState = 0x9E3779B9u;
 
-    public AirGenericAmbientEffect(int sampleRate, float strength)
+    // Mask profile 1 (measured mask) in place of the classic mask stage; null = classic (profile 2).
+    private readonly MeasuredMaskFilter? _measured;
+
+    public AirGenericAmbientEffect(int sampleRate, float strength, MaskProfile mask = MaskProfile.Classic)
     {
+        _measured = mask == MaskProfile.Measured ? new MeasuredMaskFilter(sampleRate) : null;
         _sampleRate = sampleRate;
         _strength   = strength;
 
@@ -455,11 +489,16 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
             int idx = offset + frame;
             float dry = buffer[idx];
             float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
-            float wet = lp2 * 0.55f + x * 0.45f;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -524,12 +563,17 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
             x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
 
             // Oxygen-mask two-pole LPF + nasal cavity blend
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
 
-            float wet = lp2 * 0.55f + x * 0.45f;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -656,8 +700,12 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
     private float _roarLpState;
     private uint _noiseState = 0x9E3779B9u;
 
-    public AirA10AmbientEffect(int sampleRate, float strength)
+    // Mask profile 1 (measured mask) in place of the classic mask stage; null = classic (profile 2).
+    private readonly MeasuredMaskFilter? _measured;
+
+    public AirA10AmbientEffect(int sampleRate, float strength, MaskProfile mask = MaskProfile.Classic)
     {
+        _measured = mask == MaskProfile.Measured ? new MeasuredMaskFilter(sampleRate) : null;
         _sampleRate = sampleRate;
         _strength   = strength;
 
@@ -672,11 +720,16 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
             int idx = offset + frame;
             float dry = buffer[idx];
             float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
-            float wet = lp2 * 0.55f + x * 0.45f;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }
@@ -771,12 +824,17 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
             x = AmbientDsp.SoftAlc(x, AlcMakeup, AlcKnee);
 
             // Oxygen-mask two-pole LPF + nasal cavity blend
-            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
-            _muffleLP1 = lp1;
-            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
-            _muffleLP2 = lp2;
+            float wet;
+            if (_measured != null) wet = _measured.Process(x); // mask profile 1
+            else
+            {
+                float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+                _muffleLP1 = lp1;
+                float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+                _muffleLP2 = lp2;
 
-            float wet = lp2 * 0.55f + x * 0.45f;
+                wet = lp2 * 0.55f + x * 0.45f;
+            }
             buffer[idx] = dry + volume * (wet - dry);
         }
     }

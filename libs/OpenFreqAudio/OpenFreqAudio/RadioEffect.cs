@@ -29,6 +29,7 @@ public class RadioEffect
     private readonly Lock _lock = new();
 
     private AmbientNoiseType _ambientNoiseType = AmbientNoiseType.None;
+    private MaskProfile _maskProfile = MaskProfile.Classic;
     private IAmbientNoiseEffect _ambientEffect = NullAmbientEffect.Instance;
 
     // -----------------------------------------------------------------------
@@ -53,10 +54,31 @@ public class RadioEffect
             {
                 if (_ambientNoiseType == value) return;
                 _ambientNoiseType = value;
-                _ambientEffect = AmbientNoiseEffectFactory.Create(value, _sampleRate);
+                _ambientEffect = AmbientNoiseEffectFactory.Create(value, _sampleRate, mask: _maskProfile);
 #if DEBUG
                 _logger.LogDebug("AmbientNoise changed to {Type} (StreamRate={SampleRate} Hz)", value, _sampleRate);
 #endif
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mask sound for the jet ambient types. Classic (the default) everywhere except our own voice rendered locally
+    /// (see OwnVoiceRadioRenderer): incoming radio audio always keeps the classic mask. Thread-safe.
+    /// </summary>
+    public MaskProfile MaskProfile
+    {
+        get
+        {
+            lock (_lock) return _maskProfile;
+        }
+        set
+        {
+            lock (_lock)
+            {
+                if (_maskProfile == value) return;
+                _maskProfile = value;
+                _ambientEffect = AmbientNoiseEffectFactory.Create(_ambientNoiseType, _sampleRate, mask: value);
             }
         }
     }

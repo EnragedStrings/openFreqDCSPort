@@ -75,10 +75,17 @@
               IsSnapToTickEnabled="True"
               Margin="0,0,0,4" />
 
+      <TextBlock Classes="InputLabel" Margin="0,8,0,4" Text="Mask effect profile" />
+      <ComboBox ItemsSource="{Binding Settings.MaskEffectProfileNames}"
+                SelectedIndex="{Binding Settings.MaskEffectProfileIndex}"
+                HorizontalAlignment="Stretch"
+                ToolTip.Tip="The oxygen-mask sound on your own voice and the hot mic in your recording / HUD tape, for the jet types (A-10C, F-16, F-15, generic jet). 1 = measured mask (mask cavity measured from a real recording, then the intercom chain). 2 = the classic mask. Local only: what other players hear is unchanged."
+                Margin="0,0,0,8" />
+
       <CheckBox Content="Feed HUD Recorder (DCS HUD tapes)"
                 IsChecked="{Binding Settings.HudTapeFeedEnabled}"
                 IsVisible="{Binding Settings.IsWindowsPlatform}"
-                ToolTip.Tip="Puts the radios (as heard, plus your own voice with radio SFX) on HUD Recorder's DCS HUD tapes, in sync. Local shared memory only, nothing leaves this PC. Runs whenever OpenFreq plays audio, independent of recording/streaming. The tape level follows Master Volume."
+                ToolTip.Tip="Puts the radios (as heard, plus your own voice in your mask and cockpit) on HUD Recorder's DCS HUD tapes, in sync. Local shared memory only, nothing leaves this PC. Runs whenever OpenFreq plays audio, independent of recording/streaming. The tape level follows Master Volume."
                 Margin="0,0,0,4" />
       <CheckBox Content="Hot mic on the HUD tape"
                 IsChecked="{Binding Settings.HudTapeHotMicEnabled}"

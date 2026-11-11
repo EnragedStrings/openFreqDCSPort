@@ -26,7 +26,7 @@ public class OpenFreqServiceOwnVoiceAmbientTests
     [Fact]
     public async Task FirstTunedLocation_SetsOwnVoiceFrequency()
     {
-        // Fork: own voice keeps the band-dependent band-pass of the frequency it's on.
+        // The frequency we transmit on is still tracked (informational: own voice has no radio band-pass any more).
         var h = new ServiceHarness();
         await h.InitializeAuthenticatedAsync();
 
@@ -35,6 +35,25 @@ public class OpenFreqServiceOwnVoiceAmbientTests
 
         Assert.Equal(251_000, h.Playback.OwnVoiceFrequencyKhz);
     }
+
+    [Fact]
+    public async Task MaskEffectProfile_DefaultsToMeasured_AndReachesPlayback()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        Assert.Equal(1, h.Service.MaskEffectProfile);
+        Assert.Equal(MaskProfile.Measured, h.Playback.OwnVoiceMaskProfile);
+
+        h.Service.MaskEffectProfile = 2;
+        Assert.Equal(MaskProfile.Classic, h.Playback.OwnVoiceMaskProfile);
+
+        h.Service.MaskEffectProfile = 7; // unknown -> profile 1
+        Assert.Equal(1, h.Service.MaskEffectProfile);
+        Assert.Equal(MaskProfile.Measured, h.Playback.OwnVoiceMaskProfile);
+    }
+
+    [Fact]
+    public void MaskEffectProfile_DefaultsToProfile1InSettings() => Assert.Equal(1, new OpenFreqClient.Models.OpenFreqSettings().MaskEffectProfile);
 
     [Fact]
     public async Task LaterTunedLocation_KeepsFirstLocationsAmbient()

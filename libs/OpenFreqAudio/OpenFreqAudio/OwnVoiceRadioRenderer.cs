@@ -32,6 +32,13 @@ public sealed class OwnVoiceRadioRenderer
         set => _effect.AmbientNoise = value;
     }
 
+    /// <summary>Mask sound for the jet types on our own voice (local only). Thread-safe.</summary>
+    public MaskProfile MaskProfile
+    {
+        get => _effect.MaskProfile;
+        set => _effect.MaskProfile = value;
+    }
+
     /// <summary>
     /// Render one DSP buffer of <paramref name="frames"/> samples of own-voice audio (zero where
     /// we have none) into <paramref name="buffer"/> in place.

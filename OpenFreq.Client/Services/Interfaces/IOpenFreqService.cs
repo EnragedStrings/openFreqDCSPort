@@ -52,6 +52,9 @@ public interface IOpenFreqService : IDisposable
     bool AutoRecordInGameMode { get; set; }
     /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture. The radio tone stays at 0.</summary>
     double OwnVoiceSfxVolume { get; set; }
+
+    /// <summary>Mask effect profile on own voice / hot mic, local only: 1 = measured (default), 2 = classic.</summary>
+    int MaskEffectProfile { get; set; }
     /// <summary>When true, the capture mix is fed to HUD Recorder (DCS HUD tapes) through local shared memory. Windows only.</summary>
     bool HudTapeFeedEnabled { get; set; }
     bool HudTapeHotMicEnabled { get; set; }

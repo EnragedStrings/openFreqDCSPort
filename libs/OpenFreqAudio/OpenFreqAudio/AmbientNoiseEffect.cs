@@ -53,6 +53,14 @@ internal interface IAmbientNoiseEffect
     /// clean input: 0 bypasses the effect entirely, 1 applies it at full strength.
     /// </summary>
     void ApplyPreFade(float[] buffer, int offset, int frames, float volume);
+
+    /// <summary>
+    /// The pilot's own mic sound without the cockpit ambience: the same gain stage (ALC / preamp) and mask (or
+    /// headset, compartment, room) filter as <see cref="ApplyPreFade"/>, with the same constants, but no engine,
+    /// inverter, rotor or airframe sources. Used for the HUD-tape hot mic, whose cockpit ambience is already on the
+    /// tape. Use a separate instance from the one running ApplyPreFade (they share filter state).
+    /// </summary>
+    void ApplyMicOnly(float[] buffer, int offset, int frames, float volume);
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +98,8 @@ internal sealed class NullAmbientEffect : IAmbientNoiseEffect
     private NullAmbientEffect() { }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume) { }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume) { }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +186,22 @@ internal sealed class AirF16AmbientEffect : IAmbientNoiseEffect
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
         _roarLpA = MathF.Exp(-2f * MathF.PI * 350f / sampleRate);
+    }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
+            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+            _muffleLP1 = lp1;
+            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+            _muffleLP2 = lp2;
+            float wet = lp2 * 0.55f + x * 0.45f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
@@ -286,6 +312,20 @@ internal sealed class AirF15AmbientEffect : IAmbientNoiseEffect
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
         _roarLpA = MathF.Exp(-2f * MathF.PI * 400f / sampleRate);
+    }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = MathF.Tanh(dry * SatDrive) * SatNorm;
+            float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
+            _muffleLP = lp;
+            float wet = lp * 0.40f + x * 0.60f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
@@ -406,6 +446,22 @@ internal sealed class AirGenericAmbientEffect : IAmbientNoiseEffect
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
         _roarLpA = MathF.Exp(-2f * MathF.PI * 350f / sampleRate);
+    }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
+            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+            _muffleLP1 = lp1;
+            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+            _muffleLP2 = lp2;
+            float wet = lp2 * 0.55f + x * 0.45f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
@@ -607,6 +663,22 @@ internal sealed class AirA10AmbientEffect : IAmbientNoiseEffect
 
         _muffleA = MathF.Exp(-2f * MathF.PI * MuffleCutoff / sampleRate);
         _roarLpA = MathF.Exp(-2f * MathF.PI * 450f / sampleRate);
+    }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
+            float lp1 = _muffleA * _muffleLP1 + (1f - _muffleA) * x;
+            _muffleLP1 = lp1;
+            float lp2 = _muffleA * _muffleLP2 + (1f - _muffleA) * lp1;
+            _muffleLP2 = lp2;
+            float wet = lp2 * 0.55f + x * 0.45f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
@@ -857,6 +929,20 @@ internal sealed class AirUH60AmbientEffect : IAmbientNoiseEffect
         return _pinkSum / _pinkDice.Length;
     }
 
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float x = AmbientDsp.SoftAlc(dry, AlcMakeup, AlcKnee);
+            float lp = _muffleA * _muffleLP + (1f - _muffleA) * x;
+            _muffleLP = lp;
+            float wet = lp * 0.45f + x * 0.55f;
+            buffer[idx] = dry + volume * (wet - dry);
+        }
+    }
+
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
     {
         double mainInc    = 2.0 * Math.PI * MainRotorBpf / _sampleRate;
@@ -992,6 +1078,18 @@ internal sealed class GroundAmbientEffect : IAmbientNoiseEffect
         _compartmentA = MathF.Exp(-2f * MathF.PI * CompartmentCutoff / sampleRate);
     }
 
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float lp = _compartmentA * _compartmentLP + (1f - _compartmentA) * dry;
+            _compartmentLP = lp;
+            buffer[idx] = dry + volume * (lp - dry);
+        }
+    }
+
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)
     {
         double thrumInc1 = 2.0 * Math.PI * ThrumFreq1 / _sampleRate;
@@ -1103,6 +1201,18 @@ internal sealed class StationaryAmbientEffect : IAmbientNoiseEffect
         _hissLpHighA = MathF.Exp(-2f * MathF.PI * 1500f / sampleRate);
         _hissLpLowA  = MathF.Exp(-2f * MathF.PI * 300f  / sampleRate);
         _roomA       = MathF.Exp(-2f * MathF.PI * RoomCutoff / sampleRate);
+    }
+
+    public void ApplyMicOnly(float[] buffer, int offset, int frames, float volume)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            int idx = offset + frame;
+            float dry = buffer[idx];
+            float lp = _roomA * _roomLP + (1f - _roomA) * dry;
+            _roomLP = lp;
+            buffer[idx] = dry + volume * (lp - dry);
+        }
     }
 
     public void ApplyPreFade(float[] buffer, int offset, int frames, float volume)

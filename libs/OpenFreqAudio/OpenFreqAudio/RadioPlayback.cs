@@ -527,7 +527,7 @@ public class RadioPlayback : IDisposable
     }
 
     // --- Session capture (one combined stereo mix: incoming as heard with pan + own voice centered,
-    //     with the radio tone of OwnVoiceRadioRenderer). The mix can be written to an Ogg Opus file
+    //     through the mask / cockpit of OwnVoiceRadioRenderer, no radio effects). The mix can be written to an Ogg Opus file
     //     OR streamed to a separate playback device (e.g. a virtual cable). Exclusive in practice,
     //     but both sinks are supported independently here. ---
     private bool _recording;        // file sink active
@@ -554,6 +554,11 @@ public class RadioPlayback : IDisposable
     private float[] _feedStereo = [];
     private float[] _hotMicScratch = [];
     private bool _wasFeedingHotMic;
+    // The hot mic's own mask: the pilot's mic through the same gain stage and mask as own voice for OwnVoiceAmbient,
+    // without the cockpit ambience (the own-voice renderer already puts that on the tape continuously). DSP thread
+    // only; rebuilt when the ambient type changes.
+    private IAmbientNoiseEffect? _hotMicMask;
+    private AmbientNoiseType _hotMicMaskType;
     private HudTapeFeed? _hudFeed;  // created on the first start, kept until Dispose (the DSP thread may hold it)
     private long _outputLatencyTicks; // DSP callback -> heard, Stopwatch ticks (re-read at every master stream start)
 
@@ -598,21 +603,10 @@ public class RadioPlayback : IDisposable
     }
 
     /// <summary>
-    /// The frequency we transmit on, which sets own voice's band-pass high edge in the capture the
-    /// same way it's set for a receiver tuned there (see FastPathAudioSim.GetBandConfig).
+    /// The frequency we transmit on. Informational: own voice in the capture is no longer band-limited
+    /// (no radio effects on our own voice; see OwnVoiceRadioRenderer).
     /// </summary>
-    public int OwnVoiceFrequencyKhz
-    {
-        get;
-        set
-        {
-            lock (_lock)
-            {
-                field = value;
-                if (_ownVoiceRenderer != null) _ownVoiceRenderer.FrequencyKhz = value;
-            }
-        }
-    }
+    public int OwnVoiceFrequencyKhz { get; set; }
 
     public bool IsRecording => _recording;
     public bool IsMonitoring => _monitoring;
@@ -623,8 +617,8 @@ public class RadioPlayback : IDisposable
     public bool WantsOwnVoice => Capturing;
 
     /// <summary>
-    /// Wet/dry blend (0..1) of the ambient SFX on own voice in the capture.
-    /// The band-pass runs at any setting, so own voice keeps the radio tone even at 0.
+    /// Wet/dry blend (0..1) of the ambient SFX (cockpit, gain stage, mask) on own voice in the capture, and of the
+    /// mask on the HUD-tape hot mic. 0 = the dry mic.
     /// </summary>
     public float OwnVoiceSfxVolume { get; set; } = 1.0f;
 
@@ -1033,7 +1027,6 @@ public class RadioPlayback : IDisposable
             _loggerFactory.CreateLogger<OwnVoiceRadioRenderer>())
         {
             AmbientNoise = OwnVoiceAmbient,
-            FrequencyKhz = OwnVoiceFrequencyKhz,
         };
         _recordOwnVoiceBuffer.Clear();
     }
@@ -1048,8 +1041,8 @@ public class RadioPlayback : IDisposable
 
     /// <summary>
     /// Start recording the session to a combined stereo Ogg Opus file at <paramref name="filePath"/>.
-    /// Captures incoming audio (as heard, post-FX, with pan) plus our own voice with the radio tone
-    /// (see <see cref="OwnVoiceRadioRenderer"/>), panned centre. No-op if already recording. Encoding runs on the
+    /// Captures incoming audio (as heard, post-FX, with pan) plus our own voice in the cockpit and mask, no radio
+    /// effects (see <see cref="OwnVoiceRadioRenderer"/>), panned centre. No-op if already recording. Encoding runs on the
     /// recorder's own thread.
     /// </summary>
     public void StartRecording(string filePath)
@@ -2118,6 +2111,16 @@ public class RadioPlayback : IDisposable
             int hotAvail = Math.Min(_hotMicBuffer.Available, samples);
             int hotRead = hotAvail > 0 ? _hotMicBuffer.Read(_hotMicScratch.AsSpan()[..hotAvail]) : 0;
             for (int i = hotRead; i < samples; i++) _hotMicScratch[i] = 0f;
+
+            // Same mask (and gain stage) as own voice, so idle mic and transmissions are the same person in the same
+            // mask; no ambience (already on the tape) and no radio effects (it is the pilot's mask, not the radio).
+            var maskType = OwnVoiceAmbient;
+            if (_hotMicMask == null || maskType != _hotMicMaskType)
+            {
+                _hotMicMask = AmbientNoiseEffectFactory.Create(maskType, SampleRate);
+                _hotMicMaskType = maskType;
+            }
+            _hotMicMask.ApplyMicOnly(_hotMicScratch, 0, samples, OwnVoiceSfxVolume);
             HudFeedMix.Build(_recordStereo.AsSpan(0, stereo), _hotMicScratch.AsSpan(0, samples),
                 0.70710678f * MasterVolume, _feedLimiter, _feedStereo.AsSpan(0, stereo));
         }

@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace OpenFreqAudio;
 
-/// <summary>Which mask sound the jet ambient types use on our own voice and the HUD-tape hot mic (local only).</summary>
+/// <summary>Which mask sound the jet ambient types use on incoming voices, our own voice and the HUD-tape hot mic (local).</summary>
 public enum MaskProfile
 {
     /// <summary>Profile 1: the measured mask (cavity measured from a mask / clean recording pair, then the intercom

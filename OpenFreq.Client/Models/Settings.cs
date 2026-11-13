@@ -93,7 +93,7 @@ public class OpenFreqSettings
     /// <summary>Wet/dry blend (0..1) of the ambient SFX on own voice in the capture (upstream 4abdbd2).</summary>
     public double OwnVoiceSfxVolume { get; set; } = 1.0;
 
-    /// <summary>Mask effect profile for the jet types on own voice and the HUD-tape hot mic (local only):
+    /// <summary>Mask effect profile for the jet types on incoming voices, own voice and the HUD-tape hot mic (local):
     /// 1 = measured mask (default), 2 = classic. See OpenFreqAudio.MaskProfile.</summary>
     public int MaskEffectProfile { get; set; } = 1;
 

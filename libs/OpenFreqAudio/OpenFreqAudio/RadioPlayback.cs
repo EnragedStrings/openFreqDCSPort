@@ -605,8 +605,9 @@ public class RadioPlayback : IDisposable
     }
 
     /// <summary>
-    /// Mask sound for the jet types on our own voice in the capture and on the HUD-tape hot mic. Local only: what we
-    /// transmit, and every incoming voice, keeps the classic mask. Default: profile 1, the measured mask.
+    /// Mask sound for the jet types, applied where the voice is rendered: our own voice in the capture, the HUD-tape
+    /// hot mic, and every incoming voice (live streams switch when it changes). What we transmit is unaffected -- the
+    /// mask is added by each listener. Default: profile 1, the measured mask.
     /// </summary>
     public MaskProfile OwnVoiceMaskProfile
     {
@@ -617,6 +618,7 @@ public class RadioPlayback : IDisposable
             {
                 field = value;
                 if (_ownVoiceRenderer != null) _ownVoiceRenderer.MaskProfile = value;
+                foreach (var s in _streams.Values) s.RadioEffect.MaskProfile = value;
             }
         }
     } = MaskProfile.Measured;
@@ -734,7 +736,7 @@ public class RadioPlayback : IDisposable
                 IsPush = false,
                 RadioEffect = new RadioEffect(SampleRate, info.Channels,
                         _loggerFactory.CreateLogger<RadioEffect>())
-                    { AmbientNoise = ambientNoise },
+                    { MaskProfile = OwnVoiceMaskProfile, AmbientNoise = ambientNoise },
                 CurrentParams = audioParams,
                 CarrierSmoother = new CarrierSmoother(audioParams),
                 AmbientNoise = ambientNoise
@@ -868,7 +870,7 @@ public class RadioPlayback : IDisposable
             BassStreamHandle = 0,
             IsPush = true,
             RadioEffect = new RadioEffect(sampleRate, channels,
-                _loggerFactory.CreateLogger<RadioEffect>()),
+                _loggerFactory.CreateLogger<RadioEffect>()) { MaskProfile = OwnVoiceMaskProfile },
             CurrentParams = audioParams,
             CarrierSmoother = new CarrierSmoother(audioParams),
         };

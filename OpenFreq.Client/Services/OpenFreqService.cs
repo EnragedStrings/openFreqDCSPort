@@ -348,7 +348,7 @@ public class OpenFreqService : IOpenFreqService
     /// <summary>When true, capture auto-starts on entering game mode (flight) and auto-stops on leaving it.</summary>
     public bool AutoRecordInGameMode { get; set; }
 
-    /// <summary>Mask effect profile on own voice / hot mic, local only: 1 = measured (default), 2 = classic.</summary>
+    /// <summary>Mask effect profile on incoming voices, own voice and hot mic (local): 1 = measured (default), 2 = classic.</summary>
     public int MaskEffectProfile
     {
         get => field;

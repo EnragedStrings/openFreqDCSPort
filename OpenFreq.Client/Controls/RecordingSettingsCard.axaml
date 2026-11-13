@@ -79,7 +79,7 @@
       <ComboBox ItemsSource="{Binding Settings.MaskEffectProfileNames}"
                 SelectedIndex="{Binding Settings.MaskEffectProfileIndex}"
                 HorizontalAlignment="Stretch"
-                ToolTip.Tip="The oxygen-mask sound on your own voice and the hot mic in your recording / HUD tape, for the jet types (A-10C, F-16, F-15, generic jet). 1 = measured mask (mask cavity measured from a real recording, then the intercom chain). 2 = the classic mask. Local only: what other players hear is unchanged."
+                ToolTip.Tip="The oxygen-mask sound for the jet types (A-10C, F-16, F-15, generic jet): on incoming radio voices, and on your own voice and the hot mic in your recording / HUD tape. 1 = measured mask (mask cavity measured from a real recording, then the intercom chain). 2 = the classic mask. Applied on your side: each player hears the profile they picked."
                 Margin="0,0,0,8" />
 
       <CheckBox Content="Feed HUD Recorder (DCS HUD tapes)"

@@ -392,4 +392,21 @@ public class OpenFreqServiceTests
         // go Connected, or PTT would transmit on a slot the audio path can't resolve (upstream dfd9adc).
         Assert.Equal(tuned, Assert.Single(connectedSlots));
     }
+
+    [Fact]
+    public async Task HudTapeHotMic_KeepsMicOpenWithMeterAndNormalizationOff()
+    {
+        // 2026-11-13: with the input meter and mic normalization off, the mic was closed whenever the radio
+        // wasn't keyed, so the HUD tape hot mic never got any audio.
+        var h = new ServiceHarness();
+        await h.InitializeAsync();
+        h.Service.InputMeterEnabled = false;
+        h.Service.MicNormalizationEnabled = false;
+
+        h.Playback.WantsHotMic.Returns(false);
+        Assert.False(h.Service.WantMicCapture);
+
+        h.Playback.WantsHotMic.Returns(true); // HUD Recorder feed running + hot mic on
+        Assert.True(h.Service.WantMicCapture);
+    }
 }

@@ -397,6 +397,7 @@ public class OpenFreqService : IOpenFreqService
         {
             field = value;
             if (_playbackService != null) _playbackService.HotMicEnabled = value;
+            UpdateMicCaptureState(); // the hot mic needs the mic open between transmissions
         }
     } = true;
 
@@ -406,6 +407,7 @@ public class OpenFreqService : IOpenFreqService
         _playbackService.HotMicEnabled = HudTapeHotMicEnabled;
         if (HudTapeFeedEnabled && OperatingSystem.IsWindows()) _playbackService.StartHudTapeFeed();
         else _playbackService.StopHudTapeFeed();
+        UpdateMicCaptureState(); // the hot mic needs the mic open between transmissions
     }
 
     /// <summary>Selects the capture output: file or playback device.</summary>
@@ -1127,10 +1129,12 @@ public class OpenFreqService : IOpenFreqService
     /// <summary>
     /// Whether the shared mic stream should currently be open. The mic is held open while
     /// connected if either we're transmitting, or normalization is on (so the noise-floor
-    /// estimator can keep tracking the room between talk-spurts).
+    /// estimator can keep tracking the room between talk-spurts); and whenever the HUD tape
+    /// hot mic is on, so the pilot's mic reaches the tape between transmissions.
     /// </summary>
-    private bool WantMicCapture =>
-        InputMeterEnabled || (IsConnected && (MicNormalizationEnabled || !_activeTransmissionsAndMutedFrequencies.IsEmpty));
+    internal bool WantMicCapture =>
+        InputMeterEnabled || _playbackService is { WantsHotMic: true } ||
+        (IsConnected && (MicNormalizationEnabled || !_activeTransmissionsAndMutedFrequencies.IsEmpty));
 
     /// <summary>
     /// Opens or closes the shared mic capture stream to match <see cref="WantMicCapture"/>.

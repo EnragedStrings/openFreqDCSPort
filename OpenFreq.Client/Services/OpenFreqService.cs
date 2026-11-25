@@ -96,7 +96,8 @@ public class OpenFreqService : IOpenFreqService
     private readonly ConcurrentDictionary<(int FreqKhz, Guid SlotId), TunedFrequencyData> _tunedSlots = new();
 
     // The location whose ambient SFX the capture puts on our own voice (upstream 4abdbd2): the last
-    // one we transmitted from, or before that, the first one we tuned. The capture plays those SFX
+    // one we transmitted from, or before that, the cockpit (DCS/BMS) if tuned, else the first one we tuned. It also
+    // picks the HUD-tape hot mic's mask. The capture plays those SFX
     // continuously, so it needs one before we first key up. _ownVoiceFrequencyKhz goes with it and
     // sets own voice's band-dependent band-pass.
     private RadioStationData? _ownVoiceStation;
@@ -725,7 +726,10 @@ public class OpenFreqService : IOpenFreqService
     {
         lock (_ownVoiceStationLock)
         {
-            if (onlyIfUnset && _ownVoiceStation != null) return;
+            // Before the first key-up, the cockpit (DCS/BMS) is where our voice is: a saved GCI/AWACS/ATC location
+            // joined earlier must not keep it (the hot mic would get that location's room sound, not the mask).
+            if (onlyIfUnset && _ownVoiceStation != null &&
+                (IsCockpit(_ownVoiceStation) || !IsCockpit(station))) return;
             if (!ReferenceEquals(station, _ownVoiceStation))
             {
                 if (_ownVoiceStation != null) _ownVoiceStation.PropertyChanged -= OnOwnVoiceStationChanged;
@@ -736,6 +740,38 @@ public class OpenFreqService : IOpenFreqService
         }
 
         UpdateOwnVoiceAmbient();
+    }
+
+    public void SetCockpitStation(RadioStationData cockpit)
+    {
+        int frequencyKhz;
+        lock (_ownVoiceStationLock) frequencyKhz = _ownVoiceFrequencyKhz;
+        SetOwnVoiceStation(cockpit, frequencyKhz, onlyIfUnset: true);
+    }
+
+    private static bool IsCockpit(RadioStationData station) =>
+        station.Type is RadioStationData.RadioStationType.DCS or RadioStationData.RadioStationType.BMS;
+
+    /// <summary>
+    /// After a leave: if no tuned slot uses the own-voice station any more, move it to a tuned one (the cockpit
+    /// first), so the hot mic and own voice don't keep the sound of a location we've left.
+    /// </summary>
+    private void RepickOwnVoiceStationIfUntuned()
+    {
+        lock (_ownVoiceStationLock)
+        {
+            if (_ownVoiceStation == null) return;
+            var current = _ownVoiceStation;
+            // The cockpit stays (it is where we are, joined or not); so does a location still tuned.
+            if (IsCockpit(current) || _tunedSlots.Values.Any(t => ReferenceEquals(t.RadioStation, current))) return;
+        }
+
+        var candidates = _tunedSlots
+            .Where(kv => !(_scannerSlots.TryGetValue(kv.Key.FreqKhz, out var scan) && scan == kv.Key.SlotId))
+            .OrderByDescending(kv => IsCockpit(kv.Value.RadioStation))
+            .ToList();
+        if (candidates.Count == 0) return; // nothing tuned: keep the last sound until something is
+        SetOwnVoiceStation(candidates[0].Value.RadioStation, candidates[0].Key.FreqKhz);
     }
 
     private void OnOwnVoiceStationChanged(object? sender, PropertyChangedEventArgs e)
@@ -972,6 +1008,7 @@ public class OpenFreqService : IOpenFreqService
 
         _tunedSlots.TryRemove((frequencyKhz, slotId), out _);
         _playbackService?.UntuneFrequency(frequencyKhz, slotId);
+        RepickOwnVoiceStationIfUntuned();
 
         if (!IsAnySlotTuned(frequencyKhz))
         {

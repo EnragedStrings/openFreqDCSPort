@@ -1,4 +1,5 @@
 using OpenFreq.Common;
+using OpenFreq.Client.Models;
 using OpenFreqClient.Models;
 using OpenFreqAudio;
 using OpenFreqClient.Services.Interfaces;
@@ -408,5 +409,73 @@ public class OpenFreqServiceTests
 
         h.Playback.WantsHotMic.Returns(true); // HUD Recorder feed running + hot mic on
         Assert.True(h.Service.WantMicCapture);
+    }
+
+    [Fact]
+    public async Task HudTapeHotMic_MaskFollowsTheCockpit_NotAnEarlierGroundLocation()
+    {
+        // 2026-11-24: a saved GCI/AWACS location joined before the DCS cockpit kept the own-voice station until the
+        // first key-up, so the hot mic got that location's room filter instead of the (measured) mask.
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        var gci = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.STATIONARY,
+            Preset = RadioStationPresets.GCI_LowTower, Ppm = 0,
+        };
+        var cockpit = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.DCS,
+            Preset = RadioStationPresets.FighterF16, Ppm = 0,
+        };
+
+        await h.Service.JoinFrequencyAsync(Freq, Guid.NewGuid(), gci);
+        await h.Service.JoinFrequencyAsync(Freq + 1000, Guid.NewGuid(), cockpit);
+
+        Assert.Equal(AmbientNoiseType.AirF16, h.Playback.OwnVoiceAmbient);
+    }
+
+    [Fact]
+    public async Task OwnVoiceStation_MovesOffALocationThatWasLeft()
+    {
+        var h = new ServiceHarness();
+        await h.InitializeAuthenticatedAsync();
+        var gci = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.STATIONARY,
+            Preset = RadioStationPresets.GCI_LowTower, Ppm = 0,
+        };
+        var a10 = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.STATIONARY,
+            Preset = RadioStationPresets.AttackA10, Ppm = 0,
+        };
+        var gciSlot = Guid.NewGuid();
+        await h.Service.JoinFrequencyAsync(Freq, gciSlot, gci);
+        await h.Service.JoinFrequencyAsync(Freq + 1000, Guid.NewGuid(), a10);
+
+        await h.Service.LeaveFrequencyAsync(Freq, gciSlot);
+
+        Assert.Equal(AmbientNoiseType.AirA10, h.Playback.OwnVoiceAmbient);
+    }
+
+    [Fact]
+    public async Task HudTapeHotMic_GetsTheCockpitMask_WithNothingJoined()
+    {
+        // 2026-11-24: a user who only started the program (no radio joined, so no own-voice station) got the hot
+        // mic with no mask at all. The DCS/BMS location now sets it as soon as it exists.
+        var h = new ServiceHarness();
+        await h.InitializeAsync(); // not even connected
+        var cockpit = new RadioStationData
+        {
+            Type = RadioStationData.RadioStationType.DCS,
+            Preset = RadioStationPresets.AttackA10, Ppm = 0,
+        };
+
+        h.Service.SetCockpitStation(cockpit);
+        Assert.Equal(AmbientNoiseType.AirA10, h.Playback.OwnVoiceAmbient);
+
+        cockpit.Preset = RadioStationPresets.FighterF16; // aircraft change in DCS
+        Assert.Equal(AmbientNoiseType.AirF16, h.Playback.OwnVoiceAmbient);
     }
 }

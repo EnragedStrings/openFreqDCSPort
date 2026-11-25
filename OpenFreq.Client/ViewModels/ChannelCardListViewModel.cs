@@ -647,6 +647,7 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 {
                     FalconLocation = CreateLocation(BmsLocationName, RadioStationPresets.FighterF16,
                         RadioStationData.RadioStationType.BMS);
+                    _openFreqService.SetCockpitStation(FalconLocation.RadioStationData);
                 }
                 else
                 {
@@ -740,6 +741,8 @@ public partial class ChannelCardListViewModel : ViewModelBase, IDisposable
                 RadioStationData.RadioStationType.DCS);
             DcsLocation.EditMode = false;
             SelectedLocation = DcsLocation;
+            // The hot mic needs the cockpit's mask even when no radio is joined (offline, radios off).
+            _openFreqService.SetCockpitStation(DcsLocation.RadioStationData);
             return;
         }
 

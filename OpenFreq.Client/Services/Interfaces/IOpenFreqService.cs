@@ -144,6 +144,9 @@ public interface IOpenFreqService : IDisposable
     Task DisconnectAsync();
     bool IsFrequencyJoined(int frequencyKhz, Guid slotId);
     Task JoinFrequencyAsync(int frequencyKhz, Guid slotId, RadioStationData radioStationData);
+    /// <summary>The sim cockpit (DCS/BMS location) exists: own voice and the HUD-tape hot mic sound like it (its
+    /// mask), joined or not, until we transmit from somewhere else.</summary>
+    void SetCockpitStation(RadioStationData cockpit);
     Task LeaveFrequencyAsync(int frequencyKhz, Guid slotId);
 
     /// <summary>GCI-only "monitor all frequencies" scanner: when true, every frequency with real
